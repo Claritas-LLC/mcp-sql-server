@@ -3,3 +3,4 @@ uvicorn
 starlette
 pyodbc
 sshtunnel
+python-dotenv

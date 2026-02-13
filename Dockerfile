@@ -25,6 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py .
 COPY README.md .
 COPY DEPLOYMENT.md .
+COPY .env .
 
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app
