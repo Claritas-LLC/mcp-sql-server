@@ -103,32 +103,23 @@ If you prefer running the Python code directly and have `uv` installed:
 
 ### Option 2: Docker (Recommended)
 
-The Docker image is available on Docker Hub at `harryvaldez/mcp-sql-server`.
+The Docker image is available on Docker Hub at `harryvaldez/mcp_sqlserver`.
 
 ```bash
 # 1. Pull the image
-docker pull harryvaldez/mcp-sql-server:latest
+docker pull harryvaldez/mcp_sqlserver:latest
 
 # 2. Run in HTTP Mode (SSE)
 docker run -d \
   --name mcp-sqlserver-http \
-  -e SQL_SERVER=host.docker.internal \
-  -e SQL_USER=sa \
-  -e SQL_PASSWORD=YourPassword123 \
-  -e SQL_DATABASE=master \
-  -e MCP_TRANSPORT=http \
-  -e MCP_ALLOW_WRITE=false \
-  -p 8000:8000 \
-  harryvaldez/mcp-sql-server:latest
+  --env-file .env \
+  -p 8085:8085 \
+  harryvaldez/mcp_sqlserver:latest
 
 # 3. Run in Write Mode (HTTP - Secure)
 docker run -d \
   --name mcp-sqlserver-write \
-  -e SQL_SERVER=host.docker.internal \
-  -e SQL_USER=sa \
-  -e SQL_PASSWORD=YourPassword123 \
-  -e SQL_DATABASE=master \
-  -e MCP_TRANSPORT=http \
+  --env-file .env \
   -e MCP_ALLOW_WRITE=true \
   -e MCP_CONFIRM_WRITE=true \
   # ⚠️ Untested / Not Production Ready
@@ -136,7 +127,7 @@ docker run -d \
   -e FASTMCP_AZURE_AD_TENANT_ID=... \
   -e FASTMCP_AZURE_AD_CLIENT_ID=... \
   -p 8001:8000 \
-  harryvaldez/mcp-sql-server:latest
+  harryvaldez/mcp_sqlserver:latest
 ```
 
 ### Option 2b: Docker with SSH Tunneling
@@ -146,18 +137,14 @@ To connect to a database behind a bastion host (e.g., in a private subnet), you 
 ```bash
 docker run -d \
   --name mcp-sqlserver-ssh \
+  --env-file .env \
   -v ~/.ssh/id_rsa:/root/.ssh/id_rsa:ro \
-  -e SQL_SERVER=db-internal-host \
-  -e SQL_USER=sa \
-  -e SQL_PASSWORD=YourPassword123 \
-  -e SQL_DATABASE=master \
   -e SSH_HOST=bastion.example.com \
   -e SSH_USER=ec2-user \
   -e SSH_PKEY="/root/.ssh/id_rsa" \
   -e ALLOW_SSH_AGENT=true \
-  -e MCP_TRANSPORT=http \
   -p 8000:8000 \
-  harryvaldez/mcp-sql-server:latest
+  harryvaldez/mcp_sqlserver:latest
 ```
 
 **Using Docker Compose:**
@@ -242,6 +229,32 @@ If n8n (Cloud) cannot connect to your local MCP server:
 
 ---
 
+### ⚡ Testing & Validation
+
+This project includes a comprehensive test suite covering **Unit**, **Integration**, **Stress**, and **Blackbox** tests.
+
+1.  **Prerequisites**:
+    *   Docker (for provisioning the temporary SQL Server 2019 container)
+    *   Python 3.10+
+    *   `pip install -r tests/requirements-test.txt`
+
+2.  **Run Full Test Cycle**:
+    ```bash
+    # 1. Provision & Populate Test Database
+    python tests/setup_sql_server.py
+    
+    # 2. Run Comprehensive Test Suite
+    pytest -v tests/comprehensive_test.py
+    ```
+
+3.  **Verification Coverage**:
+    *   ✅ **Unit Tests**: Core connection logic and helper functions.
+    *   ✅ **Integration Tests**: End-to-end verification of all 25+ MCP tools against a live SQL Server 2019 instance.
+    *   ✅ **Stress Tests**: Verifies stability under concurrent load (50+ parallel requests).
+    *   ✅ **Blackbox Tests**: Validates the MCP protocol implementation and tool discovery.
+
+---
+
 ## ⚙️ Configuration
 
 The server is configured entirely via environment variables.
@@ -258,12 +271,14 @@ To prevent the MCP server from becoming unresponsive or overloading the database
 ### Core Connection
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SQL_SERVER` | SQL Server hostname or IP | *Required* |
-| `SQL_PORT` | SQL Server port | `1433` |
-| `SQL_USER` | SQL User | *Required* |
-| `SQL_PASSWORD` | SQL Password | *Required* |
-| `SQL_DATABASE` | Target Database | *Required* |
-| `SQL_DRIVER` | ODBC Driver name | `ODBC Driver 17 for SQL Server` |
+| `DB_SERVER` | SQL Server hostname or IP (also `SQL_SERVER`) | *Required* |
+| `DB_PORT` | SQL Server port (also `SQL_PORT`) | `1433` |
+| `DB_USER` | SQL User (also `SQL_USER`) | *Required* |
+| `DB_PASSWORD` | SQL Password (also `SQL_PASSWORD`) | *Required* |
+| `DB_NAME` | Target Database (also `SQL_DATABASE`) | *Required* |
+| `DB_DRIVER` | ODBC Driver name (also `SQL_DRIVER`) | `ODBC Driver 17 for SQL Server` |
+| `DB_ENCRYPT` | Enable encryption (`yes`/`no`) | `no` |
+| `DB_TRUST_CERT` | Trust server certificate (`yes`/`no`) | `yes` |
 | `MCP_HOST` | Host to bind the server to | `0.0.0.0` |
 | `MCP_PORT` | Port to listen on (8000 for Docker, 8085 for local) | `8085` |
 | `MCP_TRANSPORT` | Transport mode: `sse`, `http` (uses SSE), or `stdio` | `http` |
@@ -575,37 +590,6 @@ The analysis of the `Sales` schema reveals...
 
 ---
 
-## 🧪 Testing & Validation
-
-This project has been rigorously tested against **SQL Server 2019**.
-
-### Running Tests
-
-To run the comprehensive test suite (Unit, Integration, Stress, Blackbox):
-
-1.  **Prerequisites**:
-    *   Docker (for provisioning the temporary SQL Server container)
-    *   Python 3.10+
-    *   `pip install pytest pyodbc docker pandas numpy`
-
-2.  **Run Tests**:
-    This command will automatically provision a SQL Server 2019 container, populate it with sample data, and run all tests.
-    ```bash
-    # 1. Provision Test Database
-    python tests/setup_sql_server.py
-    
-    # 2. Run Test Suite
-    python -m pytest tests/test_server.py
-    ```
-
-### Test Results
-- **Deployment**: Docker, `uv`, `npx` (All Passed)
-- **Protocol**: SSE (HTTP/HTTPS), Stdio (All Passed)
-- **Database**: SQL Server 2019 (All Tools Verified)
-- **Auth**: Token Auth, Azure AD Auth (To be verified)
-
----
-
 ## ❓ FAQ & Troubleshooting
 
 ### Frequently Asked Questions
@@ -633,5 +617,5 @@ Check your firewall settings (port 1433).
 
 For comments, issues, or feature enhancements, please contact the maintainer or submit an issue to the repository:
 
-- **Repository**: https://github.com/harryvaldez/mcp-sql-server
+- **Repository**: https://github.com/harryvaldez/mcp_cla_ss
 - **Maintainer**: Harry Valdez

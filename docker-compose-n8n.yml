@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  mcp-sqlserver:
+    image: harryvaldez/mcp_sqlserver:latest
+    container_name: mcp-sqlserver
+    ports:
+      - "8085:8085"
+    env_file:
+      - .env
+    environment:
+      - DB_SERVER=sql-server
+      - DB_PORT=1433
+      - DB_USER=sa
+      - DB_PASSWORD=YourPassword123!
+      - DB_NAME=master
+      - MCP_TRANSPORT=http
+      - MCP_PORT=8085
+    depends_on:
+      - sql-server
+    networks:
+      - mcp-network
+
+  sql-server:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    container_name: sql-server
+    ports:
+      - "1433:1433"
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=YourPassword123!
+    networks:
+      - mcp-network
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  n8n_data:

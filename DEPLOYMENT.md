@@ -76,10 +76,12 @@ docker build -t harryvaldez/mcp_sqlserver:latest .
 # Push
 docker push harryvaldez/mcp_sqlserver:latest
 ```
-
 Notes:
 - The base image is python:3.11-slim (Debian based).
-- Includes Microsoft ODBC Driver 18 for SQL Server.
+- Includes Microsoft ODBC Driver 17 and 18 for SQL Server.
+- Runs as a non-root `appuser` for enhanced security.
+- Automatically loads environment variables from a `.env` file if present.
+- Verified to handle connection pooling safely without leaks.
 - Default HTTP port is 8085; ensure it is available locally when testing.
 
 ---
@@ -104,14 +106,14 @@ Notes:
       --name mcp-sqlserver \
       --resource-group MyResourceGroup \
       --environment MyEnvironment \
-      --image harryvaldez/mcp-sql-server:latest \
+      --image harryvaldez/mcp_sqlserver:latest \
       --target-port 8000 \
       --ingress 'external' \
       --env-vars \
-        SQL_SERVER=mypostgres.postgres.database.azure.com \
-        SQL_USER=myadmin \
-        SQL_PASSWORD=secret-password-here \
-        SQL_DATABASE=master \
+        DB_SERVER=myserver.database.windows.net \
+        DB_USER=myadmin \
+        DB_PASSWORD=secret-password-here \
+        DB_NAME=master \
         MCP_ALLOW_WRITE=false
     ```
 
@@ -127,9 +129,9 @@ Notes:
 ### Deployment Steps
 
 1.  **Create Task Definition**:
-    *   Image: `harryvaldez/mcp-sql-server:latest`
+    *   Image: `harryvaldez/mcp_sqlserver:latest`
     *   Port Mappings: 8000
-    *   Environment Variables: `SQL_SERVER`, `SQL_USER`, `SQL_PASSWORD`, `SQL_DATABASE`.
+    *   Environment Variables: `DB_SERVER`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`.
 
 2.  **Configure Network**:
     *   VPC: Must have connectivity to your RDS/SQL Server.
@@ -158,11 +160,12 @@ When deploying to production, verify the following:
 ## ⚙️ Environment Variables
 
 Key environment variables supported by the server:
-- `SQL_SERVER` SQL Server hostname.
-- `SQL_PORT` SQL Server port (default 1433).
-- `SQL_USER` SQL User.
-- `SQL_PASSWORD` SQL Password.
-- `SQL_DATABASE` Target Database.
+- `DB_SERVER` SQL Server hostname (also `SQL_SERVER`).
+- `DB_PORT` SQL Server port, default 1433 (also `SQL_PORT`).
+- `DB_USER` SQL User (also `SQL_USER`).
+- `DB_PASSWORD` SQL Password (also `SQL_PASSWORD`).
+- `DB_NAME` Target Database (also `SQL_DATABASE`).
+- `DB_DRIVER` ODBC Driver name (also `SQL_DRIVER`).
 - `MCP_TRANSPORT` Transport mode: `sse`, `http` (default), or `stdio`.
 - `MCP_HOST` Host for HTTP transport, default `0.0.0.0`.
 - `MCP_PORT` Port for HTTP transport, default `8000`.
