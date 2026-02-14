@@ -11,7 +11,7 @@ SQL Server Model Context Protocol (MCP) server for AI integration.
 # Create a .env file with your variables
 docker run -d \
   --name mcp-sqlserver \
-  -p 8085:8085 \
+  -p 8085:8000 \
   --env-file .env \
   harryvaldez/mcp_sqlserver:latest
 
