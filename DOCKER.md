@@ -25,7 +25,7 @@ docker run -d \
 - `DB_DATABASE`: Database name (also `SQL_DATABASE` or `DB_NAME`)
 - `DB_USER`: Database user (also `SQL_USER`)
 - `DB_PASSWORD`: Database password (also `SQL_PASSWORD`)
-- `DB_DRIVER`: ODBC driver (default: `ODBC Driver 18 for SQL Server`) (also `SQL_DRIVER`)
+- `DB_DRIVER`: ODBC driver (default: `ODBC Driver 17 for SQL Server`) (also `SQL_DRIVER`)
 - `DB_PORT`: SQL Server port (default: 1433) (also `SQL_PORT`)
 - `SSH_HOST`: SSH tunnel host (optional)
 - `SSH_PORT`: SSH tunnel port (default: 22)

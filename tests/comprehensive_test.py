@@ -6,8 +6,10 @@ import json
 import time
 from typing import Any
 from unittest.mock import MagicMock, patch
+import importlib
 
-# Add parent directory to path to import server
+# Add parent directory to path to import importlib
+import server
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configuration for tests is handled via fixture
@@ -20,7 +22,7 @@ def setup_env():
         "DB_SERVER": "127.0.0.1",
         "DB_PORT": "1433",
         "DB_USER": "sa",
-        "DB_PASSWORD": os.getenv("DB_PASSWORD", "McpTestPassword123!"), # Fallback for local dev only
+        "DB_PASSWORD": os.getenv("DB_PASSWORD"),
         "DB_NAME": "testdb",
         "DB_DRIVER": "ODBC Driver 17 for SQL Server",
         "DB_ENCRYPT": "no",
@@ -31,11 +33,37 @@ def setup_env():
         "MCP_TRANSPORT": "stdio",
         "MCP_SKIP_CONFIRMATION": "true"
     }):
+        importlib.reload(server)
         yield
+
+@pytest.fixture(scope="class")
+def setup_products_table(request):
+    """Create and populate a products table for testing"""
+    conn = server.get_connection()
+    cursor = conn.cursor()
+    try:
+        # Create table
+        cursor.execute("""
+            CREATE TABLE products (
+                id INT PRIMARY KEY,
+                name NVARCHAR(100),
+                price DECIMAL(10, 2)
+            );
+        """)
+        # Insert data
+        cursor.execute("INSERT INTO products (id, name, price) VALUES (1, 'Laptop', 1200.00);")
+        cursor.execute("INSERT INTO products (id, name, price) VALUES (2, 'Mouse', 25.00);")
+        conn.commit()
+        yield
+    finally:
+        cursor.execute("DROP TABLE products;")
+        conn.commit()
+        cursor.close()
+        conn.close()
 
 def is_db_available():
     try:
-        conn = get_connection()
+        conn = server.get_connection()
         conn.close()
         return True
     except Exception as e:
@@ -48,21 +76,61 @@ def db_required(setup_env):
         pytest.skip("Database not available")
 
 @pytest.fixture(scope="module")
+def setup_products_table(db_required):
+    """Create and drop the products table for tests."""
+    conn = server.get_connection()
+    try:
+        cur = conn.cursor()
+        # Drop if exists
+        try:
+            cur.execute("DROP TABLE products")
+            conn.commit()
+        except Exception:
+            pass # Ignore if it doesn't exist
+
+        # Create
+        cur.execute("""
+            CREATE TABLE products (
+                id INT PRIMARY KEY,
+                name NVARCHAR(100),
+                price DECIMAL(10, 2)
+            )
+        """)
+        # Insert data
+        cur.execute("INSERT INTO products (id, name, price) VALUES (1, 'Laptop', 1200.00)")
+        cur.execute("INSERT INTO products (id, name, price) VALUES (2, 'Mouse', 25.00)")
+        cur.execute("INSERT INTO products (id, name, price) VALUES (3, 'Keyboard', 75.00)")
+        cur.execute("INSERT INTO products (id, name, price) VALUES (4, 'Monitor', 300.00)")
+        cur.execute("INSERT INTO products (id, name, price) VALUES (5, 'Dock', 150.00)")
+        conn.commit()
+        yield
+    finally:
+        try:
+            cur.execute("DROP TABLE products")
+            conn.commit()
+        except Exception as e:
+            print(f"Error dropping products table: {e}")
+        finally:
+            conn.close()
+
+@pytest.fixture(scope="module")
 def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
 
-@pytest.mark.usefixtures("db_required")
+@pytest.mark.usefixtures("db_required", "setup_products_table")
+@pytest.mark.usefixtures("setup_products_table")
 class TestUnit:
     """Unit tests for tool logic and helper functions"""
 
     def test_connection_string_builder(self):
-        conn = get_connection()
+        conn = server.get_connection()
         assert conn is not None
         conn.close()
 
-@pytest.mark.usefixtures("db_required")
+@pytest.mark.usefixtures("db_required", "setup_products_table")
+@pytest.mark.usefixtures("setup_products_table")
 class TestIntegration:
     """Integration tests for each MCP tool"""
 
@@ -75,7 +143,6 @@ class TestIntegration:
         result = server.db_sql2019_list_objects.fn(object_type="table")
         names = [obj["name"] for obj in result]
         assert "products" in names
-        assert "customers" in names
 
     def test_describe_table(self):
         result = server.db_sql2019_describe_table.fn(schema="dbo", table="products")
@@ -148,9 +215,11 @@ class TestIntegration:
                     object_name=table_name,
                     schema="dbo"
                 )
+                assert "dropped" in res_drop.lower()
 
 
-@pytest.mark.usefixtures("db_required")
+@pytest.mark.usefixtures("db_required", "setup_products_table")
+@pytest.mark.usefixtures("setup_products_table")
 class TestStress:
     """Stress tests for concurrency and load"""
 

@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import hashlib
 import logging
@@ -16,6 +17,15 @@ import atexit
 import signal
 import decimal
 from datetime import datetime, date, timedelta
+
+def _json_safe_dict(data):
+    if isinstance(data, dict):
+        return {k: _json_safe_dict(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_json_safe_dict(i) for i in data]
+    if isinstance(data, datetime):
+        return data.isoformat()
+    return data
 from urllib.parse import quote, urlparse, urlunparse, urlsplit, urlunsplit
 from typing import Any, Optional
 
@@ -608,17 +618,120 @@ _WRITE_KEYWORDS = {
     "backup",
     "restore",
     "dbcc",
+    "enable",
+    "disable",
+    "reconfigure",
+    "writetext",
+    "updatetext",
     "exec",
     "execute",
 }
 
 _READONLY_START = {"select", "with", "show", "explain", "set"}
 
+# Known read-only stored procedures
+_SAFE_READONLY_PROCS = {
+    "sp_columns",
+    "sp_tables",
+    "sp_help",
+    "sp_helpindex",
+    "sp_helptext",
+    "sp_spaceused",
+    "sp_lock",
+    "sp_who",
+    "sp_who2",
+    "sp_monitor",
+    "sp_server_info",
+    "sp_databases",
+    "sp_tables_ex",
+    "sp_columns_ex",
+    "sp_pkeys",
+    "sp_fkeys",
+    "sp_special_columns",
+    "sp_sproc_columns",
+    "sp_statistics",
+    "sp_table_privileges",
+    "sp_column_privileges",
+    "sp_stored_procedures",
+    "sp_datatype_info",
+    "sp_serveroption",
+    "sp_dboption",
+    "sp_configure",
+    "sp_helpdb",
+    "sp_helpfile",
+    "sp_helpfilegroup",
+    "sp_helpserver",
+    "sp_helprole",
+    "sp_helprolemember",
+    "sp_helpuser",
+    "sp_helpgroup",
+    "sp_helplanguage",
+    "sp_helplogins",
+    "sp_helplinkedsrvlogin",
+    "sp_helpremotelogin",
+    "sp_helpsort",
+    "sp_helptext",
+    "sp_helptrigger",
+    "sp_indexes",
+    "sp_lock",
+    "sp_who",
+    "sp_who2",
+    "sp_activeusers",
+    "sp_helpconstraint",
+    "sp_helpindex",
+    "sp_helprotect",
+    "sp_depends",
+    "sp_helpdevice",
+    "sp_helpcache",
+    "sp_helpconfig",
+    "sp_helpdevice",
+    "sp_helpcache",
+    "sp_helpconfig",
+    "sp_helpindex",
+    "sp_helpjoins",
+    "sp_helprotect",
+    "sp_helpsubscriberinfo",
+    "sp_helpsubscription",
+    "sp_helparticle",
+    "sp_helppublication",
+    "sp_helpsubscription_properties",
+    "sp_helpdistributor",
+    "sp_helpdistributiondb",
+    "sp_helpmergearticle",
+    "sp_helpmergepublication",
+    "sp_helpmergesubscription",
+    "sp_helpsubscription",
+    "sp_helparticlecolumns",
+    "sp_helppublication_snapshot",
+    "sp_helppullsubscription",
+    "sp_helpsubscription",
+    "sp_helparticle",
+    "sp_helppublication",
+    "sp_helpsubscription_properties",
+    "sp_helpdistributor",
+    "sp_helpdistributiondb",
+    "sp_helpmergearticle",
+    "sp_helpmergepublication",
+    "sp_helpmergesubscription",
+    "sp_helpsubscription",
+    "sp_helparticlecolumns",
+    "sp_helppublication_snapshot",
+    "sp_helppullsubscription"
+}
 
 def _is_sql_readonly(sql: str) -> bool:
     cleaned = _strip_sql_noise(sql).strip().lower()
     if not cleaned:
         return False
+    
+    # Check for safe read-only EXEC statements
+    if cleaned.startswith("exec ") or cleaned.startswith("execute "):
+        # Extract procedure name (first word after EXEC/EXECUTE)
+        tokens = re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*", cleaned)
+        if len(tokens) >= 2 and tokens[1] in _SAFE_READONLY_PROCS:
+            return True
+        return False
+    
     # Check if first word is a known read-only starting keyword
     first = cleaned.split(None, 1)[0]
     if first not in _READONLY_START:
@@ -1425,11 +1538,203 @@ def db_sql2019_db_stats(database: str | None = None) -> list[dict[str, Any]] | d
         if database:
             if not results:
                 return {"error": f"Database '{database}' not found"}
-            return results[0]
+            return _json_safe_dict(results[0])
             
-        return results
+        return _json_safe_dict(results)
     finally:
         conn.close()
+
+
+
+
+
+
+@mcp.custom_route("/query-analysis/{database}", methods=["GET"])
+async def serve_query_analysis_report(request: Request) -> HTMLResponse:
+    database = request.path_params.get('database', 'N/A')
+    
+    try:
+        # Get database stats and top queries using the existing tools
+        stats_result = await asyncio.to_thread(db_sql2019_db_stats.fn, database)
+        
+        # Query for top 5 long-running queries from Query Store
+        query = f"""
+        SELECT TOP 5 
+            qst.query_sql_text,
+            qrs.avg_duration / 1000.0 as avg_duration_ms,
+            qrs.avg_cpu_time / 1000.0 as avg_cpu_time_ms,
+            qrs.avg_logical_io_reads,
+            qrs.count_executions,
+            CAST(qrs.last_execution_time AS DATETIME2) as last_execution_time
+        FROM {database}.sys.query_store_query_text qst
+        JOIN {database}.sys.query_store_query q ON qst.query_text_id = q.query_text_id
+        JOIN {database}.sys.query_store_plan p ON q.query_id = p.query_id
+        JOIN {database}.sys.query_store_runtime_stats qrs ON p.plan_id = qrs.plan_id
+        WHERE qrs.avg_duration > 0
+        ORDER BY qrs.avg_duration DESC
+        """
+        
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(query)
+            columns = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
+            
+            # Convert to list of dicts for easier template rendering
+            queries = []
+            for row in rows:
+                query_data = dict(zip(columns, row))
+                # Convert datetime to string for JSON serialization
+                if 'last_execution_time' in query_data and query_data['last_execution_time']:
+                    query_data['last_execution_time'] = query_data['last_execution_time'].isoformat()
+                queries.append(query_data)
+            
+        finally:
+            conn.close()
+        
+        # Check for encrypted text, which suggests a permissions issue
+        if any(q.get("query_sql_text") == "** Encrypted Text **" for q in queries):
+            return {
+                "error": "Query text is encrypted. This is likely due to missing VIEW DATABASE STATE permissions.",
+                "recommendation": f"Grant VIEW DATABASE STATE permission to the user: GRANT VIEW DATABASE STATE TO [{os.environ.get('DB_USER')}]"
+            }
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Query Store Analysis - {database}</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .header {{ background-color: #f4f4f4; padding: 20px; border-radius: 5px; }}
+                .stats {{ margin: 20px 0; }}
+                .query-card {{ 
+                    border: 1px solid #ddd; 
+                    margin: 15px 0; 
+                    padding: 15px; 
+                    border-radius: 5px;
+                    background-color: #fafafa;
+                }}
+                .query-sql {{ 
+                    background-color: #f0f0f0; 
+                    padding: 10px; 
+                    border-radius: 3px; 
+                    font-family: 'Courier New', monospace;
+                    font-size: 12px;
+                    white-space: pre-wrap;
+                    max-height: 200px;
+                    overflow-y: auto;
+                }}
+                .metrics {{ display: flex; gap: 20px; margin: 10px 0; }}
+                .metric {{ background-color: #e8f4f8; padding: 8px 12px; border-radius: 3px; }}
+                .error {{ color: red; background-color: #ffe6e6; padding: 15px; border-radius: 5px; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>Query Store Analysis Report</h1>
+                <h2>Database: {database}</h2>
+                <p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            </div>
+            
+            <div class="stats">
+                <h3>Database Statistics</h3>
+                <pre>{json.dumps(stats_result, indent=2, default=str)}</pre>
+            </div>
+            
+            <div class="queries">
+                <h3>Top 5 Long-Running Queries</h3>
+                {''.join([
+                    f'<div class="query-card">'
+                    f'<h4>Query #{i+1}</h4>'
+                    f'<div class="query-sql">{html.escape(q.get("query_sql_text", "N/A"))}</div>'
+                    f'<div class="metrics">'
+                    f'<div class="metric"><strong>Avg Duration:</strong> {q.get("avg_duration_ms", 0):.2f} ms</div>'
+                    f'<div class="metric"><strong>Avg CPU Time:</strong> {q.get("avg_cpu_time_ms", 0):.2f} ms</div>'
+                    f'<div class="metric"><strong>Avg Logical Reads:</strong> {q.get("avg_logical_io_reads", 0)}</div>'
+                    f'<div class="metric"><strong>Execution Count:</strong> {q.get("count_executions", 0)}</div>'
+                    f'</div>'
+                    f'<div><strong>Last Execution:</strong> {q.get("last_execution_time", "N/A")}</div>'
+                    f'</div>' for i, q in enumerate(queries)
+                ]) if queries else '<p>No long-running queries found in Query Store.</p>'}
+            </div>
+            
+            <div style="margin-top: 30px; padding: 15px; background-color: #e8f4f8; border-radius: 5px;">
+                <h4>Report Details</h4>
+                <p>This report analyzes the Query Store data for the specified database and identifies the top 5 queries with the highest average duration.</p>
+                <p><strong>Note:</strong> Query Store must be enabled for the database for this analysis to work.</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        return HTMLResponse(content=html_content)
+        
+    except Exception as e:
+        error_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Error - Query Store Analysis</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .error {{ color: red; background-color: #ffe6e6; padding: 20px; border-radius: 5px; border: 1px solid #ffcccc; }}
+            </style>
+        </head>
+        <body>
+            <div class="error">
+                <h1>Error Generating Query Store Analysis</h1>
+                <p><strong>Database:</strong> {database}</p>
+                <p><strong>Error:</strong> {str(e)}</p>
+                <p><strong>Timestamp:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=error_html, status_code=500)
+
+
+@mcp.tool
+def db_sql2019_db_analyze_query_store(database: str) -> dict[str, Any]:
+    """
+    Analyzes the Query Store for a given database and provides a URL to a detailed report.
+
+    Args:
+        database: The name of the database to analyze.
+
+    Returns:
+        A dictionary containing the URL to the analysis report.
+    """
+    host = os.environ.get("MCP_HOST", "localhost")
+    port = os.environ.get("MCP_PORT", 8000)
+
+    # Check if the database exists and has Query Store enabled
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT name, is_query_store_on FROM sys.databases WHERE name = ?", database)
+        db_info = cur.fetchone()
+        if not db_info:
+            return {"error": f"Database '{database}' not found."}
+        if not db_info.is_query_store_on:
+            return {
+                "error": f"Query Store is not enabled for database '{database}'.",
+                "recommendation": f"Enable Query Store by running: ALTER DATABASE [{database}] SET QUERY_STORE = ON;"
+            }
+    finally:
+        conn.close()
+
+    report_url = f"http://{host}:{port}/query-analysis/{database}"
+    return {
+        "message": f"Query Store analysis report for database '{database}' is being generated.",
+        "report_url": report_url
+    }
+
+@mcp.tool
+def temp_analyze_query_store_wrapper(database: str) -> dict[str, Any]:
+    """Temporary wrapper to test tool discovery."""
+    return db_sql2019_db_analyze_query_store(database)
+
 
 
 
@@ -1622,8 +1927,8 @@ def db_sql2019_sec_perf_metrics(
                  if sa_row and sa_row[0] == 0:
                      results["issues_found"].append("SA account is enabled")
                      results["recommended_fixes"].append("Disable SA account and use individual logins")
-        except Exception:
-            pass
+        except pyodbc.Error as e:
+            logger.warning(f"Could not check SA account status: {e}")
 
         # 2. Sysadmin Check
         cur.execute("SELECT name FROM sys.server_principals WHERE IS_SRVROLEMEMBER('sysadmin', name) = 1 AND type_desc IN ('SQL_LOGIN', 'WINDOWS_LOGIN')")
@@ -2087,6 +2392,14 @@ def db_sql2019_list_objects(
     Returns:
         List of objects with relevant details (name, schema, owner, size, stats, etc.).
     """
+    # Validate inputs
+    if limit <= 0:
+        return [{"error": "limit must be a positive integer"}]
+    
+    valid_object_types = {'database', 'schema', 'table', 'view', 'index', 'function', 'procedure', 'trigger'}
+    if object_type not in valid_object_types:
+        return [{"error": f"Unsupported object_type: {object_type}. Valid types: {', '.join(sorted(valid_object_types))}"}]
+
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -2100,6 +2413,7 @@ def db_sql2019_list_objects(
 
         query = ""
         sort_clause = ""
+        group_by_clause = ""
         
         # --- Database ---
         if object_type == 'database':
@@ -2150,40 +2464,7 @@ def db_sql2019_list_objects(
                 SELECT TOP (?)
                     s.name as [schema],
                     t.name as [name],
-                    p.rows as [rows],
-                    (SUM(a.total_pages) * 8) as size_kb,
-                    (SUM(a.used_pages) * 8) as used_kb,
-                    t.create_date,
-                    t.modify_date
-                FROM sys.tables t
-                JOIN sys.schemas s ON t.schema_id = s.schema_id
-                JOIN sys.indexes i ON t.object_id = i.object_id
-                JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-                JOIN sys.allocation_units a ON p.partition_id = a.container_id
-            """
-            # We need to group by because of multiple partitions/indexes
-            group_by = """
-                GROUP BY s.name, t.name, p.rows, t.create_date, t.modify_date
-            """
-            
-            if schema:
-                filters.append("s.name = ?")
-                params.append(schema)
-            if name_pattern:
-                filters.append("t.name LIKE ?")
-                params.append(name_pattern)
-
-            # Insert filters before GROUP BY
-            # But wait, logic below appends WHERE. So we need to restructure.
-            # Simplified approach: Base query is just the joins.
-            
-            query = """
-                SELECT TOP (?)
-                    s.name as [schema],
-                    t.name as [name],
-                    SUM(ps.row_count) as [rows], -- Sum rows for partitioned tables
-                    -- For simple heap/clustered, index_id 0 or 1. 
-                    -- Let's use a simpler DMV approach for size if possible or just sys.dm_db_partition_stats
+                    SUM(ps.row_count) as [rows],
                     (SUM(ps.reserved_page_count) * 8) as size_kb,
                     (SUM(ps.used_page_count) * 8) as used_kb
                 FROM sys.tables t
@@ -2191,15 +2472,18 @@ def db_sql2019_list_objects(
                 JOIN sys.dm_db_partition_stats ps ON t.object_id = ps.object_id
                 WHERE (ps.index_id < 2) -- 0=Heap, 1=Clustered (Data)
             """
-            # Reset params, TOP is first param
-            params = [limit] 
+            params = [limit]
 
             if schema:
-                query += " AND s.name = ?"
+                filters.append("s.name = ?")
                 params.append(schema)
             if name_pattern:
-                query += " AND t.name LIKE ?"
+                filters.append("t.name LIKE ?")
                 params.append(name_pattern)
+            
+            # Apply filters to the query
+            if filters:
+                query += " AND " + " AND ".join(filters)
             
             query += " GROUP BY s.name, t.name"
             
@@ -2207,10 +2491,7 @@ def db_sql2019_list_objects(
             if order_by == 'size':
                 sort_clause = "ORDER BY size_kb DESC"
             elif order_by == 'rows':
-                sort_clause = "ORDER BY [rows] DESC"
-
-            # Skip standard filter appending since we handled it inline
-            filters = [] 
+                sort_clause = "ORDER BY [rows] DESC" 
 
         # --- Index ---
         elif object_type == 'index':
@@ -2285,6 +2566,10 @@ def db_sql2019_list_objects(
                 params.append(name_pattern)
             
             sort_clause = "ORDER BY s.name, o.name"
+            if order_by == 'create_date':
+                sort_clause = "ORDER BY o.create_date DESC"
+            elif order_by == 'modify_date':
+                sort_clause = "ORDER BY o.modify_date DESC"
 
         # --- Trigger ---
         elif object_type == 'trigger':
@@ -2309,22 +2594,24 @@ def db_sql2019_list_objects(
                  params.append(name_pattern)
              
              sort_clause = "ORDER BY s.name, t.name, tr.name"
+             if order_by == 'create_date':
+                 sort_clause = "ORDER BY tr.create_date DESC"
+             elif order_by == 'modify_date':
+                 sort_clause = "ORDER BY tr.modify_date DESC"
+             elif order_by == 'table':
+                 sort_clause = "ORDER BY t.name, tr.name"
 
         else:
              return [{"error": f"Unsupported object_type: {object_type}"}]
 
-        # Construct final query
-        if object_type != 'table':
-            where_clause = ""
-            if filters:
-                # If query already has WHERE (like function), append with AND
-                prefix = " AND " if "WHERE" in query else " WHERE "
-                where_clause = prefix + " AND ".join(filters)
-            
-            full_sql = f"{query} {where_clause} {sort_clause}"
-        else:
-             # Table query was fully built above
-             full_sql = f"{query} {sort_clause}"
+        # Construct final query with improved logic
+        where_clause = ""
+        if filters:
+            # If query already has WHERE (like function), append with AND
+            prefix = " AND " if "WHERE" in query else " WHERE "
+            where_clause = prefix + " AND ".join(filters)
+        
+        full_sql = f"{query} {where_clause} {group_by_clause} {sort_clause}"
 
         _execute_safe(cur, full_sql, tuple(params))
         
@@ -3318,8 +3605,8 @@ def db_sql2019_explain_query(
                                 row = cur.fetchone()
                                 if row:
                                     plan_xml = row[0]
-                    except Exception:
-                        pass
+                    except pyodbc.Error as e:
+                        logger.warning(f"Could not retrieve execution plan partway through: {e}")
                         
                     if not cur.nextset():
                         break
@@ -3364,21 +3651,24 @@ def db_sql2019_ping() -> dict[str, Any]:
 def db_sql2019_server_info_mcp() -> dict[str, Any]:
     """
     Get information about the MCP server configuration and status.
-
     Returns:
         Dictionary containing server name, version, status, transport type, and connected database name.
     """
+    conn = None
+    database_name = "unknown"
     try:
         conn = get_connection()
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT DB_NAME() as database_name")
-            row = cur.fetchone()
-            database_name = row[0] if row else "unknown"
-        finally:
-            conn.close()
-    except Exception:
+        cur = conn.cursor()
+        cur.execute("SELECT DB_NAME() as database_name")
+        row = cur.fetchone()
+        if row:
+            database_name = row[0]
+    except Exception as e:
+        logger.error(f"Failed to get DB name for server_info_mcp: {e}")
         database_name = "error"
+    finally:
+        if conn:
+            conn.close()
 
     return {
         "name": mcp.name,
@@ -3398,8 +3688,8 @@ def _configure_fastmcp_runtime() -> None:
         import fastmcp
 
         fastmcp.settings.check_for_updates = "off"
-    except Exception:
-        pass
+    except pyodbc.Error as e:
+        logger.warning(f"Could not check for active cursors: {e}")
 
 
 DATA_MODEL_CACHE = {}

@@ -94,7 +94,7 @@ If you prefer running the Python code directly and have `uv` installed:
         "DB_USER": "sa",
         "DB_PASSWORD": "YourPassword123",
         "DB_NAME": "master",
-        "DB_DRIVER": "ODBC Driver 18 for SQL Server"
+        "DB_DRIVER": "ODBC Driver 17 for SQL Server"
       }
     }
   }
@@ -278,11 +278,11 @@ To prevent the MCP server from becoming unresponsive or overloading the database
 | `DB_USER` | SQL User (also `SQL_USER`) | *Required* |
 | `DB_PASSWORD` | SQL Password (also `SQL_PASSWORD`) | *Required* |
 | `DB_NAME` | Target Database (also `SQL_DATABASE`) | *Required* |
-| `DB_DRIVER` | ODBC Driver name (also `SQL_DRIVER`) | `ODBC Driver 18 for SQL Server` |
+| `DB_DRIVER` | ODBC Driver name (also `SQL_DRIVER`) | `ODBC Driver 17 for SQL Server` |
 | `DB_ENCRYPT` | Enable encryption (`yes`/`no`) | `no` |
 | `DB_TRUST_CERT` | Trust server certificate (`yes`/`no`) | `yes` |
 | `MCP_HOST` | Host to bind the server to | `0.0.0.0` |
-| `MCP_PORT` | Internal container port (Host typically maps 8085->8000) | `8000` (Docker default) |
+| `MCP_PORT` | Internal container port. The host port is typically mapped to this (e.g., 8085 -> 8000). | `8000` (Docker default) |
 | `MCP_TRANSPORT` | Transport mode: `sse`, `http` (uses SSE), or `stdio` | `http` |
 | `MCP_ALLOW_WRITE` | Enable write tools (`db_sql2019_create_db_user`, etc.) | `false` |
 | `MCP_CONFIRM_WRITE` | **Required if ALLOW_WRITE=true**. Safety latch to confirm write mode. | `false` |

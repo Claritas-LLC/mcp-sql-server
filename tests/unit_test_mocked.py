@@ -122,7 +122,6 @@ class TestMockedTools:
             elif "blocking_session_id <> 0" in sql:
                 # Locked sessions
                 mock_conn.description = [("blocked_session_id",), ("blocked_user",)]
-            return mock_conn
 
         mock_conn.execute.side_effect = execute_side_effect
 
@@ -219,7 +218,6 @@ class TestMockedTools:
                  mock_conn.description = [("table",), ("stat_name",)]
             elif "heap" in sql.lower() or "sys.indexes" in sql.lower(): # Query for heaps
                  mock_conn.description = [("table",), ("row_count",)]
-            return mock_conn
             
         mock_conn.execute.side_effect = execute_side_effect
         
