@@ -1635,22 +1635,66 @@ async def serve_query_analysis_report(request: Request) -> HTMLResponse:
 
         html_content = f"""
         <!DOCTYPE html>
-        <html>
+        <html lang="en">
         <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Query Store Analysis - {database}</title>
             <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                .header {{ background-color: #f4f4f4; padding: 20px; border-radius: 5px; }}
-                /* ... other styles ... */
+                body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 20px; background-color: #f9f9f9; color: #333; }}
+                .container {{ max-width: 1200px; margin: 0 auto; }}
+                .header {{ background-color: #0078d4; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
+                .header h1 {{ margin: 0; }}
+                .header h2 {{ margin: 5px 0 0; font-weight: normal; }}
+                .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 20px; }}
+                .stat-card {{ background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                .stat-card h4 {{ margin: 0 0 10px; color: #0078d4; }}
+                .stat-card p {{ margin: 0; font-size: 1.5em; font-weight: bold; }}
+                .queries h3 {{ border-bottom: 2px solid #0078d4; padding-bottom: 10px; margin-bottom: 20px; }}
+                .query-card {{ background-color: white; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+                .query-card h4 {{ background-color: #f4f4f4; padding: 10px 15px; margin: 0; border-top-left-radius: 8px; border-top-right-radius: 8px; border-bottom: 1px solid #ddd; }}
+                .query-sql {{ padding: 15px; background-color: #2d2d2d; color: #f1f1f1; font-family: "Consolas", "Menlo", "Monaco", monospace; white-space: pre-wrap; word-wrap: break-word; border-bottom: 1px solid #ddd; }}
+                .metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; padding: 15px; }}
+                .metric {{ background-color: #f9f9f9; padding: 10px; border-radius: 5px; }}
+                .metric strong {{ color: #0078d4; }}
+                .query-card > div:last-child {{ padding: 0 15px 15px; }}
+                .error {{ background-color: #ffebe9; border: 1px solid #ff8080; color: #c00; padding: 15px; border-radius: 8px; margin-bottom: 20px; }}
+                .error h3 {{ margin-top: 0; }}
+                pre {{ background-color: #f4f4f4; border: 1px solid #ddd; padding: 10px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }}
+                code {{ font-family: "Consolas", "Menlo", "Monaco", monospace; }}
             </style>
         </head>
         <body>
-            <!-- ... other html ... -->
-            <div class="queries">
-                <h3>Top 5 Long-Running Queries</h3>
-                {query_section_html}
+            <div class="container">
+                <div class="header">
+                    <h1>SQL Server Analysis Report</h1>
+                    <h2>Database: {database}</h2>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h4>State</h4>
+                        <p>{stats_result.get("state", "N/A")}</p>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Recovery Model</h4>
+                        <p>{stats_result.get("recovery_model", "N/A")}</p>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Active Connections</h4>
+                        <p>{stats_result.get("active_connections", "N/A")}</p>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Compatibility Level</h4>
+                        <p>{stats_result.get("compatibility_level", "N/A")}</p>
+                    </div>
+                </div>
+
+                <div class="queries">
+                    <h3>Top 5 Long-Running Queries</h3>
+                    {query_section_html}
+                </div>
             </div>
-            <!-- ... other html ... -->
         </body>
         </html>
         """
