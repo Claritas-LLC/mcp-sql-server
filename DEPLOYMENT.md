@@ -65,24 +65,29 @@ docker compose up --build
 
 ---
 
-## 🐳 Building the Docker Image
+## 🧪 Testing & Validation
 
-To deploy to the cloud, you first need to build and push the image.
+This project includes a comprehensive test suite covering **Unit**, **Integration**, **Stress**, and **Blackbox** tests.
 
-```bash
-# Build
-docker build -t harryvaldez/mcp_sqlserver:latest .
+1.  **Prerequisites**:
+    *   Docker (for provisioning the temporary SQL Server 2019 container)
+    *   Python 3.10+
+    *   `pip install -r tests/requirements-test.txt`
 
-# Push
-docker push harryvaldez/mcp_sqlserver:latest
-```
-Notes:
-- The base image is python:3.11-slim (Debian based).
-- Includes Microsoft ODBC Driver 17 for SQL Server.
-- Runs as a non-root `appuser` for enhanced security.
-- Automatically loads environment variables from a `.env` file if present.
-- Verified to handle connection pooling safely without leaks.
-- Default internal port is 8000 (often mapped to 8085 locally); ensure it is available when testing.
+2.  **Run Full Test Cycle**:
+    ```bash
+    # 1. Provision & Populate Test Database
+    python tests/setup_sql_server.py
+    
+    # 2. Run Comprehensive Test Suite
+    pytest -v tests/
+    ```
+
+3.  **Verification Coverage**:
+    *   ✅ **Unit Tests**: Core connection logic and helper functions, mocked to run without a live database.
+    *   ✅ **Integration Tests**: End-to-end verification of all 25+ MCP tools against a live SQL Server 2019 instance.
+    *   ✅ **Stress Tests**: Verifies stability under concurrent load (50+ parallel requests).
+    *   ✅ **Blackbox Tests**: Validates the MCP protocol implementation and tool discovery.
 
 ---
 

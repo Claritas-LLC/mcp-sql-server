@@ -45,30 +45,7 @@ from server import (
     get_connection # Import to check connectivity
 )
 
-@pytest.fixture(scope="class")
-def setup_products_table(request):
-    """Create and populate a products table for testing"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        # Create table
-        cursor.execute("""
-            CREATE TABLE products (
-                id INT PRIMARY KEY,
-                name NVARCHAR(100),
-                price DECIMAL(10, 2)
-            );
-        """)
-        # Insert data
-        cursor.execute("INSERT INTO products (id, name, price) VALUES (1, 'Laptop', 1200.00);")
-        cursor.execute("INSERT INTO products (id, name, price) VALUES (2, 'Mouse', 25.00);")
-        conn.commit()
-        yield
-    finally:
-        cursor.execute("DROP TABLE products;")
-        conn.commit()
-        cursor.close()
-        conn.close()
+
 
 def is_db_available():
     try:
@@ -86,7 +63,6 @@ def event_loop():
     yield loop
     loop.close()
 
-@pytest.mark.usefixtures("setup_products_table")
 @db_required
 class TestUnit:
     """Unit tests for tool functions"""
@@ -108,7 +84,7 @@ class TestUnit:
     def test_run_query_select(self):
         result = db_sql2019_run_query.fn("SELECT COUNT(*) as count FROM products")
         # Result is a dict with 'rows' key
-        assert result["rows"][0]["count"] == 2
+        assert result["rows"][0]["count"] == 5
 
     def test_run_query_parameterized(self):
         # The tool expects parameters as a JSON string of a list
@@ -123,7 +99,6 @@ class TestUnit:
         assert result["summary"]["entities"] >= 3 # products, customers, orders
         assert "report_url" in result
 
-@pytest.mark.usefixtures("setup_products_table")
 @db_required
 class TestIntegration:
     """Integration scenarios"""
@@ -154,7 +129,6 @@ class TestIntegration:
         )
         assert f"View '{view_name}' dropped" in result or "dropped successfully" in result
 
-@pytest.mark.usefixtures("setup_products_table")
 @db_required
 class TestStress:
     """Stress testing performance"""

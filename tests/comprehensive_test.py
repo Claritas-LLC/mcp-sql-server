@@ -8,11 +8,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 import importlib
 
-# Add parent directory to path to import importlib
-import server
+# Add parent directory to path to import server module
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Configuration for tests is handled via fixture
 import server
 
 @pytest.fixture(scope="module", autouse=True)

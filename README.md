@@ -246,11 +246,11 @@ This project includes a comprehensive test suite covering **Unit**, **Integratio
     python tests/setup_sql_server.py
     
     # 2. Run Comprehensive Test Suite
-    pytest -v tests/comprehensive_test.py
+    pytest -v tests/
     ```
 
 3.  **Verification Coverage**:
-    *   ✅ **Unit Tests**: Core connection logic and helper functions.
+    *   ✅ **Unit Tests**: Core connection logic and helper functions, mocked to run without a live database.
     *   ✅ **Integration Tests**: End-to-end verification of all 25+ MCP tools against a live SQL Server 2019 instance.
     *   ✅ **Stress Tests**: Verifies stability under concurrent load (50+ parallel requests).
     *   ✅ **Blackbox Tests**: Validates the MCP protocol implementation and tool discovery.

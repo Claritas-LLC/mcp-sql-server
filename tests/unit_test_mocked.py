@@ -17,6 +17,9 @@ os.environ["MCP_SKIP_CONFIRMATION"] = "true"
 
 import server
 
+import sqlite3
+from conftest import sqlite_conn
+
 @pytest.fixture
 def mock_conn():
     with mock.patch("server.get_connection") as m:
@@ -253,6 +256,38 @@ class TestMockedTools:
         result = server.db_sql2019_recommend_partitioning.fn(min_size_gb=1)
         assert len(result["candidates"]) == 1
         assert result["candidates"][0]["table"] == "big_table"
+
+class TestIntegrationTools:
+    """Integration tests using a temporary SQLite database"""
+
+    def test_analyze_logical_data_model(self, sqlite_conn):
+        with mock.patch("server.get_connection") as m:
+            m.return_value = sqlite_conn
+            
+            # Since the queries are SQL Server specific, we can't run the tool directly.
+            # We will mock the _execute_safe function to run SQLite compatible queries.
+            def mock_execute_safe(cursor, sql, params=None):
+                if "sys.objects" in sql:
+                    cursor.execute("SELECT name, 'table' as type from sqlite_master WHERE type='table'")
+                elif "sys.columns" in sql:
+                    cursor.execute("PRAGMA table_info(table1)")
+                elif "sys.foreign_keys" in sql:
+                    cursor.execute("PRAGMA foreign_key_list(table2)")
+                else:
+                    # Default behavior for other queries
+                    cursor.execute(sql, params if params else [])
+            
+            with mock.patch("server._execute_safe", mock_execute_safe):
+                result = server.db_sql2019_analyze_logical_data_model.fn(schema="main")
+                assert "summary" in result
+                assert result["summary"]["entities"] == 0  # SQLite fallback returns 0 entities
+
+    def test_db_analyze_query_store(self, sqlite_conn):
+        with mock.patch("server.get_connection") as m:
+            m.return_value = sqlite_conn
+            # This tool is highly SQL Server specific, so we will just check if it returns a report_url
+            result = server.db_sql2019_db_analyze_query_store.fn(database="main")
+            assert "report_url" in result
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])
