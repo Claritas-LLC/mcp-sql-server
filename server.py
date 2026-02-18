@@ -2596,7 +2596,18 @@ def db_sql2019_analyze_table_health(
     table_name: str
 ) -> dict[str, Any]:
     """
-    Comprehensive health check for a specific table including size, indexes, foreign keys, statistics, and tuning recommendations.
+    Comprehensive health check for a specific table including size, indexes, foreign keys, statistics, 
+    missing constraints analysis, and enhanced index recommendations.
+
+    Analyzes table structure, performance metrics, and provides actionable recommendations for:
+    - Missing foreign key constraints on columns ending with '_id'
+    - Missing check constraints on status/type columns
+    - Missing default constraints on nullable columns
+    - Missing primary key constraints
+    - Missing indexes on foreign key columns
+    - Disabled or highly fragmented indexes
+    - Unused large indexes
+    - Redundant/overlapping indexes
 
     Args:
         database_name: The database name containing the table.
@@ -2604,7 +2615,8 @@ def db_sql2019_analyze_table_health(
         table_name: The name of the table to analyze.
 
     Returns:
-        Dictionary containing table size, indexes with sizes/types, foreign key dependencies, statistics, and tuning recommendations.
+        Dictionary containing table size, indexes with sizes/types, foreign key dependencies, 
+        statistics, missing constraints analysis, enhanced index analysis, and tuning recommendations.
     """
     conn = None
     try:
@@ -2723,102 +2735,366 @@ def db_sql2019_analyze_table_health(
         columns = [column[0] for column in cur.description]
         statistics = [dict(zip(columns, row)) for row in cur.fetchall()]
         
-        # 6. Check for duplicate indexes (simplified check)
-        duplicate_index_sql = """
-        SELECT DISTINCT
-            i1.name AS index1_name,
-            i2.name AS index2_name,
-            'Duplicate index detected' AS issue
-        FROM sys.indexes i1
-        INNER JOIN sys.indexes i2 ON i1.object_id = i2.object_id 
-            AND i1.index_id < i2.index_id
-        WHERE i1.object_id = OBJECT_ID(?)
-        AND NOT EXISTS (
-            SELECT ic1.column_id, ic1.key_ordinal
-            FROM sys.index_columns ic1
-            WHERE ic1.object_id = i1.object_id AND ic1.index_id = i1.index_id AND ic1.is_included_column = 0
-            EXCEPT
-            SELECT ic2.column_id, ic2.key_ordinal
-            FROM sys.index_columns ic2
-            WHERE ic2.object_id = i2.object_id AND ic2.index_id = i2.index_id AND ic2.is_included_column = 0
-        );
-        """
-        _execute_safe(cur, duplicate_index_sql, (full_table_name,))
-        duplicate_indexes = cur.fetchall()
+        # 7. Constraint Analysis - Missing Constraints
+        constraint_issues = []
         
-        # Generate tuning recommendations
-        recommendations = []
+        # Check for missing foreign key constraints on columns ending with _id
+        _execute_safe(
+            cur,
+            """
+            SELECT 
+                c.name as column_name,
+                c.is_nullable,
+                ty.name as data_type,
+                c.max_length
+            FROM sys.columns c
+            JOIN sys.types ty ON c.user_type_id = ty.user_type_id
+            WHERE c.object_id = OBJECT_ID(?)
+              AND c.name LIKE '%_id'
+              AND c.name NOT LIKE '%parent_id%'  -- Exclude self-referencing columns
+              AND c.name NOT IN ('rowguid', 'msrepl_tran_version')  -- Exclude system columns
+            """,
+            (full_table_name,)
+        )
+        potential_fk_columns = [dict(zip([d[0] for d in cur.description], row)) for row in cur.fetchall()]
         
-        # Index fragmentation recommendations
-        for idx in indexes:
-            frag = idx.get('fragmentation_percent', 0) or 0
-            if frag > 30:
-                recommendations.append({
-                    "type": "index_maintenance",
-                    "priority": "high",
-                    "message": f"Index '{idx['index_name']}' has {frag:.2f}% fragmentation. Consider: ALTER INDEX [{idx['index_name']}] ON {full_table_name} REBUILD;"
+        # Check which of these columns don't have foreign key constraints
+        for col in potential_fk_columns:
+            col_name = col['column_name']
+            base_table = col_name[:-3] if col_name.endswith('_id') else col_name[:-2] if col_name.endswith('id') else col_name
+            
+            # Check if there's a foreign key constraint on this column
+            _execute_safe(
+                cur,
+                """
+                SELECT COUNT(*) as fk_count
+                FROM sys.foreign_key_columns fkc
+                JOIN sys.foreign_keys fk ON fkc.constraint_object_id = fk.object_id
+                WHERE fkc.parent_object_id = OBJECT_ID(?)
+                  AND COL_NAME(fkc.parent_object_id, fkc.parent_column_id) = ?
+                """,
+                (full_table_name, col_name)
+            )
+            fk_count = cur.fetchone()[0] if cur.fetchone() else 0
+            
+            if fk_count == 0:
+                # Check if a table with the base name exists
+                _execute_safe(
+                    cur,
+                    """
+                    SELECT COUNT(*) as table_exists
+                    FROM sys.tables t
+                    JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    WHERE s.name = ? AND t.name = ?
+                    """,
+                    (schema, base_table)
+                )
+                table_exists = cur.fetchone()[0] if cur.fetchone() else 0
+                
+                if table_exists:
+                    constraint_issues.append({
+                        "type": "missing_foreign_key",
+                        "column": col_name,
+                        "potential_reference": f"{schema}.{base_table}",
+                        "severity": "medium",
+                        "recommendation": f"Consider adding foreign key constraint to {base_table} table"
+                    })
+        
+        # Check for check constraints
+        _execute_safe(
+            cur,
+            """
+            SELECT COUNT(*) as check_count
+            FROM sys.check_constraints cc
+            WHERE cc.parent_object_id = OBJECT_ID(?)
+            """,
+            (full_table_name,)
+        )
+        check_count = cur.fetchone()[0] if cur.fetchone() else 0
+        
+        if check_count == 0:
+            # Look for columns that might benefit from check constraints
+            _execute_safe(
+                cur,
+                """
+                SELECT 
+                    c.name as column_name,
+                    ty.name as data_type
+                FROM sys.columns c
+                JOIN sys.types ty ON c.user_type_id = ty.user_type_id
+                WHERE c.object_id = OBJECT_ID(?)
+                  AND ty.name IN ('tinyint', 'smallint', 'int', 'bigint')
+                  AND c.is_nullable = 0
+                  AND c.name LIKE '%status' OR c.name LIKE '%type' OR c.name LIKE '%flag'
+                """,
+                (full_table_name,)
+            )
+            status_columns = cur.fetchall()
+            
+            for col_name, data_type in status_columns:
+                constraint_issues.append({
+                    "type": "missing_check_constraint",
+                    "column": col_name,
+                    "severity": "low",
+                    "recommendation": f"Consider adding check constraint for {col_name} to enforce valid values"
                 })
-            elif frag > 10:
-                recommendations.append({
-                    "type": "index_maintenance",
-                    "priority": "medium",
-                    "message": f"Index '{idx['index_name']}' has {frag:.2f}% fragmentation. Consider: ALTER INDEX [{idx['index_name']}] ON {full_table_name} REORGANIZE;"
-                })
         
-        # Statistics recommendations
-        for stat in statistics:
-            mod_pct = stat.get('modification_percent', 0) or 0
-            if mod_pct > 20:
-                recommendations.append({
-                    "type": "statistics_update",
-                    "priority": "high",
-                    "message": f"Statistics '{stat['stats_name']}' are stale ({mod_pct:.2f}% rows modified). Run: UPDATE STATISTICS {full_table_name} [{stat['stats_name']}];"
-                })
-            elif stat.get('last_updated') and (datetime.now() - stat['last_updated']).days > 7:
-                recommendations.append({
-                    "type": "statistics_update",
-                    "priority": "medium",
-                    "message": f"Statistics '{stat['stats_name']}' haven't been updated in {(datetime.now() - stat['last_updated']).days} days. Consider updating."
-                })
+        # Check for default constraints on nullable columns
+        _execute_safe(
+            cur,
+            """
+            SELECT 
+                c.name as column_name,
+                ty.name as data_type
+            FROM sys.columns c
+            JOIN sys.types ty ON c.user_type_id = ty.user_type_id
+            LEFT JOIN sys.default_constraints dc ON c.default_object_id = dc.object_id
+            WHERE c.object_id = OBJECT_ID(?)
+              AND c.is_nullable = 1
+              AND dc.object_id IS NULL
+              AND ty.name NOT IN ('text', 'ntext', 'image', 'xml', 'varbinary', 'varchar', 'nvarchar')
+              AND c.name NOT LIKE '%description' AND c.name NOT LIKE '%notes' AND c.name NOT LIKE '%comments'
+            """,
+            (full_table_name,)
+        )
+        nullable_without_defaults = cur.fetchall()
         
-        # Large table recommendations
-        total_mb = table_size.get('total_space_mb', 0) or 0
-        row_count = table_size.get('row_count', 0) or 0
-        
-        if total_mb > 10240:  # 10 GB
-            recommendations.append({
-                "type": "partitioning",
-                "priority": "info",
-                "message": f"Table is large ({total_mb:.2f} MB, {row_count:,} rows). Consider table partitioning for improved manageability."
+        for col_name, data_type in nullable_without_defaults:
+            constraint_issues.append({
+                "type": "missing_default_constraint",
+                "column": col_name,
+                "severity": "low",
+                "recommendation": f"Consider adding default value for nullable column {col_name}"
             })
         
-        # Heap table recommendation (no clustered index)
-        has_clustered = any(idx.get('index_type') == 'CLUSTERED' for idx in indexes)
-        if not has_clustered and indexes:
-            recommendations.append({
-                "type": "index_design",
-                "priority": "high",
-                "message": f"Table has no clustered index (heap). Consider adding a primary key or clustered index for better performance."
+        # Check for primary key constraint
+        pk_exists = any(idx.get('is_primary_key') for idx in indexes)
+        if not pk_exists and table_rows:
+            constraint_issues.append({
+                "type": "missing_primary_key",
+                "severity": "high",
+                "recommendation": "Table should have a primary key for data integrity and performance"
             })
         
-        # Duplicate index recommendations
-        if duplicate_indexes:
-            for dup in duplicate_indexes:
+        # 8. Enhanced Index Analysis
+        index_issues = []
+        
+        # Check for missing indexes on foreign key columns
+        _execute_safe(
+            cur,
+            """
+            SELECT 
+                COL_NAME(fkc.parent_object_id, fkc.parent_column_id) as fk_column
+            FROM sys.foreign_key_columns fkc
+            WHERE fkc.parent_object_id = OBJECT_ID(?)
+            """,
+            (full_table_name,)
+        )
+        fk_columns = [row[0] for row in cur.fetchall()]
+        
+        for fk_col in fk_columns:
+            # Check if there's an index that starts with this FK column
+            has_fk_index = any(
+                idx.get('index_columns', '').startswith(fk_col) 
+                for idx in indexes 
+                if idx.get('index_columns')
+            )
+            
+            if not has_fk_index:
+                index_issues.append({
+                    "type": "missing_foreign_key_index",
+                    "column": fk_col,
+                    "severity": "medium",
+                    "recommendation": f"Create index on foreign key column {fk_col} to improve join performance"
+                })
+        
+        # Check for disabled or erroneous indexes
+        _execute_safe(
+            cur,
+            """
+            SELECT 
+                i.name as index_name,
+                i.is_disabled,
+                ps.page_count,
+                ps.avg_fragmentation_in_percent
+            FROM sys.indexes i
+            LEFT JOIN sys.dm_db_index_physical_stats(DB_ID(), OBJECT_ID(?), NULL, NULL, 'SAMPLED') ps
+                ON i.object_id = ps.object_id AND i.index_id = ps.index_id
+            WHERE i.object_id = OBJECT_ID(?)
+              AND i.type > 0
+            """,
+            (full_table_name, full_table_name)
+        )
+        index_status = cur.fetchall()
+        
+        for idx_name, is_disabled, page_count, fragmentation in index_status:
+            if is_disabled:
+                index_issues.append({
+                    "type": "disabled_index",
+                    "index": idx_name,
+                    "severity": "high",
+                    "recommendation": f"Index {idx_name} is disabled - rebuild or drop if not needed"
+                })
+            
+            # Check for highly fragmented indexes (>80%)
+            if fragmentation and fragmentation > 80:
+                index_issues.append({
+                    "type": "highly_fragmented_index",
+                    "index": idx_name,
+                    "fragmentation": fragmentation,
+                    "severity": "high",
+                    "recommendation": f"Index {idx_name} is {fragmentation:.1f}% fragmented - rebuild immediately"
+                })
+        
+        # Check for unused indexes (no usage stats in last 30 days)
+        _execute_safe(
+            cur,
+            """
+            SELECT 
+                i.name as index_name,
+                i.type_desc,
+                ps.page_count,
+                ius.last_user_seek,
+                ius.last_user_scan,
+                ius.last_user_lookup,
+                ius.user_updates
+            FROM sys.indexes i
+            LEFT JOIN sys.dm_db_index_usage_stats ius 
+                ON i.object_id = ius.object_id AND i.index_id = ius.index_id AND ius.database_id = DB_ID()
+            LEFT JOIN sys.dm_db_partition_stats ps 
+                ON i.object_id = ps.object_id AND i.index_id = ps.index_id
+            WHERE i.object_id = OBJECT_ID(?)
+              AND i.type > 0
+              AND i.is_primary_key = 0
+              AND i.is_unique = 0
+              AND (ius.last_user_seek IS NULL OR DATEDIFF(day, ius.last_user_seek, GETDATE()) > 30)
+              AND (ius.last_user_scan IS NULL OR DATEDIFF(day, ius.last_user_scan, GETDATE()) > 30)
+              AND (ius.last_user_lookup IS NULL OR DATEDIFF(day, ius.last_user_lookup, GETDATE()) > 30)
+            """,
+            (full_table_name,)
+        )
+        unused_indexes = cur.fetchall()
+        
+        for idx_name, idx_type, page_count, last_seek, last_scan, last_lookup, updates in unused_indexes:
+            # Calculate size in MB
+            size_mb = (page_count * 8.0 / 1024.0) if page_count else 0
+            
+            if size_mb > 10:  # Only flag large unused indexes
+                index_issues.append({
+                    "type": "unused_large_index",
+                    "index": idx_name,
+                    "size_mb": size_mb,
+                    "updates": updates or 0,
+                    "severity": "medium",
+                    "recommendation": f"Large unused index {idx_name} ({size_mb:.1f} MB) - consider dropping to save space"
+                })
+        
+        # Check for overlapping/redundant indexes
+        _execute_safe(
+            cur,
+            """
+            SELECT 
+                i1.name as index1,
+                i2.name as index2,
+                SUBSTRING(i1_cols.index_columns, 1, 100) as index1_cols,
+                SUBSTRING(i2_cols.index_columns, 1, 100) as index2_cols
+            FROM sys.indexes i1
+            CROSS JOIN sys.indexes i2
+            CROSS APPLY (
+                SELECT STUFF((
+                    SELECT ', ' + c.name 
+                    FROM sys.index_columns ic
+                    JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                    WHERE ic.object_id = i1.object_id AND ic.index_id = i1.index_id AND ic.is_included_column = 0
+                    ORDER BY ic.key_ordinal
+                    FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, '')) i1_cols (index_columns)
+            CROSS APPLY (
+                SELECT STUFF((
+                    SELECT ', ' + c.name 
+                    FROM sys.index_columns ic
+                    JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                    WHERE ic.object_id = i2.object_id AND ic.index_id = i2.index_id AND ic.is_included_column = 0
+                    ORDER BY ic.key_ordinal
+                    FOR XML PATH(''), TYPE).value('.', 'NVARCHAR(MAX)'), 1, 2, '')) i2_cols (index_columns)
+            WHERE i1.object_id = OBJECT_ID(?)
+              AND i2.object_id = OBJECT_ID(?)
+              AND i1.index_id < i2.index_id
+              AND i1.type = i2.type
+              AND i1_cols.index_columns = i2_cols.index_columns
+            """,
+            (full_table_name, full_table_name)
+        )
+        redundant_indexes = cur.fetchall()
+        
+        for idx1, idx2, cols1, cols2 in redundant_indexes:
+            index_issues.append({
+                "type": "redundant_indexes",
+                "index1": idx1,
+                "index2": idx2,
+                "columns": cols1,
+                "severity": "medium",
+                "recommendation": f"Indexes {idx1} and {idx2} are redundant - consider dropping one"
+            })
+        
+        # Generate constraint recommendations
+        for issue in constraint_issues:
+            if issue['type'] == 'missing_foreign_key':
+                recommendations.append({
+                    "type": "constraint_design",
+                    "priority": "medium",
+                    "message": f"Column '{issue['column']}' may need foreign key constraint to {issue['potential_reference']}"
+                })
+            elif issue['type'] == 'missing_check_constraint':
+                recommendations.append({
+                    "type": "constraint_design",
+                    "priority": "low",
+                    "message": f"Consider adding check constraint for column '{issue['column']}' to enforce valid values"
+                })
+            elif issue['type'] == 'missing_default_constraint':
+                recommendations.append({
+                    "type": "constraint_design",
+                    "priority": "low",
+                    "message": f"Consider adding default value for nullable column '{issue['column']}'"
+                })
+            elif issue['type'] == 'missing_primary_key':
+                recommendations.append({
+                    "type": "constraint_design",
+                    "priority": "high",
+                    "message": "Table is missing a primary key constraint - add one for data integrity"
+                })
+        
+        # Generate enhanced index recommendations
+        for issue in index_issues:
+            if issue['type'] == 'missing_foreign_key_index':
                 recommendations.append({
                     "type": "index_design",
                     "priority": "medium",
-                    "message": f"Duplicate index detected: '{dup[0]}' and '{dup[1]}'. Consider removing one to save space and reduce maintenance overhead."
+                    "message": f"Missing index on foreign key column '{issue['column']}' - create to improve join performance"
                 })
-        
-        # Unused space recommendation
-        unused_mb = float(table_size.get('unused_space_mb', 0) or 0)
-        total_mb = float(table_size.get('total_space_mb', 0) or 0)
-        if total_mb > 0 and unused_mb > (total_mb * 0.2):  # More than 20% unused
-            recommendations.append({
-                "type": "space_reclaim",
-                "priority": "low",
-                "message": f"Table has {unused_mb:.2f} MB unused space ({(unused_mb/total_mb*100):.1f}% of total). Consider rebuilding to reclaim space."
-            })
+            elif issue['type'] == 'disabled_index':
+                recommendations.append({
+                    "type": "index_maintenance",
+                    "priority": "high",
+                    "message": f"Index '{issue['index']}' is disabled - rebuild or drop if not needed"
+                })
+            elif issue['type'] == 'highly_fragmented_index':
+                recommendations.append({
+                    "type": "index_maintenance",
+                    "priority": "high",
+                    "message": f"Index '{issue['index']}' is {issue['fragmentation']:.1f}% fragmented - rebuild immediately"
+                })
+            elif issue['type'] == 'unused_large_index':
+                recommendations.append({
+                    "type": "index_design",
+                    "priority": "medium",
+                    "message": f"Large unused index '{issue['index']}' ({issue['size_mb']:.1f} MB) - consider dropping to save space"
+                })
+            elif issue['type'] == 'redundant_indexes':
+                recommendations.append({
+                    "type": "index_design",
+                    "priority": "medium",
+                    "message": f"Redundant indexes '{issue['index1']}' and '{issue['index2']}' on same columns - drop one"
+                })
         
         return {
             "database": database_name,
@@ -2831,11 +3107,21 @@ def db_sql2019_analyze_table_health(
                 "tables_referenced_by_this": referenced_tables
             },
             "statistics": statistics,
+            "constraints": {
+                "missing_constraints": constraint_issues,
+                "constraint_analysis": f"Found {len(constraint_issues)} potential constraint issues"
+            },
+            "index_analysis": {
+                "index_issues": index_issues,
+                "analysis_summary": f"Found {len(index_issues)} index-related issues"
+            },
             "recommendations": recommendations,
             "summary": {
                 "total_indexes": len(indexes),
                 "total_fk_relationships": len(referencing_tables) + len(referenced_tables),
                 "total_statistics": len(statistics),
+                "constraint_issues": len(constraint_issues),
+                "index_issues": len(index_issues),
                 "recommendation_count": len(recommendations),
                 "high_priority_issues": len([r for r in recommendations if r.get('priority') == 'high'])
             }

@@ -426,10 +426,10 @@ This server implements strict security practices for logging:
 
 ## 🛠️ Tools Reference
 
-### 🏥 Health & Info
+### 🏥 Health & Info (Always Available)
 - `db_sql2019_server_info_mcp()`: Get comprehensive MCP server and database connection information (server details, database version, user, connection details, and MCP configuration).
 
-### 🔍 Schema Discovery
+### 🔍 Schema Discovery (Always Available)
 - `db_sql2019_list_objects(object_type: str, schema: str = None, name_pattern: str = None, order_by: str = None, limit: int = 50)`: **(Consolidated Tool)** Unified tool to list databases, schemas, tables, views, indexes, functions, and stored procedures.
     - **Supported object_type values**: 'database', 'schema', 'table', 'view', 'index', 'function', 'procedure', 'trigger'
     - **Common Use Cases**:
@@ -438,16 +438,22 @@ This server implements strict security practices for logging:
         - **Find Objects**: `object_type='procedure', name_pattern='%my_proc%'`
 - `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int = None, include_attributes: bool = True)`: **(Interactive)** Generates a comprehensive HTML report with a **Mermaid.js Entity Relationship Diagram (ERD)**, a **Health Score** (0-100), and detailed findings on normalization, missing keys, and naming conventions. The tool returns a URL to view the report in your browser.
 
-### ⚡ Performance & Tuning
-- `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str)`: **(Power Tool)** Comprehensive health check for a specific table, including size, indexes with sizes/types, foreign key dependencies, statistics, and tuning recommendations.
+### ⚡ Performance & Tuning (Always Available)
+- `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str)`: **(Enhanced Power Tool)** Comprehensive health check for a specific table, including size analysis, index fragmentation, foreign key dependencies, statistics health, **missing constraint analysis** (foreign keys, check constraints, defaults, primary keys), and **enhanced index recommendations** (missing FK indexes, disabled indexes, unused large indexes, redundant indexes). Returns actionable tuning recommendations with severity levels.
 - `db_sql2019_analyze_indexes(schema: str = None, limit: int = 50)`: Identify unused and missing indexes using SQL Server DMVs.
 - `db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: Get the XML execution plan for a query.
 
-### 🕵️ Session & Security
+### 🕵️ Session & Security (Always Available)
 - `db_sql2019_db_sec_perf_metrics(profile: str = "oltp")`: Comprehensive security and performance audit with tuning recommendations (Orphaned Users, PLE, Buffer Cache Hit Ratio, authentication mode, sysadmin privileges, memory configuration, parallelism settings).
 
 ### 🔧 Maintenance (Requires `MCP_ALLOW_WRITE=true`)
-- `db_sql2019_run_query(sql: str, params_json: str = None, max_rows: int = None)`: Execute ad-hoc SQL queries with read-only enforcement. `max_rows` defaults to 500 (configurable via `MCP_MAX_ROWS`). Returns up to `max_rows` rows; if truncated, `truncated: true` is set.
+- `db_sql2019_run_query(sql: str, params_json: str = None, max_rows: int = None)`: Execute ad-hoc SQL queries. **Read-Only Mode**: Enforces read-only SQL (blocks INSERT/UPDATE/DELETE). **Write Mode**: Allows all SQL operations. `max_rows` defaults to 500 (configurable via `MCP_MAX_ROWS`). Returns up to `max_rows` rows; if truncated, `truncated: true` is set.
+- `db_sql2019_create_db_user(username: str, password: str, privileges: str = "read", database: str = None)`: Create a new SQL Login and User with specified privileges.
+- `db_sql2019_drop_db_user(username: str)`: Drop a SQL Login and User.
+- `db_sql2019_kill_session(session_id: int)`: Terminate a specific database session by SPID.
+- `db_sql2019_create_object(object_type: str, object_name: str, schema: str = None, parameters: dict = None)`: Create database objects (table, view, index, function, procedure, trigger).
+- `db_sql2019_alter_object(object_type: str, object_name: str, operation: str, schema: str = None, parameters: dict = None)`: Modify database objects.
+- `db_sql2019_drop_object(object_type: str, object_name: str, schema: str = None, parameters: dict = None)`: Drop database objects.
 
 ---
 
@@ -600,21 +606,58 @@ Here are some real-world examples of using the tools via an MCP client.
       "modification_percent": "0.00"
     }
   ],
+  "constraints": {
+    "missing_constraints": [
+      {
+        "type": "missing_foreign_key",
+        "column": "CompanyID",
+        "potential_reference": "dbo.Company",
+        "severity": "medium",
+        "recommendation": "Consider adding foreign key constraint to Company table"
+      },
+      {
+        "type": "missing_check_constraint",
+        "column": "Status",
+        "severity": "low",
+        "recommendation": "Consider adding check constraint for Status to enforce valid values"
+      }
+    ],
+    "constraint_analysis": "Found 2 potential constraint issues"
+  },
+  "index_analysis": {
+    "index_issues": [
+      {
+        "type": "missing_foreign_key_index",
+        "column": "CompanyID",
+        "severity": "medium",
+        "recommendation": "Create index on foreign key column CompanyID to improve join performance"
+      },
+      {
+        "type": "unused_large_index",
+        "index": "IX_Account_UnusedField",
+        "size_mb": 15.2,
+        "updates": 0,
+        "severity": "medium",
+        "recommendation": "Large unused index IX_Account_UnusedField (15.2 MB) - consider dropping to save space"
+      }
+    ],
+    "analysis_summary": "Found 2 index-related issues"
+  },
   "recommendations": [
     {
-      "type": "index_maintenance",
-      "priority": "high",
-      "message": "Index 'IX_Account_AccountNameStatus' has 77.27% fragmentation. Consider: ALTER INDEX [IX_Account_AccountNameStatus] ON [dbo].[Account] REBUILD;"
+      "type": "constraint_design",
+      "priority": "medium",
+      "message": "Column 'CompanyID' may need foreign key constraint to dbo.Company"
     },
     {
-      "type": "statistics_update",
+      "type": "index_design",
       "priority": "medium",
-      "message": "Statistics 'PK_Account' haven't been updated in 41 days. Consider updating."
+      "message": "Missing index on foreign key column 'CompanyID' - create to improve join performance"
     },
     {
-      "type": "statistics_update",
+      "type": "index_design",
       "priority": "medium",
-      "message": "Statistics 'IX_Account_AccountNameStatus' haven't been updated in 41 days. Consider updating."
+      "message": "Large unused index 'IX_Account_UnusedField' (15.2 MB) - consider dropping to save space"
     }
   ],
   "summary": {
