@@ -848,14 +848,40 @@ Here are some real-world examples of using the tools via an MCP client.
 ```
 
 ### 6. Logical Data Model Analysis
-**Prompt:** `using sqlserver, call db_sql2019_analyze_logical_data_model(schema='Sales'). Review the resulting logical data model.`
+**Prompt:** `using sqlserver, call db_sql2019_analyze_logical_data_model(database_name='USGISPRO_800', schema='dbo') and display results`
 
-**Result (Summarized):**
-The analysis of the `Sales` schema reveals...
-*   **Total Entities Analyzed:** 15
-*   **Missing Primary Keys:** 2 tables (`SalesLog`, `ErrorLog`)
-*   **Missing Foreign Keys:** 0
-*   **Health Score:** 92/100
+**Result:**
+```json
+{
+  "message": "Analysis complete for database 'USGISPRO_800' schema 'dbo'. View the interactive ERD report at the URL below.",
+  "database": "USGISPRO_800",
+  "schema": "dbo",
+  "report_url": "http://localhost:8085/data-model-analysis?id=abc123-def456-ghi789",
+  "summary": {
+    "database": "USGISPRO_800",
+    "schema": "dbo",
+    "generated_at_utc": "2024-12-18T14:30:45.123456",
+    "entities": 15,
+    "relationships": 8,
+    "issues_count": {
+      "entities": 2,
+      "attributes": 3,
+      "relationships": 1,
+      "identifiers": 1,
+      "normalization": 2
+    }
+  }
+}
+```
+
+**Interactive ERD Report Features:**
+- **Entity-Relationship Diagram**: Interactive Mermaid diagram with pan/zoom controls
+- **Key Findings**: Naming convention issues, missing primary keys, normalization problems
+- **Recommendations**: Suggested improvements for database design and performance
+- **Detailed Analysis**: Complete table structure, constraints, and relationships
+- **Model Score**: Overall health score based on best practices (100 - issues × 2)
+
+*Open the `report_url` in your browser to view the full interactive analysis with ERD visualization.*
 
 ---
 

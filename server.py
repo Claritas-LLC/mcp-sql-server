@@ -3430,24 +3430,27 @@ def db_sql2019_db_sec_perf_metrics(profile: str = "oltp") -> dict[str, Any]:
 
 @mcp.tool
 def db_sql2019_analyze_logical_data_model(
+    database_name: str,
     schema: str = "dbo",
     include_views: bool = False,
     max_entities: Optional[int] = None,
     include_attributes: bool = True
 ) -> dict[str, Any]:
     """
-    Generate a logical data model (LDM) for a schema and produce issues and recommendations.
+    Generate a logical data model (LDM) for a specific database and schema, and produce issues and recommendations.
 
     The model includes entities (tables), attributes (columns), identifiers (PK/UK), and relationships (FK).
+    Generates an interactive ERD in a web UI for visualization.
 
     Args:
+        database_name: The database name to analyze.
         schema: Schema to analyze (default: "dbo").
         include_views: Include views/materialized views as entities (default: False).
         max_entities: Maximum number of entities to include (default: 200).
         include_attributes: Include full attribute details (default: True).
 
     Returns:
-        Dictionary containing logical model, issues, and recommendations.
+        Dictionary containing analysis summary and URL to interactive ERD web UI.
     """
     def _snake_case(name: str) -> bool:
         return bool(re.match(r"^[a-z][a-z0-9_]*$", name))
@@ -3468,6 +3471,9 @@ def db_sql2019_analyze_logical_data_model(
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            # Switch to the specified database
+            _execute_safe(cur, f"USE [{database_name}]")
+
             _execute_safe(cur, "select GETUTCDATE() as generated_at_utc")
             generated_at_row = cur.fetchone() or []
             generated_at = generated_at_row[0]
@@ -3877,6 +3883,7 @@ def db_sql2019_analyze_logical_data_model(
                 })
 
             summary = {
+                "database": database_name,
                 "schema": schema,
                 "generated_at_utc": generated_at_iso,
                 "entities": len(entity_map),
@@ -3908,7 +3915,9 @@ def db_sql2019_analyze_logical_data_model(
             url = f"http://{host}:{port}/data-model-analysis?id={analysis_id}"
             
             return {
-                "message": "Analysis complete. View the interactive report at the URL below.",
+                "message": f"Analysis complete for database '{database_name}' schema '{schema}'. View the interactive ERD report at the URL below.",
+                "database": database_name,
+                "schema": schema,
                 "report_url": url,
                 "summary": summary
             }
