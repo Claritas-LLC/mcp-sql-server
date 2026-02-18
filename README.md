@@ -535,107 +535,180 @@ Here are some real-world examples of using the tools via an MCP client.
 ]
 
 ### 3. Analyze Table Health (Power Tool)
-**Prompt:** `using sqlserver, call db_sql2019_analyze_table_health(database_name='AdventureWorks', schema='Sales', table_name='SalesOrderHeader') and display results`
+**Prompt:** `using sqlserver, call db_sql2019_analyze_table_health(database_name='USGISPRO_800', schema='dbo', table_name='Account') and display results`
 
 **Result:**
 ```json
 {
-  "database": "AdventureWorks",
-  "schema": "Sales",
-  "table": "SalesOrderHeader",
+  "database": "USGISPRO_800",
+  "schema": "dbo",
+  "table": "Account",
   "table_size": {
-    "schema_name": "Sales",
-    "table_name": "SalesOrderHeader",
-    "row_count": 31465,
-    "total_space_mb": 15.50,
-    "used_space_mb": 14.30,
-    "data_space_mb": 12.25,
-    "unused_space_mb": 1.20
+    "schema_name": "dbo",
+    "table_name": "Account",
+    "row_count": 6398,
+    "total_space_mb": "1.46",
+    "used_space_mb": "1.23",
+    "data_space_mb": "1.19",
+    "unused_space_mb": "0.23"
   },
   "indexes": [
     {
-      "index_name": "PK_SalesOrderHeader_SalesOrderID",
+      "index_name": "PK_Account",
       "index_type": "CLUSTERED",
-      "is_unique": 1,
-      "is_primary_key": 1,
-      "fragmentation_percent": 5.5,
-      "page_count": 100,
-      "index_size_mb": 0.78,
-      "index_columns": "SalesOrderID"
+      "is_unique": true,
+      "is_primary_key": true,
+      "fragmentation_percent": 0.77,
+      "page_count": 130,
+      "index_size_mb": "1.02",
+      "index_columns": "AccountID"
     },
     {
-      "index_name": "IX_SalesOrderHeader_CustomerID",
+      "index_name": "IX_Account_AccountNameStatus",
       "index_type": "NONCLUSTERED",
-      "is_unique": 0,
-      "is_primary_key": 0,
-      "fragmentation_percent": 15.2,
-      "page_count": 50,
-      "index_size_mb": 0.39,
-      "index_columns": "CustomerID"
+      "is_unique": false,
+      "is_primary_key": false,
+      "fragmentation_percent": 77.27,
+      "page_count": 22,
+      "index_size_mb": "0.17",
+      "index_columns": "AccountName, Status"
     }
   ],
   "foreign_keys": {
     "tables_referencing_this": [
       {
-        "referencing_schema": "Sales",
-        "referencing_table": "SalesOrderDetail",
-        "fk_name": "FK_SalesOrderDetail_SalesOrderHeader",
-        "referencing_columns": "SalesOrderID",
-        "referenced_columns": "SalesOrderID"
+        "referencing_schema": "dbo",
+        "referencing_table": "AccountModule",
+        "fk_name": "FK_AccountModule_Account",
+        "referencing_columns": "AccountID",
+        "referenced_columns": "AccountID"
+      },
+      {
+        "referencing_schema": "dbo",
+        "referencing_table": "AccountLogin",
+        "fk_name": "FK_AccountLogin_Account",
+        "referencing_columns": "AccountID",
+        "referenced_columns": "AccountID"
       }
     ],
     "tables_referenced_by_this": [
       {
-        "referenced_schema": "Sales",
-        "referenced_table": "Customer",
-        "fk_name": "FK_SalesOrderHeader_Customer",
-        "referencing_columns": "CustomerID",
-        "referenced_columns": "CustomerID"
+        "referenced_schema": "dbo",
+        "referenced_table": "Company",
+        "fk_name": "FK_Account_Company",
+        "referencing_columns": "CompanyID",
+        "referenced_columns": "CompanyID"
+      },
+      {
+        "referenced_schema": "dbo",
+        "referenced_table": "Account",
+        "fk_name": "FK_Account_Account",
+        "referencing_columns": "ParentAccountID",
+        "referenced_columns": "AccountID"
       }
     ]
   },
   "statistics": [
     {
-      "stats_name": "PK_SalesOrderHeader_SalesOrderID",
-      "table_name": "SalesOrderHeader",
-      "last_updated": "2024-01-15T10:30:00",
-      "row_count": 31465,
-      "rows_sampled": 31465,
-      "modification_counter": 2500,
-      "modification_percent": 7.95
+      "stats_name": "PK_Account",
+      "table_name": "Account",
+      "last_updated": "2026-01-07T20:41:01.340000",
+      "row_count": 3199,
+      "rows_sampled": 3199,
+      "modification_counter": 0,
+      "modification_percent": "0.00"
+    },
+    {
+      "stats_name": "IX_Account_AccountNameStatus",
+      "table_name": "Account",
+      "last_updated": "2026-01-07T20:41:01.470000",
+      "row_count": 3199,
+      "rows_sampled": 3199,
+      "modification_counter": 0,
+      "modification_percent": "0.00"
     }
   ],
   "recommendations": [
     {
       "type": "index_maintenance",
+      "priority": "high",
+      "message": "Index 'IX_Account_AccountNameStatus' has 77.27% fragmentation. Consider: ALTER INDEX [IX_Account_AccountNameStatus] ON [dbo].[Account] REBUILD;"
+    },
+    {
+      "type": "statistics_update",
       "priority": "medium",
-      "message": "Index 'IX_SalesOrderHeader_CustomerID' has 15.20% fragmentation. Consider: ALTER INDEX [IX_SalesOrderHeader_CustomerID] ON [Sales].[SalesOrderHeader] REORGANIZE;"
+      "message": "Statistics 'PK_Account' haven't been updated in 41 days. Consider updating."
+    },
+    {
+      "type": "statistics_update",
+      "priority": "medium",
+      "message": "Statistics 'IX_Account_AccountNameStatus' haven't been updated in 41 days. Consider updating."
     }
   ],
   "summary": {
     "total_indexes": 2,
-    "total_fk_relationships": 2,
-    "total_statistics": 1,
-    "recommendation_count": 1,
-    "high_priority_issues": 0
+    "total_fk_relationships": 43,
+    "total_statistics": 2,
+    "recommendation_count": 3,
+    "high_priority_issues": 1
   }
 }
 ```
 
 ### 4. Performance Analysis: Fragmentation
-**Prompt:** `using sqlserver, call db_sql2019_check_fragmentation() and display results`
+**Prompt:** `using sqlserver, call db_sql2019_check_fragmentation(database_name='USGISPRO_800') and display results`
 
 **Result:**
 ```json
-[
-  {
-    "schema": "Sales",
-    "object_name": "SalesOrderDetail",
-    "index_name": "PK_SalesOrderDetail_SalesOrderID_SalesOrderDetailID",
-    "fragmentation_percent": 45.2,
-    "maintenance_cmd": "ALTER INDEX [PK_SalesOrderDetail_SalesOrderID_SalesOrderDetailID] ON [Sales].[SalesOrderDetail] REBUILD"
+{
+  "database": "USGISPRO_800",
+  "analysis_parameters": {
+    "table_filter": "All Tables",
+    "schema_filter": "All Schemas",
+    "min_fragmentation_percent": 5.0,
+    "min_page_count": 100
+  },
+  "fragmented_indexes": [
+    {
+      "schema": "dbo",
+      "table_name": "Account",
+      "index_name": "IX_Account_AccountNameStatus",
+      "index_type": "NONCLUSTERED",
+      "index_level": 0,
+      "fragmentation_percent": 77.27,
+      "page_count": 22,
+      "record_count": 6398,
+      "avg_page_space_used_in_percent": 68.42,
+      "recommended_action": "REBUILD",
+      "maintenance_cmd": "ALTER INDEX [IX_Account_AccountNameStatus] ON [dbo].[Account] REBUILD",
+      "priority": "High"
+    }
+  ],
+  "healthy_indexes": [],
+  "recommendations": [
+    {
+      "priority": "High",
+      "type": "index_maintenance",
+      "object": "[dbo].[Account].[IX_Account_AccountNameStatus]",
+      "fragmentation_percent": 77.27,
+      "message": "Index 'IX_Account_AccountNameStatus' on table 'dbo.Account' has 77.27% fragmentation and requires REBUILD.",
+      "command": "ALTER INDEX [IX_Account_AccountNameStatus] ON [dbo].[Account] REBUILD"
+    },
+    {
+      "priority": "High",
+      "type": "maintenance_plan",
+      "message": "Found 1 index(es) with >30% fragmentation requiring immediate REBUILD. Schedule maintenance during low-activity period."
+    }
+  ],
+  "summary": {
+    "total_indexes_analyzed": 15,
+    "high_fragmentation_count": 1,
+    "medium_fragmentation_count": 0,
+    "low_fragmentation_count": 0,
+    "healthy_count": 14,
+    "total_pages_analyzed": 1847
   }
-]
+}
 ```
 
 ### 5. Security Audit
