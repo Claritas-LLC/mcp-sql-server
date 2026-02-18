@@ -443,7 +443,7 @@ This server implements strict security practices for logging:
 - `db_sql2019_analyze_logical_data_model(schema: str = "dbo")`: **(Interactive)** Generates a comprehensive HTML report with a **Mermaid.js Entity Relationship Diagram (ERD)**, a **Health Score** (0-100), and detailed findings on normalization, missing keys, and naming conventions. The tool returns a URL to view the report in your browser.
 
 ### ⚡ Performance & Tuning
-- `db_sql2019_analyze_table_health(schema: str = None, min_size_mb: int = 50, profile: str = "oltp")`: **(Power Tool)** Comprehensive health check for outdated statistics, heap tables, and size.
+- `db_sql2019_analyze_table_health(schema: str, table_name: str, database_name: Optional[str] = None)`: **(Power Tool)** Comprehensive health check for a specific table, including size, indexes, foreign key dependencies, and statistics.
 - `db_sql2019_check_fragmentation(limit: int = 50)`: Identifies fragmented indexes and provides `REBUILD`/`REORGANIZE` commands.
 - `db_sql2019_analyze_indexes(schema: str = None, limit: int = 50)`: Identify unused or missing indexes.
 - `db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: Get the XML execution plan for a query.
@@ -513,15 +513,26 @@ Here are some real-world examples of using the tools via an MCP client.
 **Prompt:** `using sqlserver, call db_sql2019_server_info() and display results`
 
 **Result:**
-```json
-{
-  "product_version": "Microsoft SQL Server 2019 (RTM-CU12) ...",
-  "edition": "Developer Edition (64-bit)",
-  "database": "master",
-  "current_user": "sa",
-  "auth_scheme": "SQL"
-}
-```
+[
+  {
+    "output": [
+      {
+        "id": "msg_02a73438078d67640069954a1156f48190a837815c6f70ead8",
+        "type": "message",
+        "status": "completed",
+        "content": [
+          {
+            "type": "output_text",
+            "annotations": [],
+            "logprobs": [],
+            "text": "Here are the server details:\n\n- Database: master\n- Current user: n8n_DBMonitor\n- Server: gisdevsql01\n- Address: 10.125.1.7\n- Port: 1433\n- SQL Server version: Microsoft SQL Server 2019 (RTM-CU32-GDR) (KB5068404) - 15.0.4455.2 (X64)\n  - Build/date: Oct 7 2025 21:10:15\n  - Edition: Developer Edition (64-bit)\n  - OS: Windows Server 2019 Datacenter\n- Allow write: false\n- Default max rows: 500\n\nIf you’d like, I can format this differently or extract specific fields."
+          }
+        ],
+        "role": "assistant"
+      }
+    ]
+  }
+]
 
 ### 3. Analyze Table Health (Power Tool)
 **Prompt:** `using sqlserver, call db_sql2019_analyze_table_health(schema='Sales', profile='oltp') and display results`
