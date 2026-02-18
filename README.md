@@ -671,42 +671,64 @@ Here are some real-world examples of using the tools via an MCP client.
   "fragmented_indexes": [
     {
       "schema": "dbo",
-      "table_name": "Account",
-      "index_name": "IX_Account_AccountNameStatus",
-      "index_type": "NONCLUSTERED",
-      "index_level": 0,
-      "fragmentation_percent": 77.27,
-      "page_count": 22,
-      "record_count": 6398,
-      "avg_page_space_used_in_percent": 68.42,
+      "table_name": "datasource_cn5441",
+      "index_name": null,
+      "index_type": "HEAP",
+      "fragmentation_percent": 80.00,
+      "page_count": 113,
       "recommended_action": "REBUILD",
-      "maintenance_cmd": "ALTER INDEX [IX_Account_AccountNameStatus] ON [dbo].[Account] REBUILD",
       "priority": "High"
+    },
+    {
+      "schema": "dbo",
+      "table_name": "AccountAccessAnyZipLevel",
+      "index_name": null,
+      "index_type": "HEAP",
+      "fragmentation_percent": 78.62,
+      "page_count": 3359,
+      "recommended_action": "REBUILD",
+      "priority": "High"
+    },
+    {
+      "schema": "dbo",
+      "table_name": "DataHierarchy",
+      "index_name": "nc_DataHierarchy_status_pp",
+      "index_type": "NONCLUSTERED",
+      "fragmentation_percent": 24.70,
+      "page_count": 842,
+      "recommended_action": "REORGANIZE",
+      "maintenance_cmd": "ALTER INDEX [nc_DataHierarchy_status_pp] ON [dbo].[DataHierarchy] REORGANIZE",
+      "priority": "Medium"
     }
   ],
   "healthy_indexes": [],
   "recommendations": [
     {
       "priority": "High",
-      "type": "index_maintenance",
-      "object": "[dbo].[Account].[IX_Account_AccountNameStatus]",
-      "fragmentation_percent": 77.27,
-      "message": "Index 'IX_Account_AccountNameStatus' on table 'dbo.Account' has 77.27% fragmentation and requires REBUILD.",
-      "command": "ALTER INDEX [IX_Account_AccountNameStatus] ON [dbo].[Account] REBUILD"
+      "type": "maintenance_plan",
+      "message": "Found 24 index(es) with >30% fragmentation requiring immediate REBUILD. Schedule maintenance during low-activity period."
+    },
+    {
+      "priority": "Medium",
+      "type": "maintenance_plan",
+      "message": "Found 58 index(es) with 5-30% fragmentation. Consider REORGANIZE during next maintenance window."
     },
     {
       "priority": "High",
-      "type": "maintenance_plan",
-      "message": "Found 1 index(es) with >30% fragmentation requiring immediate REBUILD. Schedule maintenance during low-activity period."
+      "type": "index_maintenance",
+      "object": "[dbo].[datasource_cn5441].[None]",
+      "fragmentation_percent": 80.00,
+      "message": "Heap table 'datasource_cn5441' has 80.00% fragmentation. Consider adding a clustered index or running REBUILD.",
+      "command": null
     }
   ],
   "summary": {
-    "total_indexes_analyzed": 15,
-    "high_fragmentation_count": 1,
-    "medium_fragmentation_count": 0,
-    "low_fragmentation_count": 0,
-    "healthy_count": 14,
-    "total_pages_analyzed": 1847
+    "total_indexes_analyzed": 192,
+    "high_fragmentation_count": 24,
+    "medium_fragmentation_count": 58,
+    "low_fragmentation_count": 1,
+    "healthy_count": 109,
+    "total_pages_analyzed": 2048804
   }
 }
 ```
