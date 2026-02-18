@@ -3042,6 +3042,464 @@ def db_sql2019_analyze_table_health(
 
 
 @mcp.tool
+def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
+    """
+    Analyze Query Store data to identify top problematic queries and provide recommendations.
+
+    Retrieves and analyzes Query Store data to find:
+    - Long-running queries (high average duration)
+    - Regressed queries (performance degradation over time)
+    - High CPU consumption queries
+    - High I/O queries
+    - Queries with high execution count and poor performance
+
+    Provides specific recommendations for each identified issue based on execution patterns,
+    plan changes, and performance metrics.
+
+    Args:
+        database_name: The database name to analyze Query Store data for.
+
+    Returns:
+        Dictionary containing Query Store analysis, identified issues with recommendations,
+        and summary statistics.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Switch to the specified database
+        _execute_safe(cur, f"USE [{database_name}]")
+
+        results = {
+            "database": database_name,
+            "query_store_enabled": False,
+            "analysis_period": {},
+            "long_running_queries": [],
+            "regressed_queries": [],
+            "high_cpu_queries": [],
+            "high_io_queries": [],
+            "high_execution_queries": [],
+            "recommendations": [],
+            "summary": {}
+        }
+
+        # Check if Query Store is enabled
+        _execute_safe(cur, """
+            SELECT 
+                actual_state_desc,
+                readonly_reason,
+                current_storage_size_mb,
+                max_storage_size_mb,
+                stale_query_threshold_days,
+                size_based_cleanup_mode_desc,
+                query_capture_mode_desc,
+                max_plans_per_query,
+                wait_stats_capture_mode_desc,
+                capture_policy_execution_count,
+                capture_policy_total_compile_cpu_time_ms,
+                capture_policy_total_execution_cpu_time_ms,
+                capture_policy_stale_threshold_hours
+            FROM sys.database_query_store_options
+        """)
+
+        qs_row = cur.fetchone()
+        if not qs_row or qs_row[0] != 'READ_WRITE':
+            results["recommendations"].append({
+                "type": "query_store_setup",
+                "priority": "high",
+                "issue": "Query Store is not enabled or not in READ_WRITE mode",
+                "recommendation": "Enable Query Store to capture query performance data and identify optimization opportunities"
+            })
+            return results
+
+        results["query_store_enabled"] = True
+        results["query_store_config"] = {
+            "state": qs_row[0],
+            "readonly_reason": qs_row[1],
+            "current_storage_mb": qs_row[2],
+            "max_storage_mb": qs_row[3],
+            "stale_threshold_days": qs_row[4],
+            "cleanup_mode": qs_row[5],
+            "capture_mode": qs_row[6],
+            "max_plans_per_query": qs_row[7],
+            "wait_stats_capture": qs_row[8],
+            "capture_policy_execution_count": qs_row[9],
+            "capture_policy_compile_cpu_ms": qs_row[10],
+            "capture_policy_execution_cpu_ms": qs_row[11],
+            "capture_policy_stale_hours": qs_row[12]
+        }
+
+        # Get analysis period (last 30 days of data)
+        _execute_safe(cur, """
+            SELECT 
+                MIN(rsi.start_time) as earliest_data,
+                MAX(rsi.end_time) as latest_data,
+                DATEDIFF(day, MIN(rsi.start_time), MAX(rsi.end_time)) as days_covered
+            FROM sys.query_store_runtime_stats_interval rsi
+        """)
+
+        period_row = cur.fetchone()
+        results["analysis_period"] = {
+            "earliest_data": period_row[0].isoformat() if period_row[0] else None,
+            "latest_data": period_row[1].isoformat() if period_row[1] else None,
+            "days_covered": period_row[2] if period_row[2] else 0
+        }
+
+        # 1. Long-running queries (Top 10 by average duration)
+        _execute_safe(cur, """
+            SELECT TOP 10
+                qt.query_sql_text,
+                q.query_id,
+                rs.count_executions,
+                rs.avg_duration / 1000.0 as avg_duration_ms,
+                rs.min_duration / 1000.0 as min_duration_ms,
+                rs.max_duration / 1000.0 as max_duration_ms,
+                rs.avg_cpu_time / 1000.0 as avg_cpu_ms,
+                rs.avg_logical_io_reads,
+                rs.avg_logical_io_writes,
+                rs.avg_physical_io_reads,
+                q.object_id,
+                OBJECT_NAME(q.object_id) as object_name,
+                p.query_plan
+            FROM sys.query_store_query q
+            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            WHERE rs.avg_duration > 1000000  -- > 1 second average
+              AND rs.count_executions > 1
+            ORDER BY rs.avg_duration DESC
+        """)
+
+        long_running = []
+        for row in cur.fetchall():
+            query_text = row[0][:500] + "..." if len(row[0]) > 500 else row[0]
+            long_running.append({
+                "query_id": row[1],
+                "query_text": query_text,
+                "executions": row[2],
+                "avg_duration_ms": round(row[3], 2),
+                "min_duration_ms": round(row[4], 2),
+                "max_duration_ms": round(row[5], 2),
+                "avg_cpu_ms": round(row[6], 2),
+                "avg_logical_io_reads": row[7],
+                "avg_logical_io_writes": row[8],
+                "avg_physical_io_reads": row[9],
+                "object_id": row[10],
+                "object_name": row[11],
+                "has_plan": bool(row[12])
+            })
+
+        results["long_running_queries"] = long_running
+
+        # 2. Regressed queries (queries with performance degradation)
+        _execute_safe(cur, """
+            SELECT TOP 10
+                qt.query_sql_text,
+                q.query_id,
+                recent.count_executions as recent_executions,
+                recent.avg_duration / 1000.0 as recent_avg_duration_ms,
+                older.avg_duration / 1000.0 as older_avg_duration_ms,
+                CASE 
+                    WHEN older.avg_duration > 0 
+                    THEN ((recent.avg_duration - older.avg_duration) / older.avg_duration) * 100 
+                    ELSE 0 
+                END as regression_percent,
+                recent.avg_cpu_time / 1000.0 as recent_avg_cpu_ms,
+                q.object_id,
+                OBJECT_NAME(q.object_id) as object_name
+            FROM sys.query_store_query q
+            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN sys.query_store_plan p ON q.query_id = p.query_id
+            -- Recent performance (last 7 days)
+            JOIN (
+                SELECT plan_id, 
+                       SUM(count_executions) as count_executions,
+                       AVG(avg_duration) as avg_duration,
+                       AVG(avg_cpu_time) as avg_cpu_time
+                FROM sys.query_store_runtime_stats rs
+                JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
+                WHERE rsi.start_time >= DATEADD(day, -7, GETDATE())
+                GROUP BY plan_id
+            ) recent ON p.plan_id = recent.plan_id
+            -- Older performance (8-30 days ago)
+            LEFT JOIN (
+                SELECT plan_id, 
+                       AVG(avg_duration) as avg_duration
+                FROM sys.query_store_runtime_stats rs
+                JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
+                WHERE rsi.start_time BETWEEN DATEADD(day, -30, GETDATE()) AND DATEADD(day, -8, GETDATE())
+                GROUP BY plan_id
+            ) older ON p.plan_id = older.plan_id
+            WHERE recent.count_executions > 5
+              AND older.avg_duration IS NOT NULL
+              AND ((recent.avg_duration - older.avg_duration) / NULLIF(older.avg_duration, 0)) > 0.5  -- 50% regression
+            ORDER BY regression_percent DESC
+        """)
+
+        regressed = []
+        for row in cur.fetchall():
+            query_text = row[0][:500] + "..." if len(row[0]) > 500 else row[0]
+            regressed.append({
+                "query_id": row[1],
+                "query_text": query_text,
+                "recent_executions": row[2],
+                "recent_avg_duration_ms": round(row[3], 2),
+                "older_avg_duration_ms": round(row[4], 2),
+                "regression_percent": round(row[5], 2),
+                "recent_avg_cpu_ms": round(row[6], 2),
+                "object_id": row[7],
+                "object_name": row[8]
+            })
+
+        results["regressed_queries"] = regressed
+
+        # 3. High CPU queries
+        _execute_safe(cur, """
+            SELECT TOP 10
+                qt.query_sql_text,
+                q.query_id,
+                rs.count_executions,
+                rs.avg_cpu_time / 1000.0 as avg_cpu_ms,
+                rs.max_cpu_time / 1000.0 as max_cpu_ms,
+                rs.avg_duration / 1000.0 as avg_duration_ms,
+                rs.avg_logical_io_reads,
+                q.object_id,
+                OBJECT_NAME(q.object_id) as object_name
+            FROM sys.query_store_query q
+            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            WHERE rs.avg_cpu_time > 500000  -- > 500ms average CPU
+              AND rs.count_executions > 1
+            ORDER BY rs.avg_cpu_time DESC
+        """)
+
+        high_cpu = []
+        for row in cur.fetchall():
+            query_text = row[0][:500] + "..." if len(row[0]) > 500 else row[0]
+            high_cpu.append({
+                "query_id": row[1],
+                "query_text": query_text,
+                "executions": row[2],
+                "avg_cpu_ms": round(row[3], 2),
+                "max_cpu_ms": round(row[4], 2),
+                "avg_duration_ms": round(row[5], 2),
+                "avg_logical_io_reads": row[6],
+                "object_id": row[7],
+                "object_name": row[8]
+            })
+
+        results["high_cpu_queries"] = high_cpu
+
+        # 4. High I/O queries
+        _execute_safe(cur, """
+            SELECT TOP 10
+                qt.query_sql_text,
+                q.query_id,
+                rs.count_executions,
+                rs.avg_logical_io_reads,
+                rs.avg_logical_io_writes,
+                rs.avg_physical_io_reads,
+                rs.avg_duration / 1000.0 as avg_duration_ms,
+                rs.avg_cpu_time / 1000.0 as avg_cpu_ms,
+                q.object_id,
+                OBJECT_NAME(q.object_id) as object_name
+            FROM sys.query_store_query q
+            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            WHERE (rs.avg_logical_io_reads > 10000 OR rs.avg_physical_io_reads > 1000)
+              AND rs.count_executions > 1
+            ORDER BY (rs.avg_logical_io_reads + rs.avg_physical_io_reads) DESC
+        """)
+
+        high_io = []
+        for row in cur.fetchall():
+            query_text = row[0][:500] + "..." if len(row[0]) > 500 else row[0]
+            high_io.append({
+                "query_id": row[1],
+                "query_text": query_text,
+                "executions": row[2],
+                "avg_logical_io_reads": row[3],
+                "avg_logical_io_writes": row[4],
+                "avg_physical_io_reads": row[5],
+                "avg_duration_ms": round(row[6], 2),
+                "avg_cpu_ms": round(row[7], 2),
+                "object_id": row[8],
+                "object_name": row[9]
+            })
+
+        results["high_io_queries"] = high_io
+
+        # 5. High execution count queries with poor performance
+        _execute_safe(cur, """
+            SELECT TOP 10
+                qt.query_sql_text,
+                q.query_id,
+                rs.count_executions,
+                rs.avg_duration / 1000.0 as avg_duration_ms,
+                rs.avg_cpu_time / 1000.0 as avg_cpu_ms,
+                rs.avg_logical_io_reads,
+                q.object_id,
+                OBJECT_NAME(q.object_id) as object_name
+            FROM sys.query_store_query q
+            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            WHERE rs.count_executions > 1000  -- High execution count
+              AND rs.avg_duration > 100000   -- > 100ms average duration
+            ORDER BY rs.count_executions * rs.avg_duration DESC  -- Total time impact
+        """)
+
+        high_execution = []
+        for row in cur.fetchall():
+            query_text = row[0][:500] + "..." if len(row[0]) > 500 else row[0]
+            high_execution.append({
+                "query_id": row[1],
+                "query_text": query_text,
+                "executions": row[2],
+                "avg_duration_ms": round(row[3], 2),
+                "avg_cpu_ms": round(row[4], 2),
+                "avg_logical_io_reads": row[5],
+                "object_id": row[6],
+                "object_name": row[7]
+            })
+
+        results["high_execution_queries"] = high_execution
+
+        # Generate recommendations based on findings
+        recommendations = []
+
+        # Long-running query recommendations
+        for query in results["long_running_queries"][:3]:  # Top 3 most critical
+            recommendations.append({
+                "type": "long_running_query",
+                "priority": "high",
+                "query_id": query["query_id"],
+                "issue": f"Query with {query['avg_duration_ms']:.0f}ms average duration executed {query['executions']} times",
+                "recommendation": "Analyze execution plan for missing indexes, table scans, or inefficient joins. Consider query optimization or index creation.",
+                "potential_actions": [
+                    "Review execution plan for optimization opportunities",
+                    "Check for missing indexes on join/filter columns",
+                    "Consider query parameterization if using literals",
+                    "Evaluate if query can be rewritten for better performance"
+                ]
+            })
+
+        # Regression recommendations
+        for query in results["regressed_queries"][:3]:
+            recommendations.append({
+                "type": "regressed_query",
+                "priority": "high",
+                "query_id": query["query_id"],
+                "issue": f"Query performance regressed by {query['regression_percent']:.1f}% (from {query['older_avg_duration_ms']:.0f}ms to {query['recent_avg_duration_ms']:.0f}ms)",
+                "recommendation": "Investigate recent plan changes or data/statistics modifications. Check for parameter sniffing issues or stale statistics.",
+                "potential_actions": [
+                    "Compare execution plans between time periods",
+                    "Update statistics on relevant tables",
+                    "Check for parameter sniffing issues",
+                    "Force a better execution plan if regression persists"
+                ]
+            })
+
+        # High CPU recommendations
+        for query in results["high_cpu_queries"][:3]:
+            recommendations.append({
+                "type": "high_cpu_query",
+                "priority": "medium",
+                "query_id": query["query_id"],
+                "issue": f"Query consuming {query['avg_cpu_ms']:.0f}ms average CPU time",
+                "recommendation": "Review for CPU-intensive operations like scalar functions, complex calculations, or inefficient processing.",
+                "potential_actions": [
+                    "Replace scalar functions with set-based operations",
+                    "Review complex calculations for optimization",
+                    "Check for unnecessary data type conversions",
+                    "Consider computed columns for repeated calculations"
+                ]
+            })
+
+        # High I/O recommendations
+        for query in results["high_io_queries"][:3]:
+            recommendations.append({
+                "type": "high_io_query",
+                "priority": "medium",
+                "query_id": query["query_id"],
+                "issue": f"Query with high I/O: {query['avg_logical_io_reads']} logical reads, {query['avg_physical_io_reads']} physical reads",
+                "recommendation": "Optimize I/O patterns by improving index coverage, reducing table scans, or implementing proper indexing strategy.",
+                "potential_actions": [
+                    "Create covering indexes to reduce logical reads",
+                    "Review execution plan for table/clustered index scans",
+                    "Consider index defragmentation if fragmentation is high",
+                    "Optimize WHERE clauses for better selectivity"
+                ]
+            })
+
+        # High execution count recommendations
+        for query in results["high_execution_queries"][:3]:
+            recommendations.append({
+                "type": "frequently_executed_poor_query",
+                "priority": "high",
+                "query_id": query["query_id"],
+                "issue": f"Frequently executed query ({query['executions']} times) with poor performance ({query['avg_duration_ms']:.0f}ms average)",
+                "recommendation": "High-impact query needing immediate optimization. Small improvements here can yield significant overall performance gains.",
+                "potential_actions": [
+                    "Prioritize this query for optimization",
+                    "Consider query result caching if appropriate",
+                    "Review application logic for unnecessary executions",
+                    "Implement proper indexing for this critical query"
+                ]
+            })
+
+        # General recommendations
+        if not results["query_store_enabled"]:
+            recommendations.insert(0, {
+                "type": "query_store_setup",
+                "priority": "high",
+                "issue": "Query Store is not enabled",
+                "recommendation": "Enable Query Store to automatically capture query performance data and execution plans for analysis.",
+                "potential_actions": [
+                    "ALTER DATABASE [database_name] SET QUERY_STORE = ON;",
+                    "Configure appropriate storage limits and cleanup policies",
+                    "Set capture mode to AUTO for comprehensive coverage"
+                ]
+            })
+
+        if results["analysis_period"]["days_covered"] < 7:
+            recommendations.append({
+                "type": "insufficient_data",
+                "priority": "low",
+                "issue": f"Only {results['analysis_period']['days_covered']} days of Query Store data available",
+                "recommendation": "Allow more time for Query Store to collect comprehensive performance data before analysis.",
+                "potential_actions": [
+                    "Wait for additional data collection (recommended: 30+ days)",
+                    "Check Query Store retention settings",
+                    "Ensure Query Store cleanup is not too aggressive"
+                ]
+            })
+
+        results["recommendations"] = recommendations
+
+        # Summary statistics
+        results["summary"] = {
+            "long_running_queries_count": len(results["long_running_queries"]),
+            "regressed_queries_count": len(results["regressed_queries"]),
+            "high_cpu_queries_count": len(results["high_cpu_queries"]),
+            "high_io_queries_count": len(results["high_io_queries"]),
+            "high_execution_queries_count": len(results["high_execution_queries"]),
+            "total_recommendations": len(recommendations),
+            "high_priority_recommendations": len([r for r in recommendations if r["priority"] == "high"]),
+            "analysis_timestamp": datetime.now().isoformat()
+        }
+
+        return results
+
+    finally:
+        if conn:
+            conn.close()
+
+
+@mcp.tool
 def db_sql2019_db_sec_perf_metrics(profile: str = "oltp") -> dict[str, Any]:
     """
     Comprehensive security, performance, and configuration audit with tuning recommendations.
