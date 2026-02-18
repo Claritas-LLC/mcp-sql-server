@@ -2886,81 +2886,541 @@ def db_sql2019_analyze_table_health(
 @mcp.tool
 def db_sql2019_db_sec_perf_metrics(profile: str = "oltp") -> dict[str, Any]:
     """
-    Comprehensive security and performance audit.
+    Comprehensive security, performance, and configuration audit with tuning recommendations.
+
+    Analyzes SQL Server settings, security configuration, performance metrics, and provides
+    actionable recommendations for both security hardening and performance tuning.
 
     Args:
-        profile: Workload profile (default: "oltp").
+        profile: Workload profile (default: "oltp"). Options: "oltp", "olap", "mixed".
 
     Returns:
-        Dictionary containing security and performance findings.
+        Dictionary containing server configuration, security analysis, performance metrics,
+        and prioritized recommendations.
     """
     conn = get_connection()
     try:
         cur = conn.cursor()
         
-        results = {}
+        results = {
+            "server_info": {},
+            "configuration": {},
+            "security": {
+                "findings": [],
+                "configuration": {},
+                "risk_level": "low"
+            },
+            "performance": {
+                "metrics": {},
+                "memory": {},
+                "io": {},
+                "cpu": {}
+            },
+            "recommendations": {
+                "security": [],
+                "performance": [],
+                "configuration": [],
+                "priority_high": [],
+                "priority_medium": [],
+                "priority_low": []
+            },
+            "audit_summary": {
+                "total_checks": 0,
+                "passed_checks": 0,
+                "warning_checks": 0,
+                "failed_checks": 0
+            }
+        }
         
-        # --- Security Checks ---
-        security_findings = []
+        passed = 0
+        warning = 0
+        failed = 0
         
-        # 1. Check for Orphaned Users
-        _execute_safe(cur, "EXEC sp_change_users_login 'Report'")
-        # sp_change_users_login is deprecated, but widely available. 
-        # Better: SELECT dp.name AS user_name, dp.sid FROM sys.database_principals dp LEFT JOIN sys.server_principals sp ON dp.sid = sp.sid WHERE sp.sid IS NULL AND dp.type IN ('S', 'U', 'G') AND dp.authentication_type <> 2
-        
+        # ============================================
+        # 1. SERVER INFORMATION
+        # ============================================
         cur.execute("""
-            SELECT dp.name 
-            FROM sys.database_principals dp 
-            LEFT JOIN sys.server_principals sp ON dp.sid = sp.sid 
-            WHERE sp.sid IS NULL 
-            AND dp.type IN ('S', 'U', 'G') 
-            AND dp.authentication_type <> 2 -- Not contained database user
-            AND dp.name NOT IN ('dbo', 'guest', 'sys', 'INFORMATION_SCHEMA')
+            SELECT 
+                @@VERSION as version,
+                @@SERVERNAME as server_name,
+                DB_NAME() as current_database,
+                SUSER_SNAME() as current_user,
+                SERVERPROPERTY('ProductVersion') as product_version,
+                SERVERPROPERTY('ProductLevel') as product_level,
+                SERVERPROPERTY('Edition') as edition,
+                SERVERPROPERTY('EngineEdition') as engine_edition,
+                SERVERPROPERTY('IsClustered') as is_clustered,
+                SERVERPROPERTY('IsHadrEnabled') as is_hadr_enabled,
+                SERVERPROPERTY('ProcessID') as process_id,
+                (SELECT COUNT(*) FROM sys.databases WHERE state = 0) as online_databases
         """)
-        orphans = [row[0] for row in cur.fetchall()]
-        if orphans:
-            security_findings.append(f"Found {len(orphans)} orphaned users: {', '.join(orphans)}")
-            
-        # 2. Check mixed mode authentication (informational)
-        cur.execute("SELECT SERVERPROPERTY('IsIntegratedSecurityOnly')")
-        is_integrated = cur.fetchone()[0]
-        if is_integrated == 0:
-             security_findings.append("Server is in Mixed Authentication Mode (SQL Auth + Windows Auth).")
+        row = cur.fetchone()
+        results["server_info"] = {
+            "version": row[0][:100] + "..." if row[0] and len(row[0]) > 100 else row[0],
+            "server_name": row[1],
+            "current_database": row[2],
+            "current_user": row[3],
+            "product_version": row[4],
+            "product_level": row[5],
+            "edition": row[6],
+            "engine_edition": row[7],
+            "is_clustered": bool(row[8]),
+            "is_hadr_enabled": bool(row[9]),
+            "process_id": row[10],
+            "online_databases": row[11]
+        }
+        
+        # ============================================
+        # 2. CRITICAL CONFIGURATION SETTINGS
+        # ============================================
+        config_checks = []
+        
+        # Max Server Memory
+        cur.execute("SELECT value, value_in_use, description FROM sys.configurations WHERE name = 'max server memory (MB)'")
+        row = cur.fetchone()
+        max_memory_mb = row[1] if row else 0
+        max_memory_configured = max_memory_mb > 0 and max_memory_mb < 2147483647
+        
+        results["configuration"]["max_server_memory_mb"] = max_memory_mb
+        if not max_memory_configured:
+            warning += 1
+            config_checks.append({
+                "setting": "max server memory",
+                "current_value": f"{max_memory_mb} MB",
+                "status": "warning",
+                "recommendation": "Configure Max Server Memory to leave adequate RAM for OS and other applications"
+            })
+            results["recommendations"]["configuration"].append({
+                "priority": "High",
+                "setting": "max server memory (MB)",
+                "current_value": max_memory_mb,
+                "recommended_value": "Leave 10-20% of total RAM for OS",
+                "reason": "Unlimited memory can cause OS paging and performance degradation"
+            })
+            results["recommendations"]["priority_high"].append(
+                "Configure Max Server Memory - Currently unlimited, may cause OS memory pressure"
+            )
         else:
-             security_findings.append("Server is in Windows Authentication Mode only.")
-
-        results["security"] = security_findings
+            passed += 1
+            
+        # Cost Threshold for Parallelism
+        cur.execute("SELECT value_in_use FROM sys.configurations WHERE name = 'cost threshold for parallelism'")
+        cost_threshold = cur.fetchone()[0] if cur.fetchone() else 5
+        results["configuration"]["cost_threshold_for_parallelism"] = cost_threshold
+        if cost_threshold < 25:
+            warning += 1
+            config_checks.append({
+                "setting": "cost threshold for parallelism",
+                "current_value": cost_threshold,
+                "status": "warning",
+                "recommendation": "Consider increasing to 25-50 for OLTP workloads to reduce unnecessary parallelism overhead"
+            })
+            results["recommendations"]["configuration"].append({
+                "priority": "Medium",
+                "setting": "cost threshold for parallelism",
+                "current_value": cost_threshold,
+                "recommended_value": "25-50",
+                "reason": "Low threshold causes excessive parallelism on OLTP systems"
+            })
+            results["recommendations"]["priority_medium"].append(
+                f"Increase Cost Threshold for Parallelism from {cost_threshold} to 25-50"
+            )
+        else:
+            passed += 1
+            
+        # Max Degree of Parallelism
+        cur.execute("SELECT value_in_use FROM sys.configurations WHERE name = 'max degree of parallelism'")
+        maxdop = cur.fetchone()[0] if cur.fetchone() else 0
+        results["configuration"]["max_degree_of_parallelism"] = maxdop
         
-        # --- Performance Checks ---
-        perf_metrics = {}
+        if profile.lower() == "oltp" and (maxdop == 0 or maxdop > 8):
+            warning += 1
+            recommended_maxdop = min(8, 4)  # Sensible default
+            config_checks.append({
+                "setting": "max degree of parallelism",
+                "current_value": maxdop if maxdop > 0 else "Unlimited",
+                "status": "warning",
+                "recommendation": f"For OLTP, consider setting MAXDOP to {recommended_maxdop} to prevent resource contention"
+            })
+            results["recommendations"]["configuration"].append({
+                "priority": "Medium",
+                "setting": "max degree of parallelism",
+                "current_value": maxdop if maxdop > 0 else "Unlimited",
+                "recommended_value": "4-8 for OLTP, half of CPU cores for OLAP",
+                "reason": "Unlimited MAXDOP can cause resource contention on OLTP systems"
+            })
+            results["recommendations"]["priority_medium"].append(
+                f"Set MAXDOP to 4-8 for OLTP workload (currently: {maxdop if maxdop > 0 else 'Unlimited'})"
+            )
+        else:
+            passed += 1
+            
+        results["configuration"]["config_checks"] = config_checks
         
-        # 1. Page Life Expectancy (PLE) - Buffer Pool health
+        # ============================================
+        # 3. SECURITY ANALYSIS
+        # ============================================
+        security_issues = []
+        
+        # Authentication Mode
+        cur.execute("SELECT SERVERPROPERTY('IsIntegratedSecurityOnly')")
+        is_integrated_only = cur.fetchone()[0]
+        results["security"]["configuration"]["authentication_mode"] = (
+            "Windows Only" if is_integrated_only == 1 else "Mixed Mode (SQL + Windows)"
+        )
+        
+        if is_integrated_only == 0:
+            # Mixed mode - check SA account
+            cur.execute("SELECT is_disabled, create_date FROM sys.sql_logins WHERE name = 'sa'")
+            sa_row = cur.fetchone()
+            if sa_row:
+                sa_disabled = sa_row[0]
+                sa_created = sa_row[1]
+                results["security"]["configuration"]["sa_account_disabled"] = bool(sa_disabled)
+                
+                if not sa_disabled:
+                    failed += 1
+                    security_issues.append({
+                        "severity": "High",
+                        "issue": "SA account is enabled",
+                        "recommendation": "Disable SA account and use role-based logins with minimal privileges"
+                    })
+                    results["recommendations"]["security"].append({
+                        "priority": "High",
+                        "category": "Account Security",
+                        "issue": "SA account is enabled",
+                        "fix": "ALTER LOGIN [sa] DISABLE;",
+                        "reason": "SA account is a high-value target for attackers"
+                    })
+                    results["recommendations"]["priority_high"].append(
+                        "Disable SA account - currently enabled and poses security risk"
+                    )
+                else:
+                    passed += 1
+                    
+                # Check if SA password is old
+                if sa_created and (datetime.now() - sa_created).days > 365:
+                    warning += 1
+                    security_issues.append({
+                        "severity": "Medium",
+                        "issue": f"SA account password is {(datetime.now() - sa_created).days} days old",
+                        "recommendation": "Rotate SA password regularly even if account is disabled"
+                    })
+        else:
+            passed += 1
+            
+        # Orphaned Users Check
+        cur.execute("""
+            SELECT dp.name, dp.type_desc
+            FROM sys.database_principals dp
+            LEFT JOIN sys.server_principals sp ON dp.sid = sp.sid
+            WHERE sp.sid IS NULL
+            AND dp.type IN ('S', 'U', 'G')
+            AND dp.authentication_type <> 2
+            AND dp.name NOT IN ('dbo', 'guest', 'sys', 'INFORMATION_SCHEMA', 'public')
+        """)
+        orphaned = cur.fetchall()
+        if orphaned:
+            failed += 1
+            orphan_names = [o[0] for o in orphaned]
+            security_issues.append({
+                "severity": "Medium",
+                "issue": f"Found {len(orphaned)} orphaned database user(s): {', '.join(orphan_names[:5])}",
+                "recommendation": "Remove or fix orphaned users with sp_change_users_login or DROP USER"
+            })
+            results["recommendations"]["security"].append({
+                "priority": "Medium",
+                "category": "User Management",
+                "issue": f"{len(orphaned)} orphaned database users",
+                "fix": f"EXEC sp_change_users_login 'Update_One', '{orphan_names[0]}', '{orphan_names[0]}';",
+                "reason": "Orphaned users can cause security and maintenance issues"
+            })
+            results["recommendations"]["priority_medium"].append(
+                f"Fix {len(orphaned)} orphaned database users"
+            )
+        else:
+            passed += 1
+            
+        # Check for logins with sysadmin role
+        cur.execute("""
+            SELECT l.name, l.type_desc, r.create_date
+            FROM sys.server_principals l
+            JOIN sys.server_role_members rm ON l.principal_id = rm.member_principal_id
+            JOIN sys.server_principals r ON rm.role_principal_id = r.principal_id
+            WHERE r.name = 'sysadmin'
+            AND l.type IN ('S', 'U')
+            AND l.name NOT LIKE 'NT SERVICE%'
+            AND l.name NOT LIKE 'NT AUTHORITY%'
+        """)
+        sysadmins = cur.fetchall()
+        results["security"]["configuration"]["sysadmin_count"] = len(sysadmins)
+        results["security"]["configuration"]["sysadmin_logins"] = [s[0] for s in sysadmins]
+        
+        if len(sysadmins) > 3:
+            warning += 1
+            security_issues.append({
+                "severity": "Medium",
+                "issue": f"{len(sysadmins)} logins have sysadmin privileges",
+                "recommendation": "Review sysadmin role membership and apply principle of least privilege"
+            })
+            results["recommendations"]["security"].append({
+                "priority": "Medium",
+                "category": "Privilege Management",
+                "issue": f"{len(sysadmins)} sysadmin logins (too many)",
+                "fix": "Review and remove unnecessary sysadmin grants",
+                "reason": "Excessive sysadmin access violates least privilege principle"
+            })
+            results["recommendations"]["priority_medium"].append(
+                f"Review {len(sysadmins)} sysadmin logins and reduce privileges"
+            )
+        else:
+            passed += 1
+            
+        # Check for SQL logins with weak password policy
+        cur.execute("""
+            SELECT name, create_date, modify_date
+            FROM sys.sql_logins
+            WHERE is_policy_checked = 0
+            AND is_disabled = 0
+            AND name NOT IN ('##MS_PolicyEventProcessingLogin##', '##MS_PolicyTsqlExecutionLogin##')
+        """)
+        weak_policy = cur.fetchall()
+        if weak_policy:
+            warning += 1
+            weak_names = [w[0] for w in weak_policy]
+            security_issues.append({
+                "severity": "Medium",
+                "issue": f"{len(weak_policy)} SQL logins without password policy: {', '.join(weak_names[:3])}",
+                "recommendation": "Enable password policy enforcement for all SQL logins"
+            })
+            results["recommendations"]["security"].append({
+                "priority": "Medium",
+                "category": "Password Policy",
+                "issue": f"{len(weak_policy)} logins without password policy",
+                "fix": "ALTER LOGIN [login] WITH CHECK_POLICY = ON;",
+                "reason": "Password policies enforce complexity and expiration"
+            })
+            results["recommendations"]["priority_medium"].append(
+                f"Enable password policy for {len(weak_policy)} SQL logins"
+            )
+        else:
+            passed += 1
+            
+        # Determine overall security risk level
+        high_count = sum(1 for s in security_issues if s["severity"] == "High")
+        medium_count = sum(1 for s in security_issues if s["severity"] == "Medium")
+        
+        if high_count > 0:
+            results["security"]["risk_level"] = "high"
+        elif medium_count > 2:
+            results["security"]["risk_level"] = "medium"
+        else:
+            results["security"]["risk_level"] = "low"
+            
+        results["security"]["findings"] = security_issues
+        
+        # ============================================
+        # 4. PERFORMANCE METRICS
+        # ============================================
+        
+        # Memory - Page Life Expectancy
         cur.execute("""
             SELECT cntr_value 
             FROM sys.dm_os_performance_counters 
             WHERE object_name LIKE '%Buffer Manager%' 
             AND counter_name = 'Page life expectancy'
         """)
-        row = cur.fetchone()
-        if row:
-            perf_metrics["page_life_expectancy"] = row[0]
-            if row[0] < 300:
-                perf_metrics["ple_warning"] = "PLE is low (< 300s), indicating memory pressure."
-
-        # 2. Buffer Cache Hit Ratio
+        ple_row = cur.fetchone()
+        if ple_row:
+            ple = ple_row[0]
+            results["performance"]["memory"]["page_life_expectancy_seconds"] = ple
+            
+            if ple < 300:
+                failed += 1
+                results["performance"]["memory"]["ple_status"] = "critical"
+                results["recommendations"]["performance"].append({
+                    "priority": "High",
+                    "category": "Memory",
+                    "metric": "Page Life Expectancy",
+                    "current_value": f"{ple}s",
+                    "threshold": "300s",
+                    "recommendation": "Memory pressure detected. Consider increasing Max Server Memory or adding RAM"
+                })
+                results["recommendations"]["priority_high"].append(
+                    f"Critical Memory Pressure: PLE is {ple}s (threshold: 300s)"
+                )
+            elif ple < 600:
+                warning += 1
+                results["performance"]["memory"]["ple_status"] = "warning"
+                results["recommendations"]["performance"].append({
+                    "priority": "Medium",
+                    "category": "Memory",
+                    "metric": "Page Life Expectancy",
+                    "current_value": f"{ple}s",
+                    "threshold": "600s",
+                    "recommendation": "Monitor memory usage - PLE below optimal range"
+                })
+                results["recommendations"]["priority_medium"].append(
+                    f"Low PLE: {ple}s - Monitor memory pressure"
+                )
+            else:
+                passed += 1
+                results["performance"]["memory"]["ple_status"] = "healthy"
+        
+        # Buffer Cache Hit Ratio
         cur.execute("""
             SELECT 
-                CAST(A.cntr_value * 1.0 / B.cntr_value * 100.0 AS DECIMAL(5,2)) as BufferCacheHitRatio
+                CAST(A.cntr_value * 100.0 / NULLIF(B.cntr_value, 0) AS DECIMAL(5,2)) as hit_ratio
             FROM sys.dm_os_performance_counters A
             CROSS JOIN sys.dm_os_performance_counters B
             WHERE A.object_name LIKE '%Buffer Manager%' AND A.counter_name = 'Buffer cache hit ratio'
             AND B.object_name LIKE '%Buffer Manager%' AND B.counter_name = 'Buffer cache hit ratio base'
         """)
-        row = cur.fetchone()
-        if row:
-            perf_metrics["buffer_cache_hit_ratio"] = float(row[0])
+        bch_row = cur.fetchone()
+        if bch_row and bch_row[0]:
+            hit_ratio = float(bch_row[0])
+            results["performance"]["memory"]["buffer_cache_hit_ratio"] = hit_ratio
             
-        results["performance"] = perf_metrics
+            if hit_ratio < 90:
+                failed += 1
+                results["recommendations"]["performance"].append({
+                    "priority": "High",
+                    "category": "Memory",
+                    "metric": "Buffer Cache Hit Ratio",
+                    "current_value": f"{hit_ratio}%",
+                    "threshold": "90%",
+                    "recommendation": "Low cache hit ratio indicates excessive disk reads. Check memory allocation and query plans"
+                })
+                results["recommendations"]["priority_high"].append(
+                    f"Low Buffer Cache Hit Ratio: {hit_ratio}% - Check memory configuration"
+                )
+            elif hit_ratio < 95:
+                warning += 1
+                results["recommendations"]["performance"].append({
+                    "priority": "Medium",
+                    "category": "Memory",
+                    "metric": "Buffer Cache Hit Ratio",
+                    "current_value": f"{hit_ratio}%",
+                    "threshold": "95%",
+                    "recommendation": "Monitor cache efficiency"
+                })
+            else:
+                passed += 1
+        
+        # CPU - Check for high signal waits (CPU pressure indicator)
+        cur.execute("""
+            SELECT TOP 5
+                wait_type,
+                waiting_tasks_count,
+                wait_time_ms,
+                signal_wait_time_ms,
+                CAST(signal_wait_time_ms * 100.0 / NULLIF(wait_time_ms, 0) AS DECIMAL(5,2)) as signal_wait_pct
+            FROM sys.dm_os_wait_stats
+            WHERE wait_type NOT IN ('CLR_SEMAPHORE', 'LAZYWRITER_SLEEP', 'RESOURCE_QUEUE', 'SLEEP_TASK', 
+                                   'SLEEP_SYSTEMTASK', 'SQLTRACE_BUFFER_FLUSH', 'WAITFOR', 'LOGMGR_QUEUE',
+                                   'CHECKPOINT_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH', 'XE_TIMER_EVENT',
+                                   'BROKER_TO_FLUSH', 'BROKER_TASK_STOP', 'CLR_MANUAL_EVENT', 
+                                   'CLR_AUTO_EVENT', 'DISPATCHER_QUEUE_SEMAPHORE', 'FT_IFTS_SCHEDULER_IDLE_WAIT',
+                                   'XE_DISPATCHER_WAIT', 'XE_DISPATCHER_JOIN', 'BROKER_EVENTHANDLER', 
+                                   'TRACEWRITE', 'FT_IFTSHC_MUTEX', 'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
+                                   'DIRTY_PAGE_POLL', 'SP_SERVER_DIAGNOSTICS_SLEEP', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
+                                   'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP', 'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP')
+            AND wait_time_ms > 0
+            ORDER BY wait_time_ms DESC
+        """)
+        top_waits = cur.fetchall()
+        results["performance"]["cpu"]["top_wait_types"] = [
+            {
+                "wait_type": w[0],
+                "wait_time_ms": w[3],
+                "signal_wait_time_ms": w[4],
+                "signal_wait_percent": float(w[5]) if w[5] else 0
+            }
+            for w in top_waits
+        ]
+        
+        # Check for CXPACKET waits (parallelism issues)
+        cxpacket_wait = next((w for w in top_waits if w[0] == 'CXPACKET'), None)
+        if cxpacket_wait:
+            signal_pct = float(cxpacket_wait[5]) if cxpacket_wait[5] else 0
+            if signal_pct > 20:
+                warning += 1
+                results["recommendations"]["performance"].append({
+                    "priority": "Medium",
+                    "category": "CPU/Parallelism",
+                    "metric": "CXPACKET Waits",
+                    "current_value": f"{signal_pct:.1f}% signal waits",
+                    "recommendation": "High CXPACKET waits may indicate inappropriate parallelism. Review MAXDOP and Cost Threshold settings"
+                })
+                results["recommendations"]["priority_medium"].append(
+                    f"High CXPACKET waits ({signal_pct:.1f}%) - Review parallelism settings"
+                )
+        
+        # I/O - Check for pending I/O
+        cur.execute("""
+            SELECT 
+                COUNT(*) as pending_io_count,
+                SUM(io_pending_ms_ticks) as total_pending_ms
+            FROM sys.dm_io_pending_io_requests
+        """)
+        io_row = cur.fetchone()
+        if io_row:
+            results["performance"]["io"]["pending_io_count"] = io_row[0]
+            results["performance"]["io"]["total_pending_ms"] = io_row[1] if io_row[1] else 0
+            
+            if io_row[0] > 10:
+                warning += 1
+                results["recommendations"]["performance"].append({
+                    "priority": "Medium",
+                    "category": "I/O",
+                    "metric": "Pending I/O Requests",
+                    "current_value": f"{io_row[0]} pending",
+                    "recommendation": "High pending I/O may indicate storage bottleneck. Review disk configuration and query I/O patterns"
+                })
+                results["recommendations"]["priority_medium"].append(
+                    f"I/O Pressure: {io_row[0]} pending I/O requests"
+                )
+        
+        # Active connections
+        cur.execute("""
+            SELECT 
+                COUNT(*) as total_connections,
+                SUM(CASE WHEN status = 'sleeping' THEN 1 ELSE 0 END) as idle_connections,
+                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active_connections,
+                SUM(CASE WHEN is_user_process = 0 THEN 1 ELSE 0 END) as system_connections
+            FROM sys.dm_exec_sessions
+            WHERE is_user_process = 1 OR status = 'running'
+        """)
+        conn_row = cur.fetchone()
+        if conn_row:
+            results["performance"]["metrics"]["total_connections"] = conn_row[0]
+            results["performance"]["metrics"]["idle_connections"] = conn_row[1]
+            results["performance"]["metrics"]["active_connections"] = conn_row[2]
+            results["performance"]["metrics"]["system_connections"] = conn_row[3]
+        
+        # ============================================
+        # 5. UPDATE AUDIT SUMMARY
+        # ============================================
+        results["audit_summary"]["total_checks"] = passed + warning + failed
+        results["audit_summary"]["passed_checks"] = passed
+        results["audit_summary"]["warning_checks"] = warning
+        results["audit_summary"]["failed_checks"] = failed
+        results["audit_summary"]["overall_health_score"] = max(0, min(100, int((passed / max(passed + warning + failed, 1)) * 100)))
+        
+        # Overall recommendation summary
+        total_recs = (
+            len(results["recommendations"]["priority_high"]) + 
+            len(results["recommendations"]["priority_medium"]) + 
+            len(results["recommendations"]["priority_low"])
+        )
+        
+        results["recommendations"]["summary"] = {
+            "total_recommendations": total_recs,
+            "high_priority_count": len(results["recommendations"]["priority_high"]),
+            "medium_priority_count": len(results["recommendations"]["priority_medium"]),
+            "low_priority_count": len(results["recommendations"]["priority_low"]),
+            "immediate_action_required": len(results["recommendations"]["priority_high"]) > 0
+        }
         
         return results
         
