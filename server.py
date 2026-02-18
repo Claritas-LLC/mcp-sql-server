@@ -2206,46 +2206,7 @@ def db_sql2019_server_info() -> dict[str, Any]:
 
 
 
-@mcp.tool
-def db_sql2019_get_db_parameters(pattern: str | None = None) -> list[dict[str, Any]]:
-    """
-    Retrieves database configuration parameters (sys.configurations).
 
-    Args:
-        pattern: Optional wildcard pattern to filter parameter names (e.g., '%memory%').
-
-    Returns:
-        List of database parameters with their values and descriptions.
-    """
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        query = """
-            SELECT 
-                name,
-                value,
-                value_in_use,
-                description,
-                is_dynamic,
-                is_advanced
-            FROM sys.configurations
-        """
-        params = []
-        if pattern:
-            query += " WHERE name LIKE ?"
-            params.append(pattern)
-        
-        query += " ORDER BY name"
-        
-        _execute_safe(cur, query, tuple(params) if params else None)
-        
-        columns = [c[0] for c in cur.description]
-        results = []
-        for row in cur.fetchall():
-            results.append(dict(zip(columns, row)))
-        return results
-    finally:
-        conn.close()
 
 
 
@@ -4190,27 +4151,74 @@ def db_sql2019_ping() -> dict[str, Any]:
 @mcp.tool
 def db_sql2019_server_info_mcp() -> dict[str, Any]:
     """
-    Get information about the MCP server configuration and status.
+    Get comprehensive information about the MCP server and database connection.
 
     Returns:
-        Dictionary containing server name, version, status, transport type, and connected database name.
+        Dictionary containing MCP server details and database connection information.
     """
+    # Get server information
+    server_info = {}
+    conn = get_connection()
     try:
-        conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT DB_NAME() as database_name")
+        
+        # Get comprehensive server and database information
+        cur.execute("""
+            SELECT 
+                @@VERSION as version,
+                @@SERVERNAME as server_name,
+                DB_NAME() as database,
+                SUSER_SNAME() as user_name,
+                SERVERPROPERTY('ProductVersion') as product_version,
+                SERVERPROPERTY('ProductLevel') as product_level,
+                SERVERPROPERTY('Edition') as edition
+        """)
         row = cur.fetchone()
-        database_name = row[0] if row else "unknown"
+        if row:
+            server_info = {
+                "version": row[0][:200] + "..." if row[0] and len(row[0]) > 200 else row[0],
+                "server_name": row[1],
+                "database": row[2],
+                "user": row[3],
+                "product_version": row[4],
+                "product_level": row[5], 
+                "edition": row[6]
+            }
+        
+        # Get server address and port info
+        cur.execute("SELECT CONNECTIONPROPERTY('local_net_address') as server_addr, CONNECTIONPROPERTY('local_tcp_port') as server_port")
+        conn_row = cur.fetchone()
+        if conn_row:
+            server_info["server_addr"] = conn_row[0] or "unknown"
+            server_info["server_port"] = conn_row[1] or 1433
+            
         conn.close()
-    except Exception:
-        database_name = "error"
+    except Exception as e:
+        server_info = {
+            "database": "error",
+            "user": "unknown",
+            "server_name": "unknown",
+            "server_addr": "unknown", 
+            "server_port": 1433,
+            "version": "unknown"
+        }
+
+    # Add MCP server information
+    port = os.environ.get("MCP_PORT", "8000")
+    host = os.environ.get("MCP_HOST", "localhost")
+    if host == "0.0.0.0":
+        host = "localhost"
 
     return {
         "name": mcp.name,
         "version": "1.0.0",
         "status": "healthy",
         "transport": os.environ.get("MCP_TRANSPORT", "http"),
-        "database": ORIGINAL_DB_NAME or database_name
+        "server_ip": host,
+        "server_port": int(port),
+        "allow_write": ALLOW_WRITE,
+        "default_max_rows": DEFAULT_MAX_ROWS,
+        **server_info  # Include all database connection info
     }
 
 

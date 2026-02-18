@@ -428,40 +428,29 @@ This server implements strict security practices for logging:
 
 ### 🏥 Health & Info
 - `db_sql2019_ping()`: Simple health check.
-- `db_sql2019_server_info()`: Get database version, current user, and connection details.
-- `db_sql2019_db_stats(database: str = None)`: Database-level statistics.
-- `db_sql2019_server_info_mcp()`: Get internal MCP server status and version.
+- `db_sql2019_server_info_mcp()`: Get comprehensive MCP server and database connection information (server details, database version, user, connection details, and MCP configuration).
 
 ### 🔍 Schema Discovery
-- `db_sql2019_list_objects`: **(Consolidated Tool)** Unified tool to list databases, schemas, tables, views, indexes, functions, and stored procedures.
-    - **Signature**: `db_sql2019_list_objects(object_type: str, schema: str = None, name_pattern: str = None, order_by: str = None, limit: int = 50)`
+- `db_sql2019_list_objects(object_type: str, schema: str = None, name_pattern: str = None, order_by: str = None, limit: int = 50)`: **(Consolidated Tool)** Unified tool to list databases, schemas, tables, views, indexes, functions, and stored procedures.
+    - **Supported object_type values**: 'database', 'schema', 'table', 'view', 'index', 'function', 'procedure', 'trigger'
     - **Common Use Cases**:
         - **Table Sizes**: `object_type='table', order_by='size'`
         - **Row Counts**: `object_type='table', order_by='rows'`
-        - **Find Procedure**: `object_type='procedure', name_pattern='%my_proc%'`
+        - **Find Objects**: `object_type='procedure', name_pattern='%my_proc%'`
 - `db_sql2019_describe_table(schema: str, table: str)`: Get detailed column and index info for a table.
-- `db_sql2019_analyze_logical_data_model(schema: str = "dbo")`: **(Interactive)** Generates a comprehensive HTML report with a **Mermaid.js Entity Relationship Diagram (ERD)**, a **Health Score** (0-100), and detailed findings on normalization, missing keys, and naming conventions. The tool returns a URL to view the report in your browser.
+- `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int = None, include_attributes: bool = True)`: **(Interactive)** Generates a comprehensive HTML report with a **Mermaid.js Entity Relationship Diagram (ERD)**, a **Health Score** (0-100), and detailed findings on normalization, missing keys, and naming conventions. The tool returns a URL to view the report in your browser.
 
 ### ⚡ Performance & Tuning
 - `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str)`: **(Power Tool)** Comprehensive health check for a specific table, including size, indexes with sizes/types, foreign key dependencies, statistics, and tuning recommendations.
-- `db_sql2019_check_fragmentation(limit: int = 50)`: Identifies fragmented indexes and provides `REBUILD`/`REORGANIZE` commands.
-- `db_sql2019_analyze_indexes(schema: str = None, limit: int = 50)`: Identify unused or missing indexes.
+- `db_sql2019_analyze_indexes(schema: str = None, limit: int = 50)`: Identify unused and missing indexes using SQL Server DMVs.
 - `db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: Get the XML execution plan for a query.
 
 ### 🕵️ Session & Security
-- `db_sql2019_monitor_sessions()`: Real-time session monitoring data for the UI dashboard.
-- `db_sql2019_analyze_sessions(include_idle: bool = True)`: Detailed session analysis using `sys.dm_exec_sessions`.
-- `db_sql2019_db_sec_perf_metrics(profile: str = "oltp")`: Comprehensive security and performance audit (Orphaned Users, PLE, Buffer Cache Hit Ratio).
-- `db_sql2019_get_db_parameters(pattern: str = None)`: Retrieve database configuration parameters (sys.configurations).
+- `db_sql2019_monitor_sessions()`: Get the link to the real-time database sessions monitor dashboard.
+- `db_sql2019_db_sec_perf_metrics(profile: str = "oltp")`: Comprehensive security and performance audit with tuning recommendations (Orphaned Users, PLE, Buffer Cache Hit Ratio, authentication mode, sysadmin privileges, memory configuration, parallelism settings).
 
 ### 🔧 Maintenance (Requires `MCP_ALLOW_WRITE=true`)
-- `db_sql2019_create_db_user(username: str, password: str, privileges: str = "read", database: str | None = None)`: Create a new SQL Login and User.
-- `db_sql2019_drop_db_user(username: str)`: Drop a Login and User.
-- `db_sql2019_kill_session(session_id: int)`: Terminate a specific session ID (KILL).
-- `db_sql2019_run_query(sql: str, params_json: str | None = None, max_rows: int | None = None)`: Execute ad-hoc SQL. `max_rows` defaults to 500 (configurable via `MCP_MAX_ROWS`). Returns up to `max_rows` rows; if truncated, `truncated: true` is set.
-- `db_sql2019_create_object(object_type: str, object_name: str, schema: str = None, parameters: dict = None)`: Create database objects (table, view, index, function, etc.).
-- `db_sql2019_alter_object(object_type: str, object_name: str, operation: str, schema: str = None, parameters: dict = None)`: Modify database objects.
-- `db_sql2019_drop_object(object_type: str, object_name: str, schema: str = None, parameters: dict = None)`: Drop database objects.
+- `db_sql2019_run_query(sql: str, params_json: str = None, max_rows: int = None)`: Execute ad-hoc SQL queries with read-only enforcement. `max_rows` defaults to 500 (configurable via `MCP_MAX_ROWS`). Returns up to `max_rows` rows; if truncated, `truncated: true` is set.
 
 ---
 
@@ -505,24 +494,18 @@ Here are some real-world examples of using the tools via an MCP client.
   "version": "1.0.0",
   "status": "healthy",
   "transport": "http",
-  "database": "master"
-}
-```
-
-### 2. Check Database Connection Info
-**Prompt:** `using sqlserver, call db_sql2019_server_info() and display results`
-
-**Result:**
-```json
-{
+  "server_ip": "localhost",
+  "server_port": 8085,
+  "allow_write": false,
+  "default_max_rows": 500,
   "database": "master",
   "user": "n8n_DBMonitor",
   "server_name": "gisdevsql01",
   "server_addr": "10.125.1.7",
-  "server_port": 1433,
   "version": "Microsoft SQL Server 2019 (RTM-CU32-GDR) (KB5068404) - 15.0.4455.2 (X64) \n\tOct  7 2025 21:10:15 \n\tCopyright (C) 2019 Microsoft Corporation\n\tDeveloper Edition (64-bit) on Windows Server 2019 Datacenter 10.0 <X64> (Build 17763: ) (Hypervisor)\n",
-  "allow_write": false,
-  "default_max_rows": 500
+  "product_version": "15.0.4455.2",
+  "product_level": "RTM",
+  "edition": "Developer Edition (64-bit)"
 }
 ```
 
