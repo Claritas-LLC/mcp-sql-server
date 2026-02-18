@@ -427,7 +427,6 @@ This server implements strict security practices for logging:
 ## 🛠️ Tools Reference
 
 ### 🏥 Health & Info
-- `db_sql2019_ping()`: Simple health check.
 - `db_sql2019_server_info_mcp()`: Get comprehensive MCP server and database connection information (server details, database version, user, connection details, and MCP configuration).
 
 ### 🔍 Schema Discovery
@@ -445,7 +444,6 @@ This server implements strict security practices for logging:
 - `db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: Get the XML execution plan for a query.
 
 ### 🕵️ Session & Security
-- `db_sql2019_monitor_sessions()`: Get the link to the real-time database sessions monitor dashboard.
 - `db_sql2019_db_sec_perf_metrics(profile: str = "oltp")`: Comprehensive security and performance audit with tuning recommendations (Orphaned Users, PLE, Buffer Cache Hit Ratio, authentication mode, sysadmin privileges, memory configuration, parallelism settings).
 
 ### 🔧 Maintenance (Requires `MCP_ALLOW_WRITE=true`)

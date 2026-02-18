@@ -4036,18 +4036,6 @@ def db_sql2019_explain_query(
         conn.close()
 
 
-@mcp.tool
-def db_sql2019_ping() -> dict[str, Any]:
-    """
-    Check if the MCP server is responsive.
-
-    Returns:
-        Dictionary with "ok": True if the server is responsive.
-    """
-    return {"ok": True}
-
-
-@mcp.tool
 def db_sql2019_server_info_mcp() -> dict[str, Any]:
     """
     Get comprehensive information about the MCP server and database connection.
@@ -4691,22 +4679,6 @@ async def api_sessions(_request: Request) -> JSONResponse:
 
 async def health_check(_request: Request) -> JSONResponse:
     return JSONResponse({"status": "healthy"})
-
-@mcp.tool
-def db_sql2019_monitor_sessions() -> str:
-    """
-    Get the link to the real-time database sessions monitor dashboard.
-    
-    Returns:
-        A message containing the URL to the sessions monitor dashboard.
-    """
-    port = os.environ.get("MCP_PORT", "8000")
-    host = os.environ.get("MCP_HOST", "localhost")
-    if host == "0.0.0.0":
-        host = "localhost"
-        
-    url = f"http://{host}:{port}/sessions-monitor"
-    return f"Monitor available at: {url}"
 
 
 def main() -> None:
