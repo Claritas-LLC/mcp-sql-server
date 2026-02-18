@@ -1346,53 +1346,226 @@ def db_sql2019_drop_object(
 
 
 @mcp.tool
-def db_sql2019_check_fragmentation(limit: int = 50) -> list[dict[str, Any]]:
+def db_sql2019_check_fragmentation(
+    database_name: str,
+    table_name: str | None = None,
+    schema: str | None = None,
+    min_fragmentation: float = 5.0,
+    min_page_count: int = 100,
+    limit: int = 100
+) -> dict[str, Any]:
     """
-    Identifies fragmented indexes and provides maintenance commands (REBUILD/REORGANIZE).
+    Comprehensive index fragmentation analysis for a database with recommendations.
+
+    Analyzes all tables and indexes for fragmentation levels and provides
+    maintenance recommendations (REBUILD for >30%, REORGANIZE for 5-30%).
 
     Args:
-        limit: Maximum number of objects to return (default: 50).
+        database_name: The database name to analyze.
+        table_name: Optional specific table to analyze. If None, analyzes all tables.
+        schema: Optional schema filter when analyzing all tables.
+        min_fragmentation: Minimum fragmentation percentage to include (default: 5.0).
+        min_page_count: Minimum page count to include (default: 100, filters out small tables).
+        limit: Maximum number of fragmented indexes to return (default: 100).
 
     Returns:
-        List of objects with fragmentation statistics and suggested maintenance commands.
+        Dictionary containing fragmentation analysis, recommendations, and summary.
     """
-    conn = get_connection()
+    conn = None
     try:
+        conn = get_connection()
         cur = conn.cursor()
-        # SQL Server Index Fragmentation
-        _execute_safe(
-            cur,
-            """
+        
+        # Switch to the target database
+        _execute_safe(cur, f"USE [{database_name}]")
+        
+        results = {
+            "database": database_name,
+            "analysis_parameters": {
+                "table_filter": table_name if table_name else "All Tables",
+                "schema_filter": schema if schema else "All Schemas",
+                "min_fragmentation_percent": min_fragmentation,
+                "min_page_count": min_page_count
+            },
+            "fragmented_indexes": [],
+            "healthy_indexes": [],
+            "recommendations": [],
+            "summary": {
+                "total_indexes_analyzed": 0,
+                "high_fragmentation_count": 0,
+                "medium_fragmentation_count": 0,
+                "low_fragmentation_count": 0,
+                "healthy_count": 0,
+                "total_pages_analyzed": 0
+            }
+        }
+        
+        # Build the base query
+        # If table_name is provided, use OBJECT_ID. Otherwise use NULL for all tables.
+        object_id_filter = "OBJECT_ID(?)" if table_name else "NULL"
+        
+        fragmentation_query = f"""
             SELECT TOP (?)
                 SCHEMA_NAME(o.schema_id) as [schema],
-                o.name AS object_name,
+                o.name AS table_name,
                 i.name AS index_name,
-                ips.index_type_desc,
+                i.type_desc AS index_type,
+                ips.index_level,
                 CAST(ips.avg_fragmentation_in_percent AS DECIMAL(5,2)) as fragmentation_percent,
                 ips.page_count,
+                ips.record_count,
+                ips.avg_page_space_used_in_percent,
                 CASE 
-                    WHEN ips.avg_fragmentation_in_percent > 30 THEN 'ALTER INDEX [' + i.name + '] ON [' + SCHEMA_NAME(o.schema_id) + '].[' + o.name + '] REBUILD'
-                    WHEN ips.avg_fragmentation_in_percent > 5 THEN 'ALTER INDEX [' + i.name + '] ON [' + SCHEMA_NAME(o.schema_id) + '].[' + o.name + '] REORGANIZE'
+                    WHEN ips.avg_fragmentation_in_percent > 30 THEN 'REBUILD'
+                    WHEN ips.avg_fragmentation_in_percent > 5 THEN 'REORGANIZE'
                     ELSE 'OK'
-                END AS maintenance_cmd
+                END AS recommended_action,
+                CASE 
+                    WHEN ips.avg_fragmentation_in_percent > 30 THEN 
+                        'ALTER INDEX [' + i.name + '] ON [' + SCHEMA_NAME(o.schema_id) + '].[' + o.name + '] REBUILD'
+                    WHEN ips.avg_fragmentation_in_percent > 5 THEN 
+                        'ALTER INDEX [' + i.name + '] ON [' + SCHEMA_NAME(o.schema_id) + '].[' + o.name + '] REORGANIZE'
+                    ELSE 'No action needed'
+                END AS maintenance_cmd,
+                CASE
+                    WHEN ips.avg_fragmentation_in_percent > 30 THEN 'High'
+                    WHEN ips.avg_fragmentation_in_percent > 5 THEN 'Medium'
+                    ELSE 'Low'
+                END AS priority
+            FROM sys.dm_db_index_physical_stats(
+                DB_ID(), 
+                {object_id_filter}, 
+                NULL, 
+                NULL, 
+                'LIMITED'
+            ) ips
+            JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
+            JOIN sys.objects o ON ips.object_id = o.object_id
+            WHERE ips.page_count >= ?
+            AND o.is_ms_shipped = 0
+            AND ips.avg_fragmentation_in_percent >= ?
+        """
+        
+        params = [limit, min_page_count, min_fragmentation]
+        
+        if table_name:
+            full_table_name = f"[{schema}].[{table_name}]" if schema else f"[dbo].[{table_name}]"
+            params.insert(0, full_table_name)
+            params[0] = limit  # Re-adjust position after insert
+            params[1] = full_table_name
+            params[2] = min_page_count
+            params[3] = min_fragmentation
+        
+        if schema and not table_name:
+            fragmentation_query += " AND SCHEMA_NAME(o.schema_id) = ?"
+            params.append(schema)
+            
+        fragmentation_query += " ORDER BY ips.avg_fragmentation_in_percent DESC"
+        
+        _execute_safe(cur, fragmentation_query, tuple(params))
+        
+        columns = [column[0] for column in cur.description]
+        
+        high_frag = 0
+        medium_frag = 0
+        low_frag = 0
+        total_pages = 0
+        
+        for row in cur.fetchall():
+            row_dict = dict(zip(columns, row))
+            frag_pct = float(row_dict.get('fragmentation_percent', 0) or 0)
+            page_count = int(row_dict.get('page_count', 0) or 0)
+            priority = row_dict.get('priority', 'Low')
+            action = row_dict.get('recommended_action', 'OK')
+            
+            total_pages += page_count
+            
+            if priority == 'High':
+                high_frag += 1
+                results["fragmented_indexes"].append(row_dict)
+            elif priority == 'Medium':
+                medium_frag += 1
+                results["fragmented_indexes"].append(row_dict)
+            else:
+                low_frag += 1
+                results["healthy_indexes"].append(row_dict)
+            
+            # Generate specific recommendations
+            if action == 'REBUILD':
+                results["recommendations"].append({
+                    "priority": "High",
+                    "type": "index_maintenance",
+                    "object": f"[{row_dict['schema']}].[{row_dict['table_name']}].[{row_dict['index_name']}]",
+                    "fragmentation_percent": frag_pct,
+                    "message": f"Index '{row_dict['index_name']}' on table '{row_dict['schema']}.{row_dict['table_name']}' has {frag_pct:.2f}% fragmentation and requires REBUILD.",
+                    "command": row_dict['maintenance_cmd']
+                })
+            elif action == 'REORGANIZE':
+                results["recommendations"].append({
+                    "priority": "Medium", 
+                    "type": "index_maintenance",
+                    "object": f"[{row_dict['schema']}].[{row_dict['table_name']}].[{row_dict['index_name']}]",
+                    "fragmentation_percent": frag_pct,
+                    "message": f"Index '{row_dict['index_name']}' on table '{row_dict['schema']}.{row_dict['table_name']}' has {frag_pct:.2f}% fragmentation. Consider REORGANIZE during maintenance window.",
+                    "command": row_dict['maintenance_cmd']
+                })
+        
+        # Get count of healthy indexes (below threshold)
+        healthy_query = """
+            SELECT COUNT(*), SUM(ips.page_count)
             FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ips
             JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
             JOIN sys.objects o ON ips.object_id = o.object_id
-            WHERE ips.avg_fragmentation_in_percent > 5
-            AND ips.page_count > 100 -- Ignore small tables
+            WHERE ips.page_count >= ?
             AND o.is_ms_shipped = 0
-            ORDER BY ips.avg_fragmentation_in_percent DESC
-            """,
-            (limit,)
-        )
+            AND ips.avg_fragmentation_in_percent < ?
+        """
+        healthy_params = [min_page_count, min_fragmentation]
         
-        columns = [column[0] for column in cur.description]
-        results = []
-        for row in cur.fetchall():
-            results.append(dict(zip(columns, row)))
+        if schema:
+            healthy_query += " AND SCHEMA_NAME(o.schema_id) = ?"
+            healthy_params.append(schema)
+            
+        _execute_safe(cur, healthy_query, tuple(healthy_params))
+        healthy_row = cur.fetchone()
+        healthy_count = healthy_row[0] if healthy_row else 0
+        healthy_pages = healthy_row[1] if healthy_row and healthy_row[1] else 0
+        
+        # Update summary
+        results["summary"]["total_indexes_analyzed"] = high_frag + medium_frag + low_frag + healthy_count
+        results["summary"]["high_fragmentation_count"] = high_frag
+        results["summary"]["medium_fragmentation_count"] = medium_frag
+        results["summary"]["low_fragmentation_count"] = low_frag
+        results["summary"]["healthy_count"] = healthy_count
+        results["summary"]["total_pages_analyzed"] = total_pages + (healthy_pages or 0)
+        
+        # Add overall recommendations
+        if high_frag > 0:
+            results["recommendations"].insert(0, {
+                "priority": "High",
+                "type": "maintenance_plan",
+                "message": f"Found {high_frag} index(es) with >30% fragmentation requiring immediate REBUILD. Schedule maintenance during low-activity period."
+            })
+        
+        if medium_frag > 0:
+            results["recommendations"].insert(0 if not high_frag else 1, {
+                "priority": "Medium",
+                "type": "maintenance_plan", 
+                "message": f"Found {medium_frag} index(es) with 5-30% fragmentation. Consider REORGANIZE during next maintenance window."
+            })
+        
+        if high_frag == 0 and medium_frag == 0:
+            results["recommendations"].append({
+                "priority": "Info",
+                "type": "maintenance_plan",
+                "message": "All analyzed indexes are healthy (fragmentation below threshold). No immediate action required."
+            })
+        
         return results
+        
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 
 @mcp.tool
