@@ -437,7 +437,6 @@ This server implements strict security practices for logging:
         - **Table Sizes**: `object_type='table', order_by='size'`
         - **Row Counts**: `object_type='table', order_by='rows'`
         - **Find Objects**: `object_type='procedure', name_pattern='%my_proc%'`
-- `db_sql2019_describe_table(schema: str, table: str)`: Get detailed column and index info for a table.
 - `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int = None, include_attributes: bool = True)`: **(Interactive)** Generates a comprehensive HTML report with a **Mermaid.js Entity Relationship Diagram (ERD)**, a **Health Score** (0-100), and detailed findings on normalization, missing keys, and naming conventions. The tool returns a URL to view the report in your browser.
 
 ### ⚡ Performance & Tuning
