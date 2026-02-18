@@ -733,19 +733,116 @@ Here are some real-world examples of using the tools via an MCP client.
 }
 ```
 
-### 5. Security Audit
-**Prompt:** `using sqlserver, call db_sql2019_db_sec_perf_metrics() and display results`
+### 5. Security & Performance Audit
+**Prompt:** `using sqlserver, call db_sql2019_db_sec_perf_metrics(profile='oltp') and display results`
 
 **Result:**
 ```json
 {
-  "security": [
-    "Found 1 orphaned users: old_app_user",
-    "Server is in Mixed Authentication Mode (SQL Auth + Windows Auth)."
-  ],
+  "server_info": {
+    "version": "Microsoft SQL Server 2019 (RTM-CU32)...",
+    "server_name": "gisdevsql01",
+    "edition": "Developer Edition (64-bit)",
+    "is_clustered": false,
+    "is_hadr_enabled": false,
+    "online_databases": 8
+  },
+  "configuration": {
+    "max_server_memory_mb": 2147483647,
+    "cost_threshold_for_parallelism": 5,
+    "max_degree_of_parallelism": 0,
+    "config_checks": [
+      {
+        "setting": "max server memory",
+        "current_value": "2147483647 MB",
+        "status": "warning",
+        "recommendation": "Configure Max Server Memory to leave adequate RAM for OS"
+      }
+    ]
+  },
+  "security": {
+    "risk_level": "medium",
+    "configuration": {
+      "authentication_mode": "Mixed Mode (SQL + Windows)",
+      "sa_account_disabled": true,
+      "sysadmin_count": 2,
+      "sysadmin_logins": ["n8n_dbmonitor", "sa"]
+    },
+    "findings": [
+      {
+        "severity": "Medium",
+        "issue": "3 logins have sysadmin privileges",
+        "recommendation": "Review sysadmin role membership and apply principle of least privilege"
+      }
+    ]
+  },
   "performance": {
-    "page_life_expectancy": 450,
-    "buffer_cache_hit_ratio": 99.95
+    "memory": {
+      "page_life_expectancy_seconds": 450,
+      "ple_status": "healthy",
+      "buffer_cache_hit_ratio": 99.95
+    },
+    "cpu": {
+      "top_wait_types": [
+        {
+          "wait_type": "CXPACKET",
+          "signal_wait_percent": 15.2
+        }
+      ]
+    },
+    "metrics": {
+      "total_connections": 12,
+      "active_connections": 3,
+      "idle_connections": 9
+    }
+  },
+  "recommendations": {
+    "security": [
+      {
+        "priority": "Medium",
+        "category": "Privilege Management",
+        "issue": "3 sysadmin logins (too many)",
+        "fix": "Review and remove unnecessary sysadmin grants",
+        "reason": "Excessive sysadmin access violates least privilege principle"
+      }
+    ],
+    "configuration": [
+      {
+        "priority": "High",
+        "setting": "max server memory (MB)",
+        "current_value": 2147483647,
+        "recommended_value": "Leave 10-20% of total RAM for OS",
+        "reason": "Unlimited memory can cause OS paging"
+      },
+      {
+        "priority": "Medium",
+        "setting": "cost threshold for parallelism",
+        "current_value": 5,
+        "recommended_value": "25-50",
+        "reason": "Low threshold causes excessive parallelism on OLTP"
+      }
+    ],
+    "performance": [],
+    "priority_high": [
+      "Configure Max Server Memory - Currently unlimited"
+    ],
+    "priority_medium": [
+      "Increase Cost Threshold for Parallelism from 5 to 25-50",
+      "Review 3 sysadmin logins and reduce privileges"
+    ],
+    "summary": {
+      "total_recommendations": 3,
+      "high_priority_count": 1,
+      "medium_priority_count": 2,
+      "immediate_action_required": true
+    }
+  },
+  "audit_summary": {
+    "total_checks": 12,
+    "passed_checks": 8,
+    "warning_checks": 3,
+    "failed_checks": 1,
+    "overall_health_score": 67
   }
 }
 ```
