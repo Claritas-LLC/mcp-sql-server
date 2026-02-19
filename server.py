@@ -2207,27 +2207,27 @@ def db_sql2019_server_info() -> dict[str, Any]:
 
 
 
-
-
-
 @mcp.tool
 def db_sql2019_list_objects(
+    database_name: str,
     object_type: str,
+    object_name: str | None = None,
     schema: str | None = None,
-    owner: str | None = None,
-    name_pattern: str | None = None,
     order_by: str | None = None,
     limit: int = 50
 ) -> list[dict[str, Any]]:
     """
     Consolidated tool to list database objects with filtering and sorting options.
+    
+    Supports filtering by database, object type, specific object name, schema, and provides
+    detailed information about each object including size, creation dates, and metadata.
 
     Args:
+        database_name: The database name to list objects from.
         object_type: Type of objects to list.
                      Supported: 'database', 'schema', 'table', 'view', 'index', 'function', 'procedure', 'trigger'.
+        object_name: Filter by specific object name (optional, supports LIKE pattern matching).
         schema: Filter by schema name.
-        owner: Filter by object owner.
-        name_pattern: Filter object name by pattern (LIKE).
         order_by: Column to sort by. Defaults depend on object_type.
         limit: Maximum number of results (default: 50).
 
@@ -2237,19 +2237,26 @@ def db_sql2019_list_objects(
     conn = get_connection()
     try:
         cur = conn.cursor()
+        
+        # Switch to the specified database
+        _execute_safe(cur, f"USE [{database_name}]")
+        
         params: list[Any] = []
         filters = []
         
-        # Helper for name filtering
-        if name_pattern:
-            # T-SQL uses LIKE, ensure pattern is compatible
-            pass # logic handled in query construction
+        # Handle object_name filtering
+        if object_name:
+            # object_name can be exact match or pattern
+            filters.append("name LIKE ?")
+            params.append(object_name)
 
         query = ""
         sort_clause = ""
         
         # --- Database ---
         if object_type == 'database':
+            # For database listing, we need to switch back to master or use a different approach
+            _execute_safe(cur, "USE master")
             query = """
                 SELECT 
                     d.name,
@@ -2258,13 +2265,9 @@ def db_sql2019_list_objects(
                     d.recovery_model_desc as recovery_model
                 FROM sys.databases d
             """
-            if owner:
-                filters.append("suser_sname(d.owner_sid) = ?")
-                params.append(owner)
-            if name_pattern:
-                filters.append("d.name LIKE ?")
-                params.append(name_pattern)
-            
+            if object_name:
+                query += " WHERE d.name LIKE ?"
+                params = [object_name]
             sort_clause = "ORDER BY d.name"
 
         # --- Schema ---
@@ -2276,17 +2279,10 @@ def db_sql2019_list_objects(
                 FROM sys.schemas s
                 JOIN sys.database_principals u ON s.principal_id = u.principal_id
             """
-            if owner:
-                filters.append("u.name = ?")
-                params.append(owner)
-            if name_pattern:
-                filters.append("s.name LIKE ?")
-                params.append(name_pattern)
             if schema:
                 filters.append("s.name = ?")
                 params.append(schema)
-            else:
-                filters.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest')")
+            filters.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest')")
 
             sort_clause = "ORDER BY s.name"
 
@@ -2296,56 +2292,22 @@ def db_sql2019_list_objects(
                 SELECT TOP (?)
                     s.name as [schema],
                     t.name as [name],
-                    p.rows as [rows],
-                    (SUM(a.total_pages) * 8) as size_kb,
-                    (SUM(a.used_pages) * 8) as used_kb,
-                    t.create_date,
-                    t.modify_date
-                FROM sys.tables t
-                JOIN sys.schemas s ON t.schema_id = s.schema_id
-                JOIN sys.indexes i ON t.object_id = i.object_id
-                JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-                JOIN sys.allocation_units a ON p.partition_id = a.container_id
-            """
-            # We need to group by because of multiple partitions/indexes
-            group_by = """
-                GROUP BY s.name, t.name, p.rows, t.create_date, t.modify_date
-            """
-            
-            if schema:
-                filters.append("s.name = ?")
-                params.append(schema)
-            if name_pattern:
-                filters.append("t.name LIKE ?")
-                params.append(name_pattern)
-
-            # Insert filters before GROUP BY
-            # But wait, logic below appends WHERE. So we need to restructure.
-            # Simplified approach: Base query is just the joins.
-            
-            query = """
-                SELECT TOP (?)
-                    s.name as [schema],
-                    t.name as [name],
-                    SUM(ps.row_count) as [rows], -- Sum rows for partitioned tables
-                    -- For simple heap/clustered, index_id 0 or 1. 
-                    -- Let's use a simpler DMV approach for size if possible or just sys.dm_db_partition_stats
+                    SUM(ps.row_count) as [rows],
                     (SUM(ps.reserved_page_count) * 8) as size_kb,
                     (SUM(ps.used_page_count) * 8) as used_kb
                 FROM sys.tables t
                 JOIN sys.schemas s ON t.schema_id = s.schema_id
                 JOIN sys.dm_db_partition_stats ps ON t.object_id = ps.object_id
-                WHERE (ps.index_id < 2) -- 0=Heap, 1=Clustered (Data)
+                WHERE (ps.index_id < 2)
             """
-            # Reset params, TOP is first param
-            params = [limit] 
+            params = [limit]
 
             if schema:
                 query += " AND s.name = ?"
                 params.append(schema)
-            if name_pattern:
+            if object_name:
                 query += " AND t.name LIKE ?"
-                params.append(name_pattern)
+                params.append(object_name)
             
             query += " GROUP BY s.name, t.name"
             
@@ -2354,9 +2316,6 @@ def db_sql2019_list_objects(
                 sort_clause = "ORDER BY size_kb DESC"
             elif order_by == 'rows':
                 sort_clause = "ORDER BY [rows] DESC"
-
-            # Skip standard filter appending since we handled it inline
-            filters = [] 
 
         # --- Index ---
         elif object_type == 'index':
@@ -2377,11 +2336,14 @@ def db_sql2019_list_objects(
             params = [limit]
             
             if schema:
-                filters.append("s.name = ?")
+                query += " WHERE s.name = ?"
                 params.append(schema)
-            if name_pattern:
-                filters.append("i.name LIKE ?")
-                params.append(name_pattern)
+            if object_name:
+                if "WHERE" in query:
+                    query += " AND i.name LIKE ?"
+                else:
+                    query += " WHERE i.name LIKE ?"
+                params.append(object_name)
             
             sort_clause = "ORDER BY s.name, t.name, i.name"
             if order_by == 'size':
@@ -2400,11 +2362,14 @@ def db_sql2019_list_objects(
             """
             params = [limit]
             if schema:
-                filters.append("s.name = ?")
+                query += " WHERE s.name = ?"
                 params.append(schema)
-            if name_pattern:
-                filters.append("v.name LIKE ?")
-                params.append(name_pattern)
+            if object_name:
+                if "WHERE" in query:
+                    query += " AND v.name LIKE ?"
+                else:
+                    query += " WHERE v.name LIKE ?"
+                params.append(object_name)
             
             sort_clause = "ORDER BY s.name, v.name"
 
@@ -2424,17 +2389,17 @@ def db_sql2019_list_objects(
             """
             params = [limit]
             if schema:
-                filters.append("s.name = ?")
+                query += " AND s.name = ?"
                 params.append(schema)
-            if name_pattern:
-                filters.append("o.name LIKE ?")
-                params.append(name_pattern)
+            if object_name:
+                query += " AND o.name LIKE ?"
+                params.append(object_name)
             
             sort_clause = "ORDER BY s.name, o.name"
 
         # --- Trigger ---
         elif object_type == 'trigger':
-             query = """
+            query = """
                 SELECT TOP (?)
                     s.name as [schema],
                     t.name as [table],
@@ -2445,44 +2410,25 @@ def db_sql2019_list_objects(
                 FROM sys.triggers tr
                 JOIN sys.tables t ON tr.parent_id = t.object_id
                 JOIN sys.schemas s ON t.schema_id = s.schema_id
-             """
-             params = [limit]
-             if schema:
-                filters.append("s.name = ?")
+            """
+            params = [limit]
+            if schema:
+                query += " WHERE s.name = ?"
                 params.append(schema)
-             if name_pattern:
-                 filters.append("tr.name LIKE ?")
-                 params.append(name_pattern)
-             
-             sort_clause = "ORDER BY s.name, t.name, tr.name"
-
-        else:
-             return [{"error": f"Unsupported object_type: {object_type}"}]
-
-        # Construct final query
-        # Note: Table query constructed itself differently, need to handle that.
-        if object_type != 'table':
-            where_clause = ""
-            if filters:
-                # If query already has WHERE (like function), append with AND
-                prefix = " AND " if "WHERE" in query else " WHERE "
-                where_clause = prefix + " AND ".join(filters)
+            if object_name:
+                if "WHERE" in query:
+                    query += " AND tr.name LIKE ?"
+                else:
+                    query += " WHERE tr.name LIKE ?"
+                params.append(object_name)
             
-            full_sql = f"{query} {where_clause} {sort_clause}"
+            sort_clause = "ORDER BY s.name, t.name, tr.name"
+
         else:
-             # Table query was fully built above
-             full_sql = f"{query} {sort_clause}"
+            return [{"error": f"Unsupported object_type: {object_type}"}]
 
-        # Execute
-        # Note: We need to handle params carefully. Table/Index/View/Proc used TOP(?) so limit is first param.
-        # Database query didn't use TOP.
-        if object_type == 'database':
-             # Manual limit if not using TOP (but we should use TOP for consistency)
-             # Let's add TOP to database query
-             query = query.replace("SELECT", "SELECT TOP (?)", 1)
-             params.insert(0, limit)
-             full_sql = f"{query} {where_clause} {sort_clause}"
-
+        # Execute query
+        full_sql = f"{query} {sort_clause}"
         _execute_safe(cur, full_sql, tuple(params))
         
         columns = [c[0] for c in cur.description]
@@ -4434,7 +4380,7 @@ def db_sql2019_analyze_logical_data_model(
     Generate a logical data model (LDM) for a specific database and schema, and produce issues and recommendations.
 
     The model includes entities (tables), attributes (columns), identifiers (PK/UK), and relationships (FK).
-    Generates an interactive ERD in a web UI for visualization.
+    Analyzes naming conventions, normalization issues, and data integrity problems.
 
     Args:
         database_name: The database name to analyze.
@@ -4444,7 +4390,7 @@ def db_sql2019_analyze_logical_data_model(
         include_attributes: Include full attribute details (default: True).
 
     Returns:
-        Dictionary containing analysis summary and URL to interactive ERD web UI.
+        Dictionary containing the logical data model, issues found, and recommendations.
     """
     def _snake_case(name: str) -> bool:
         return bool(re.match(r"^[a-z][a-z0-9_]*$", name))
@@ -4895,26 +4841,7 @@ def db_sql2019_analyze_logical_data_model(
                 "recommendations": recommendations,
             }
             
-            # Cache the result
-            analysis_id = str(uuid.uuid4())
-            DATA_MODEL_CACHE[analysis_id] = result_data
-            
-            # Construct URL
-            # Use MCP_PORT if set, otherwise default to 8085 for UI to avoid 8000 conflicts
-            port = os.environ.get("MCP_PORT", "8085")
-            host = os.environ.get("MCP_HOST", "localhost")
-            if host == "0.0.0.0":
-                host = "localhost"
-            
-            url = f"http://{host}:{port}/data-model-analysis?id={analysis_id}"
-            
-            return {
-                "message": f"Analysis complete for database '{database_name}' schema '{schema}'. View the interactive ERD report at the URL below.",
-                "database": database_name,
-                "schema": schema,
-                "report_url": url,
-                "summary": summary
-            }
+            return result_data
     finally:
         conn.close()
 

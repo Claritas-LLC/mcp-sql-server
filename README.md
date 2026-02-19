@@ -430,13 +430,17 @@ This server implements strict security practices for logging:
 - `db_sql2019_server_info_mcp()`: Get comprehensive MCP server and database connection information (server details, database version, user, connection details, and MCP configuration).
 
 ### 🔍 Schema Discovery (Always Available)
-- `db_sql2019_list_objects(object_type: str, schema: str = None, name_pattern: str = None, order_by: str = None, limit: int = 50)`: **(Consolidated Tool)** Unified tool to list databases, schemas, tables, views, indexes, functions, and stored procedures.
+- `db_sql2019_list_objects(database_name: str, object_type: str, object_name: str = None, schema: str = None, order_by: str = None, limit: int = 50)`: **(Enhanced Consolidated Tool)** Unified tool to list database objects with advanced filtering and sorting options.
+    - **Database-specific**: Now accepts `database_name` to target specific databases
+    - **Object filtering**: New `object_name` parameter for specific object name filtering (supports LIKE patterns)
     - **Supported object_type values**: 'database', 'schema', 'table', 'view', 'index', 'function', 'procedure', 'trigger'
     - **Common Use Cases**:
+        - **Find specific table**: `object_type='table', object_name='Account'`
+        - **List all tables in schema**: `object_type='table', schema='dbo'`
         - **Table Sizes**: `object_type='table', order_by='size'`
         - **Row Counts**: `object_type='table', order_by='rows'`
-        - **Find Objects**: `object_type='procedure', name_pattern='%my_proc%'`
-- `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int = None, include_attributes: bool = True)`: **(Interactive)** Generates a comprehensive HTML report with a **Mermaid.js Entity Relationship Diagram (ERD)**, a **Health Score** (0-100), and detailed findings on normalization, missing keys, and naming conventions. The tool returns a URL to view the report in your browser.
+        - **Find Objects**: `object_type='procedure', object_name='%my_proc%'`
+- `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int = None, include_attributes: bool = True)`: **(Data Model Analysis)** Generates a comprehensive logical data model analysis for a database schema. Returns entities, relationships, naming convention issues, normalization problems, and actionable recommendations. No web UI is generated.
 
 ### ⚡ Performance & Tuning (Always Available)
 - `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str)`: **(Enhanced Power Tool)** Comprehensive health check for a specific table, including size analysis, index fragmentation, foreign key dependencies, statistics health, **missing constraint analysis** (foreign keys, check constraints, defaults, primary keys), and **enhanced index recommendations** (missing FK indexes, disabled indexes, unused large indexes, redundant indexes). Returns actionable tuning recommendations with severity levels.
@@ -1041,14 +1045,10 @@ Here are some real-world examples of using the tools via an MCP client.
 **Result:**
 ```json
 {
-  "message": "Analysis complete for database 'USGISPRO_800' schema 'dbo'. View the interactive ERD report at the URL below.",
-  "database": "USGISPRO_800",
-  "schema": "dbo",
-  "report_url": "http://localhost:8000/data-model-analysis?id=5711f174-d4ee-4d97-992f-1ca6aaffadf4",
   "summary": {
     "database": "USGISPRO_800",
     "schema": "dbo",
-    "generated_at_utc": "2026-02-18T20:25:22.710000",
+    "generated_at_utc": "2026-02-19T11:00:00.000000",
     "entities": 265,
     "relationships": 293,
     "issues_count": {
@@ -1058,18 +1058,90 @@ Here are some real-world examples of using the tools via an MCP client.
       "identifiers": 75,
       "normalization": 0
     }
+  },
+  "logical_model": {
+    "entities": [
+      {
+        "schema": "dbo",
+        "name": "Account",
+        "kind": "U",
+        "attributes": [
+          {
+            "name": "AccountID",
+            "position": 1,
+            "data_type": "int",
+            "nullable": false,
+            "max_length": 4,
+            "numeric_precision": 10,
+            "numeric_scale": 0,
+            "default": null
+          },
+          {
+            "name": "AccountName",
+            "position": 2,
+            "data_type": "nvarchar",
+            "nullable": false,
+            "max_length": 510,
+            "numeric_precision": null,
+            "numeric_scale": null,
+            "default": null
+          }
+        ],
+        "primary_key": ["AccountID"],
+        "unique_constraints": [],
+        "foreign_keys": [
+          {
+            "table": "Account",
+            "name": "FK_Account_Company",
+            "local_columns": ["CompanyID"],
+            "ref_schema": "dbo",
+            "ref_table": "Company",
+            "ref_columns": ["CompanyID"],
+            "on_update": "NO ACTION",
+            "on_delete": "NO ACTION",
+            "optional": false
+          }
+        ]
+      }
+    ],
+    "relationships": [
+      {
+        "name": "FK_Account_Company",
+        "from_entity": "dbo.Account",
+        "to_entity": "dbo.Company",
+        "local_columns": ["CompanyID"],
+        "ref_columns": ["CompanyID"],
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION"
+      }
+    ]
+  },
+  "issues": {
+    "entities": [
+      {
+        "entity": "dbo.SomeTable",
+        "issue": "Non-snake_case entity name"
+      }
+    ],
+    "attributes": [],
+    "relationships": [],
+    "identifiers": [],
+    "normalization": []
+  },
+  "recommendations": {
+    "entities": [
+      {
+        "entity": "dbo.SomeTable",
+        "recommendation": "Standardize entity naming to snake_case for consistency."
+      }
+    ],
+    "attributes": [],
+    "relationships": [],
+    "identifiers": [],
+    "normalization": []
   }
 }
 ```
-
-**Interactive ERD Report Features:**
-- **Entity-Relationship Diagram**: Interactive Mermaid diagram with pan/zoom controls
-- **Key Findings**: Naming convention issues, missing primary keys, normalization problems
-- **Recommendations**: Suggested improvements for database design and performance
-- **Detailed Analysis**: Complete table structure, constraints, and relationships
-- **Model Score**: Overall health score based on best practices (100 - issues × 2)
-
-*Open the `report_url` in your browser to view the full interactive analysis with ERD visualization.*
 
 ---
 
