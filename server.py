@@ -4841,24 +4841,9 @@ def db_sql2019_analyze_logical_data_model(
                 "recommendations": recommendations,
             }
             
-            # Cache the result for the web UI
-            analysis_id = str(uuid.uuid4())
-            DATA_MODEL_CACHE[analysis_id] = result_data
-            
-            # Construct URL for the ERD webpage
-            port = os.environ.get("MCP_PORT", "8085")
-            host = os.environ.get("MCP_HOST", "localhost")
-            if host == "0.0.0.0":
-                host = "localhost"
-            
-            url = f"http://{host}:{port}/data-model-analysis?id={analysis_id}"
-            
-            return {
-                "message": f"ERD webpage generated for database '{database_name}'. View the interactive diagram at the URL below.",
-                "database": database_name,
-                "erd_url": url,
-                "summary": summary
-            }
+            # Return the complete analysis data directly instead of URL
+            # since MCP server doesn't serve web pages when running in protocol mode
+            return result_data
     finally:
         conn.close()
 
