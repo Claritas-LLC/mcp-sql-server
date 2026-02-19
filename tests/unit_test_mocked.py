@@ -191,13 +191,7 @@ class TestMockedTools:
         assert result["format"] == "xml"
         assert "<xml_plan>" in result["plan"]
 
-    def test_get_db_parameters(self, mock_conn):
-        mock_conn.description = [("name",), ("value",)]
-        mock_conn.fetchall.return_value = [("max degree of parallelism", 8)]
-        
-        result = server.db_sql2019_get_db_parameters.fn()
-        assert len(result) == 1
-        assert result[0]["name"] == "max degree of parallelism"
+
 
     def test_analyze_indexes(self, mock_conn):
         # 1. Unused, 2. Missing

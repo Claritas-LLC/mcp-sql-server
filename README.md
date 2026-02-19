@@ -441,6 +441,7 @@ This server implements strict security practices for logging:
 ### ⚡ Performance & Tuning (Always Available)
 - `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str)`: **(Enhanced Power Tool)** Comprehensive health check for a specific table, including size analysis, index fragmentation, foreign key dependencies, statistics health, **missing constraint analysis** (foreign keys, check constraints, defaults, primary keys), and **enhanced index recommendations** (missing FK indexes, disabled indexes, unused large indexes, redundant indexes). Returns actionable tuning recommendations with severity levels.
 - `db_sql2019_show_top_queries(database_name: str)`: **(Query Store Analysis)** Analyzes Query Store data to identify top problematic queries including long-running queries, regressed queries (performance degradation), high CPU consumption, high I/O queries, and frequently executed poor-performing queries. Provides specific recommendations for each issue with actionable steps. **Prerequisite**: Query Store must be enabled on the target database (not enabled by default in SQL Server 2019). If disabled, the tool will return empty results or errors. To enable: `ALTER DATABASE [database_name] SET QUERY_STORE = ON;`
+- `db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: str)`: **(DDL Generation)** Generate complete DDL (CREATE/ALTER) statements to recreate database objects. Supports tables, views, indexes, functions, procedures, and triggers. Returns object metadata, dependencies, and production-ready DDL with proper constraints and indexes.
 - `db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: Get the XML execution plan for a query.
 
 ### 🕵️ Session & Security (Always Available)
@@ -1013,7 +1014,28 @@ Here are some real-world examples of using the tools via an MCP client.
 }
 ```
 
-### 6. Logical Data Model Analysis
+### 6. DDL Generation
+**Prompt:** `using sqlserver, call db_sql2019_generate_ddl(database_name='USGISPRO_800', object_name='Account', object_type='table') and display results`
+
+**Result:**
+```json
+{
+  "database_name": "USGISPRO_800",
+  "object_name": "Account",
+  "object_type": "table",
+  "success": true,
+  "metadata": {
+    "object_id": 123456789,
+    "create_date": "2024-01-15T10:30:00",
+    "modify_date": "2024-02-10T14:20:00",
+    "description": "Main account table storing company account information"
+  },
+  "dependencies": ["Company"],
+  "ddl": "CREATE TABLE [dbo].[Account](\n    [AccountID] [int] IDENTITY(1,1) NOT NULL,\n    [AccountName] [nvarchar](255) NOT NULL,\n    [Status] [nvarchar](50) NOT NULL,\n    [CompanyID] [int] NOT NULL,\n    [ParentAccountID] [int] NULL,\n    [CreatedDate] [datetime2](7) NOT NULL,\n    [ModifiedDate] [datetime2](7) NOT NULL,\n    [IsActive] [bit] NOT NULL,\n    CONSTRAINT [PK_Account] PRIMARY KEY CLUSTERED ([AccountID])\n) WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]\nGO\n\n-- Foreign Key Constraints\nALTER TABLE [dbo].[Account] WITH CHECK ADD CONSTRAINT [FK_Account_Company] FOREIGN KEY([CompanyID])\nREFERENCES [dbo].[Company] ([CompanyID])\nGO\n\nALTER TABLE [dbo].[Account] CHECK CONSTRAINT [FK_Account_Company]\nGO\n\nALTER TABLE [dbo].[Account] WITH CHECK ADD CONSTRAINT [FK_Account_Account] FOREIGN KEY([ParentAccountID])\nREFERENCES [dbo].[Account] ([AccountID])\nGO\n\nALTER TABLE [dbo].[Account] CHECK CONSTRAINT [FK_Account_Account]\nGO\n\n-- Indexes\nCREATE NONCLUSTERED INDEX [IX_Account_AccountNameStatus] ON [dbo].[Account]\n([AccountName], [Status])\nGO\n\nCREATE NONCLUSTERED INDEX [IX_Account_CompanyID] ON [dbo].[Account]\n([CompanyID])\nGO\n"
+}
+```
+
+### 7. Logical Data Model Analysis
 **Prompt:** `using sqlserver_readonly, call db_sql2019_analyze_logical_data_model(database_name='USGISPRO_800', schema='dbo') and display results`
 
 **Result:**

@@ -3491,6 +3491,393 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
 
 
 @mcp.tool
+def db_sql2019_generate_ddl(
+    database_name: str,
+    object_name: str,
+    object_type: str
+) -> dict[str, Any]:
+    """
+    Generate DDL (CREATE/ALTER) statements to recreate database objects.
+    
+    Supports generating DDL for tables, views, indexes, functions, procedures, and triggers.
+    Uses SQL Server's built-in scripting capabilities to produce accurate, complete DDL.
+    
+    Args:
+        database_name: The database name containing the object.
+        object_name: The name of the object to generate DDL for.
+        object_type: Type of object ('table', 'view', 'index', 'function', 'procedure', 'trigger').
+    
+    Returns:
+        Dictionary containing the generated DDL, object metadata, and any dependencies.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        
+        # Validate object type
+        valid_types = ['table', 'view', 'index', 'function', 'procedure', 'trigger']
+        if object_type.lower() not in valid_types:
+            return {
+                "success": False,
+                "error": f"Invalid object_type '{object_type}'. Supported types: {', '.join(valid_types)}",
+                "ddl": None
+            }
+        
+        # Switch to the target database
+        _execute_safe(cur, f"USE [{database_name}]")
+        
+        results = {
+            "database_name": database_name,
+            "object_name": object_name,
+            "object_type": object_type.lower(),
+            "ddl": "",
+            "dependencies": [],
+            "metadata": {},
+            "success": True
+        }
+        
+        if object_type.lower() == 'table':
+            # Generate table DDL using OBJECT_DEFINITION and system tables
+            _execute_safe(cur, f"""
+                SELECT 
+                    t.object_id,
+                    t.name as table_name,
+                    s.name as schema_name,
+                    t.create_date,
+                    t.modify_date,
+                    p.value as description
+                FROM sys.tables t
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                LEFT JOIN sys.extended_properties p ON t.object_id = p.major_id 
+                    AND p.minor_id = 0 AND p.name = 'MS_Description'
+                WHERE t.name = '{object_name}' AND s.name = 'dbo'
+            """)
+            
+            table_info = cur.fetchone()
+            if not table_info:
+                return {
+                    "success": False,
+                    "error": f"Table '{object_name}' not found in database '{database_name}'",
+                    "ddl": None
+                }
+            
+            results["metadata"] = {
+                "object_id": table_info[0],
+                "create_date": table_info[2].isoformat() if table_info[2] else None,
+                "modify_date": table_info[3].isoformat() if table_info[3] else None,
+                "description": table_info[4]
+            }
+            
+            # Get column information
+            _execute_safe(cur, f"""
+                SELECT 
+                    c.name,
+                    c.column_id,
+                    t.name as data_type,
+                    c.max_length,
+                    c.precision,
+                    c.scale,
+                    c.is_nullable,
+                    c.is_identity,
+                    c.is_computed,
+                    dc.definition as computed_definition,
+                    c.collation_name,
+                    OBJECT_DEFINITION(c.default_object_id) as default_constraint
+                FROM sys.columns c
+                JOIN sys.types t ON c.user_type_id = t.user_type_id
+                LEFT JOIN sys.computed_columns dc ON c.object_id = dc.object_id AND c.column_id = dc.column_id
+                WHERE c.object_id = {table_info[0]}
+                ORDER BY c.column_id
+            """)
+            
+            columns = cur.fetchall()
+            
+            # Get primary key information
+            _execute_safe(cur, f"""
+                SELECT 
+                    k.name as constraint_name,
+                    c.name as column_name,
+                    ic.key_ordinal
+                FROM sys.key_constraints k
+                JOIN sys.index_columns ic ON k.unique_index_id = ic.index_id
+                JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                WHERE k.parent_object_id = {table_info[0]} AND k.type = 'PK'
+                ORDER BY ic.key_ordinal
+            """)
+            
+            pk_columns = cur.fetchall()
+            
+            # Get foreign key information
+            _execute_safe(cur, f"""
+                SELECT 
+                    f.name as constraint_name,
+                    c.name as column_name,
+                    rt.name as referenced_table,
+                    rc.name as referenced_column,
+                    f.delete_referential_action_desc,
+                    f.update_referential_action_desc
+                FROM sys.foreign_keys f
+                JOIN sys.foreign_key_columns fc ON f.object_id = fc.parent_object_id AND f.constraint_object_id = fc.constraint_object_id
+                JOIN sys.columns c ON fc.parent_object_id = c.object_id AND fc.parent_column_id = c.column_id
+                JOIN sys.tables rt ON f.referenced_object_id = rt.object_id
+                JOIN sys.columns rc ON f.referenced_object_id = rc.object_id AND fc.referenced_column_id = rc.column_id
+                WHERE f.parent_object_id = {table_info[0]}
+            """)
+            
+            fk_constraints = cur.fetchall()
+            
+            # Get indexes
+            _execute_safe(cur, f"""
+                SELECT 
+                    i.name as index_name,
+                    i.type_desc,
+                    i.is_unique,
+                    i.is_primary_key,
+                    i.is_unique_constraint,
+                    STRING_AGG(c.name, ', ') WITHIN GROUP (ORDER BY ic.key_ordinal) as indexed_columns,
+                    i.filter_definition,
+                    i.data_space
+                FROM sys.indexes i
+                JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+                JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                WHERE i.object_id = {table_info[0]} AND i.name IS NOT NULL
+                GROUP BY i.object_id, i.index_id, i.name, i.type_desc, i.is_unique, i.is_primary_key, i.is_unique_constraint, i.filter_definition, i.data_space
+                ORDER BY i.name
+            """)
+            
+            indexes = cur.fetchall()
+            
+            # Build DDL
+            ddl_parts = []
+            ddl_parts.append(f"CREATE TABLE [dbo].[{object_name}](")
+            
+            # Add columns
+            column_definitions = []
+            for col in columns:
+                col_name = col[0]
+                data_type = col[2]
+                
+                # Handle data type with length/precision/scale
+                if data_type in ['nvarchar', 'varchar', 'nchar', 'char', 'binary', 'varbinary']:
+                    if col[3] > 0:
+                        data_type += f"({col[3]})"
+                    elif col[3] == -1:
+                        data_type += "(max)"
+                elif data_type in ['decimal', 'numeric']:
+                    data_type += f"({col[4]},{col[5]})"
+                elif data_type == 'datetime2':
+                    data_type += f"({col[5]})"
+                
+                nullable = "NULL" if col[6] else "NOT NULL"
+                identity = f" IDENTITY({col[7]},1)" if col[8] else ""
+                computed = f" AS ({col[9]})" if col[9] else ""
+                default = f" DEFAULT {col[11]}" if col[11] else ""
+                
+                column_def = f"    [{col_name}] [{data_type}]{identity}{computed}{default} {nullable}"
+                column_definitions.append(column_def)
+            
+            ddl_parts.append(",\n".join(column_definitions))
+            
+            # Add primary key constraint
+            if pk_columns:
+                pk_cols = ", ".join([f"[col[1]]" for col in pk_columns])
+                ddl_parts.append(f", CONSTRAINT [PK_{object_name}] PRIMARY KEY CLUSTERED ({pk_cols})")
+            
+            ddl_parts.append("\n)")
+            
+            # Add table options
+            ddl_parts.append("WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]")
+            
+            ddl = "\n".join(ddl_parts)
+            
+            # Add foreign key constraints
+            if fk_constraints:
+                ddl += "\nGO\n\n-- Foreign Key Constraints\n"
+                for fk in fk_constraints:
+                    fk_name = fk[0]
+                    col_name = fk[1]
+                    ref_table = fk[2]
+                    ref_col = fk[3]
+                    delete_action = fk[4]
+                    update_action = fk[5]
+                    
+                    ddl += f"\nALTER TABLE [dbo].[{object_name}] WITH CHECK ADD CONSTRAINT [{fk_name}] FOREIGN KEY([{col_name}])\n"
+                    ddl += f"REFERENCES [dbo].[{ref_table}] ([{ref_col}])\n"
+                    ddl += f"GO\n\nALTER TABLE [dbo].[{object_name}] CHECK CONSTRAINT [{fk_name}]\n"
+                    ddl += "GO\n"
+            
+            # Add indexes
+            if indexes:
+                ddl += "\nGO\n\n-- Indexes\n"
+                for idx in indexes:
+                    if not idx[3]:  # Skip primary key (already included)
+                        idx_name = idx[0]
+                        idx_type = idx[1]
+                        is_unique = "UNIQUE " if idx[2] else ""
+                        idx_cols = idx[3]
+                        filter_def = f" WHERE {idx[4]}" if idx[4] else ""
+                        
+                        ddl += f"\nCREATE {is_unique}NONCLUSTERED INDEX [{idx_name}] ON [dbo].[{object_name}]\n"
+                        ddl += f"({idx_cols}){filter_def}\n"
+                        ddl += "GO\n"
+            
+            results["ddl"] = ddl
+            results["dependencies"] = [fk[2] for fk in fk_constraints]  # Referenced tables
+            
+        elif object_type.lower() == 'view':
+            # Get view definition
+            _execute_safe(cur, f"""
+                SELECT 
+                    OBJECT_DEFINITION(OBJECT_ID('{object_name}')) as definition,
+                    v.create_date,
+                    v.modify_date,
+                    v.is_schema_bound,
+                    v.is_check_optimized
+                FROM sys.views v
+                WHERE v.name = '{object_name}'
+            """)
+            
+            view_info = cur.fetchone()
+            if not view_info:
+                return {
+                    "success": False,
+                    "error": f"View '{object_name}' not found in database '{database_name}'",
+                    "ddl": None
+                }
+            
+            definition = view_info[0] or ""
+            results["ddl"] = f"CREATE VIEW [dbo].[{object_name}] AS\n{definition}"
+            results["metadata"] = {
+                "create_date": view_info[1].isoformat() if view_info[1] else None,
+                "modify_date": view_info[2].isoformat() if view_info[2] else None,
+                "is_schema_bound": view_info[3],
+                "is_check_optimized": view_info[4]
+            }
+            
+        elif object_type.lower() == 'index':
+            # Get index definition
+            _execute_safe(cur, f"""
+                SELECT 
+                    i.name as index_name,
+                    i.type_desc,
+                    i.is_unique,
+                    i.is_primary_key,
+                    i.is_unique_constraint,
+                    i.filter_definition,
+                    i.data_space,
+                    t.name as table_name,
+                    STRING_AGG(c.name, ', ') WITHIN GROUP (ORDER BY ic.key_ordinal) as indexed_columns,
+                    ic.is_descending_key
+                FROM sys.indexes i
+                JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+                JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                JOIN sys.tables t ON i.object_id = t.object_id
+                WHERE i.name = '{object_name}'
+                GROUP BY i.object_id, i.index_id, i.name, i.type_desc, i.is_unique, i.is_primary_key, i.is_unique_constraint, i.filter_definition, i.data_space, t.name
+            """)
+            
+            index_info = cur.fetchone()
+            if not index_info:
+                return {
+                    "success": False,
+                    "error": f"Index '{object_name}' not found in database '{database_name}'",
+                    "ddl": None
+                }
+            
+            table_name = index_info[6]
+            idx_cols = index_info[7]
+            is_unique = "UNIQUE " if index_info[2] else ""
+            filter_def = f" WHERE {index_info[5]}" if index_info[5] else ""
+            
+            results["ddl"] = f"CREATE {is_unique}NONCLUSTERED INDEX [{object_name}] ON [dbo].[{table_name}]\n({idx_cols}){filter_def}"
+            results["metadata"] = {
+                "table_name": table_name,
+                "type": index_info[1],
+                "is_unique": index_info[2],
+                "is_primary_key": index_info[3],
+                "filter_definition": index_info[5]
+            }
+            
+        elif object_type.lower() in ['function', 'procedure']:
+            # Get function/procedure definition
+            obj_type = "FUNCTION" if object_type.lower() == 'function' else "PROCEDURE"
+            _execute_safe(cur, f"""
+                SELECT 
+                    OBJECT_DEFINITION(OBJECT_ID('{object_name}')) as definition,
+                    o.create_date,
+                    o.modify_date,
+                    o.type_desc
+                FROM sys.objects o
+                WHERE o.name = '{object_name}' AND o.type IN ('FN', 'IF', 'TF', 'FS', 'FT', 'P')
+            """)
+            
+            obj_info = cur.fetchone()
+            if not obj_info:
+                return {
+                    "success": False,
+                    "error": f"{obj_type} '{object_name}' not found in database '{database_name}'",
+                    "ddl": None
+                }
+            
+            definition = obj_info[0] or ""
+            results["ddl"] = definition
+            results["metadata"] = {
+                "create_date": obj_info[1].isoformat() if obj_info[1] else None,
+                "modify_date": obj_info[2].isoformat() if obj_info[2] else None,
+                "type": obj_info[3]
+            }
+            
+        elif object_type.lower() == 'trigger':
+            # Get trigger definition
+            _execute_safe(cur, f"""
+                SELECT 
+                    OBJECT_DEFINITION(OBJECT_ID('{object_name}')) as definition,
+                    t.create_date,
+                    t.modify_date,
+                    t.is_instead_of_trigger,
+                    t.is_disabled,
+                    parent_obj.name as parent_table
+                FROM sys.triggers t
+                JOIN sys.objects parent_obj ON t.parent_id = parent_obj.object_id
+                WHERE t.name = '{object_name}'
+            """)
+            
+            trigger_info = cur.fetchone()
+            if not trigger_info:
+                return {
+                    "success": False,
+                    "error": f"Trigger '{object_name}' not found in database '{database_name}'",
+                    "ddl": None
+                }
+            
+            definition = trigger_info[0] or ""
+            results["ddl"] = definition
+            results["metadata"] = {
+                "create_date": trigger_info[1].isoformat() if trigger_info[1] else None,
+                "modify_date": trigger_info[2].isoformat() if trigger_info[2] else None,
+                "is_instead_of_trigger": trigger_info[3],
+                "is_disabled": trigger_info[4],
+                "parent_table": trigger_info[5]
+            }
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error generating DDL for {object_type} '{object_name}' in database '{database_name}': {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "ddl": None,
+            "database_name": database_name,
+            "object_name": object_name,
+            "object_type": object_type
+        }
+    finally:
+        if conn:
+            conn.close()
+
+
+@mcp.tool
 def db_sql2019_db_sec_perf_metrics(profile: str = "oltp") -> dict[str, Any]:
     """
     Comprehensive security, performance, and configuration audit with tuning recommendations.
