@@ -5498,9 +5498,10 @@ DATA_MODEL_HTML = """
                 return type.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_()]/g, '');
             };
 
-            // Entities with proper error handling
+            // Entities with proper error handling - limit to first 50 for performance
             if (model.entities && Array.isArray(model.entities)) {
-                model.entities.forEach(e => {
+                const entitiesToShow = model.entities.slice(0, 50);
+                entitiesToShow.forEach(e => {
                     try {
                         if (!e.name) return; // Skip entities without names
                         
