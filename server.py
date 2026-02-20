@@ -4841,9 +4841,24 @@ def db_sql2019_analyze_logical_data_model(
                 "recommendations": recommendations,
             }
             
-            # Return the complete analysis data directly instead of URL
-            # since MCP server doesn't serve web pages when running in protocol mode
-            return result_data
+            # Cache the result for the web UI
+            analysis_id = str(uuid.uuid4())
+            DATA_MODEL_CACHE[analysis_id] = result_data
+            
+            # Construct URL for the ERD webpage
+            port = os.environ.get("MCP_PORT", "8085")
+            host = os.environ.get("MCP_HOST", "localhost")
+            if host == "0.0.0.0":
+                host = "localhost"
+            
+            url = f"http://{host}:{port}/data-model-analysis?id={analysis_id}"
+            
+            return {
+                "message": f"ERD webpage generated for database '{database_name}'. View the interactive diagram at the URL below.",
+                "database": database_name,
+                "erd_url": url,
+                "summary": summary
+            }
     finally:
         conn.close()
 
@@ -5178,7 +5193,90 @@ DATA_MODEL_HTML = """
 
             <!-- Detailed Analysis -->
             <section>
-                <h2 class="text-xl font-bold text-gray-800 mb-4">Detailed Entity Analysis</h2>
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-bold text-gray-800">Detailed Entity Analysis</h2>
+                    <div id="selectedEntityBadge" class="hidden bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                        <span id="selectedEntityName"></span>
+                        <button onclick="clearEntitySelection()" class="ml-2 text-blue-600 hover:text-blue-800">×</button>
+                    </div>
+                </div>
+                
+                <!-- Entity Detail Panel -->
+                <div id="entityDetailPanel" class="hidden bg-white border border-gray-200 rounded-lg p-6 mb-6 shadow-sm">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">Entity Details</h3>
+                    
+                    <!-- Entity Overview -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div class="bg-gray-50 p-4 rounded-lg">
+                            <h4 class="font-medium text-gray-700 mb-2">Basic Information</h4>
+                            <div id="entityBasicInfo" class="text-sm text-gray-600 space-y-1"></div>
+                        </div>
+                        <div class="bg-blue-50 p-4 rounded-lg">
+                            <h4 class="font-medium text-blue-700 mb-2">Primary Key</h4>
+                            <div id="entityPrimaryKey" class="text-sm text-blue-600"></div>
+                        </div>
+                        <div class="bg-green-50 p-4 rounded-lg">
+                            <h4 class="font-medium text-green-700 mb-2">Row Count</h4>
+                            <div id="entityRowCount" class="text-sm text-green-600 font-mono">-</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Indexes Section -->
+                    <div class="mb-6">
+                        <h4 class="font-medium text-gray-700 mb-3 flex items-center">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
+                            </svg>
+                            Indexes
+                        </h4>
+                        <div id="entityIndexes" class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-sm text-gray-500 italic">Click an entity to view its indexes</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Relationships Section -->
+                    <div class="mb-6">
+                        <h4 class="font-medium text-gray-700 mb-3 flex items-center">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
+                            </svg>
+                            Relationships
+                        </h4>
+                        <div id="entityRelationships" class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-sm text-gray-500 italic">Click an entity to view its relationships</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Columns Section -->
+                    <div>
+                        <h4 class="font-medium text-gray-700 mb-3 flex items-center">
+                            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            Columns
+                        </h4>
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Nullable</th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Default</th>
+                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Key</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="entityColumns" class="bg-white divide-y divide-gray-200">
+                                    <tr>
+                                        <td colspan="5" class="px-4 py-4 text-sm text-gray-500 italic">Click an entity to view its columns</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Entity Table -->
                 <div class="overflow-hidden border border-gray-200 rounded-lg shadow-sm">
                     <table class="min-w-full divide-y divide-gray-200">
                         <thead class="bg-gray-50">
@@ -5367,7 +5465,7 @@ DATA_MODEL_HTML = """
             // Detailed Entity Table
             const entityTable = document.getElementById('entityTableBody');
             entityTable.innerHTML = model.entities.map(e => `
-                <tr class="hover:bg-gray-50">
+                <tr class="hover:bg-gray-50 cursor-pointer entity-row" onclick="selectEntity('${e.name}', ${JSON.stringify(e).replace(/'/g, "\\'")})">
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${e.name}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${e.kind === 'r' ? 'Table' : e.kind === 'v' ? 'View' : e.kind}</td>
                     <td class="px-6 py-4 text-sm text-gray-500">
@@ -5434,7 +5532,139 @@ DATA_MODEL_HTML = """
             return s;
         }
 
-        window.onload = loadData;
+        function clearEntitySelection() {
+            document.getElementById('entityDetailPanel').classList.add('hidden');
+            document.getElementById('selectedEntityBadge').classList.add('hidden');
+            document.querySelectorAll('.entity-row').forEach(row => row.classList.remove('bg-blue-50'));
+        }
+
+        window.clearEntitySelection = clearEntitySelection;
+
+        function selectEntity(entityName, entityData) {
+            // Update UI to show selected entity
+            document.getElementById('selectedEntityName').textContent = entityName;
+            document.getElementById('selectedEntityBadge').classList.remove('hidden');
+            document.getElementById('entityDetailPanel').classList.remove('hidden');
+            
+            // Highlight selected row
+            document.querySelectorAll('.entity-row').forEach(row => {
+                if (row.cells[0].textContent === entityName) {
+                    row.classList.add('bg-blue-50');
+                } else {
+                    row.classList.remove('bg-blue-50');
+                }
+            });
+
+            // Populate basic information
+            const basicInfo = document.getElementById('entityBasicInfo');
+            basicInfo.innerHTML = `
+                <div><strong>Name:</strong> ${entityData.name}</div>
+                <div><strong>Schema:</strong> ${entityData.schema}</div>
+                <div><strong>Type:</strong> ${entityData.kind === 'r' ? 'Table' : entityData.kind === 'v' ? 'View' : entityData.kind}</div>
+                <div><strong>Columns:</strong> ${entityData.attributes.length}</div>
+            `;
+
+            // Populate primary key
+            const pkInfo = document.getElementById('entityPrimaryKey');
+            if (entityData.primary_key && entityData.primary_key.length > 0) {
+                pkInfo.innerHTML = `<div class="font-mono text-sm">${entityData.primary_key.join(', ')}</div>`;
+            } else {
+                pkInfo.innerHTML = '<div class="text-red-600">No primary key defined</div>';
+            }
+
+            // Populate indexes
+            const indexesContainer = document.getElementById('entityIndexes');
+            if (window.allIndexes && window.allIndexes[entityName]) {
+                const entityIndexes = window.allIndexes[entityName];
+                if (entityIndexes.length > 0) {
+                    indexesContainer.innerHTML = entityIndexes.map(idx => `
+                        <div class="bg-white p-3 rounded border mb-2">
+                            <div class="font-medium text-gray-800">${idx.name}</div>
+                            <div class="text-sm text-gray-600 mt-1">
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${idx.is_unique ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'} mr-2">
+                                    ${idx.is_unique ? 'UNIQUE' : 'NON-UNIQUE'}
+                                </span>
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${idx.is_primary ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}">
+                                    ${idx.is_primary ? 'PRIMARY KEY' : idx.type || 'INDEX'}
+                                </span>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">Columns: ${idx.columns.join(', ')}</div>
+                        </div>
+                    `).join('');
+                } else {
+                    indexesContainer.innerHTML = '<div class="text-sm text-gray-500 italic">No indexes defined</div>';
+                }
+            } else {
+                indexesContainer.innerHTML = '<div class="text-sm text-gray-500 italic">Index information not available</div>';
+            }
+
+            // Populate relationships
+            const relationshipsContainer = document.getElementById('entityRelationships');
+            if (window.allRelationships && window.allRelationships[entityName]) {
+                const entityRelationships = window.allRelationships[entityName];
+                if (entityRelationships.length > 0) {
+                    relationshipsContainer.innerHTML = entityRelationships.map(rel => `
+                        <div class="bg-white p-3 rounded border mb-2">
+                            <div class="font-medium text-gray-800">${rel.name}</div>
+                            <div class="text-sm text-gray-600 mt-1">
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 mr-2">
+                                    ${rel.from_entity} → ${rel.to_entity}
+                                </span>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                Local: ${rel.local_columns.join(', ')} | Referenced: ${rel.ref_columns.join(', ')}
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                On Update: ${rel.on_update} | On Delete: ${rel.on_delete}
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    relationshipsContainer.innerHTML = '<div class="text-sm text-gray-500 italic">No relationships defined</div>';
+                }
+            } else {
+                relationshipsContainer.innerHTML = '<div class="text-sm text-gray-500 italic">Relationship information not available</div>';
+            }
+
+            // Populate columns
+            const columnsContainer = document.getElementById('entityColumns');
+            if (entityData.attributes && entityData.attributes.length > 0) {
+                columnsContainer.innerHTML = entityData.attributes.map(attr => {
+                    const isPk = entityData.primary_key && entityData.primary_key.includes(attr.name);
+                    const isFk = entityData.foreign_keys && entityData.foreign_keys.some(fk => fk.local_columns.includes(attr.name));
+                    
+                    let keyType = '';
+                    if (isPk) keyType += 'PK ';
+                    if (isFk) keyType += 'FK ';
+                    
+                    return `
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-4 py-2 text-sm font-medium text-gray-900">${attr.name}</td>
+                            <td class="px-4 py-2 text-sm text-gray-600 font-mono">
+                                ${attr.data_type}${attr.max_length ? `(${attr.max_length})` : ''}${attr.numeric_precision && attr.numeric_scale ? `(${attr.numeric_precision},${attr.numeric_scale})` : ''}
+                            </td>
+                            <td class="px-4 py-2 text-sm text-gray-600">
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${attr.nullable ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}">
+                                    ${attr.nullable ? 'NULL' : 'NOT NULL'}
+                                </span>
+                            </td>
+                            <td class="px-4 py-2 text-sm text-gray-600 font-mono">${attr.default || '-'}</td>
+                            <td class="px-4 py-2 text-sm text-gray-600">
+                                ${keyType ? `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">${keyType.trim()}</span>` : '-'}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                columnsContainer.innerHTML = '<tr><td colspan="5" class="px-4 py-4 text-sm text-gray-500 italic">No column information available</td></tr>';
+            }
+
+            // Try to get row count (this is a simplified approach - in real implementation you'd fetch this from the API)
+            document.getElementById('entityRowCount').textContent = 'Loading...';
+            // Note: Row count fetching would require additional API calls
+        }
+
+        window.selectEntity = selectEntity;
     </script>
 </body>
 </html>
