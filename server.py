@@ -189,7 +189,7 @@ def _get_auth() -> Any:
                 audience=os.environ.get("FASTMCP_AZURE_AD_AUDIENCE", client_id),
             )
         else:
-            from fastmcp.server.auth.providers.jwt import JWTVerifier
+            from .auth.providers.jwt import JWTVerifier
             jwks_uri = f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
             issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
             return JWTVerifier(
@@ -240,7 +240,7 @@ def _get_auth() -> Any:
 
     # Generic OAuth2 Proxy
     if auth_type_lower == "oauth2":
-        from fastmcp.server.auth import OAuthProxy
+        from . import app
         from fastmcp.server.auth.providers.jwt import JWTVerifier
         
         auth_url = os.environ.get("FASTMCP_OAUTH_AUTHORIZE_URL")
@@ -5464,10 +5464,13 @@ DATA_MODEL_HTML = """
             ];
             renderPaginatedList('recommendationsList', allRecsData, currentRecsPage, 'rec');
 
+            // Store entities globally for onclick access
+            window.allEntities = model.entities;
+            
             // Detailed Entity Table
             const entityTable = document.getElementById('entityTableBody');
-            entityTable.innerHTML = model.entities.map(e => `
-                <tr class="hover:bg-gray-50 cursor-pointer entity-row" onclick="selectEntity('${e.name}', ${JSON.stringify(e).replace(/'/g, "\\'")})">
+            entityTable.innerHTML = model.entities.slice(0, 50).map(e => `
+                <tr class="hover:bg-gray-50 cursor-pointer entity-row" onclick="selectEntity('${e.name.replace(/'/g, "\\'")}')">
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${e.name}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${e.kind === 'r' ? 'Table' : e.kind === 'v' ? 'View' : e.kind}</td>
                     <td class="px-6 py-4 text-sm text-gray-500">
@@ -5600,7 +5603,27 @@ DATA_MODEL_HTML = """
 
         window.clearEntitySelection = clearEntitySelection;
 
-        function selectEntity(entityName, entityData) {
+        function selectEntity(entityName) {
+            // Find entity data from global entities
+            const entityData = window.allEntities.find(e => e.name === entityName);
+            if (!entityData) {
+                console.error('Entity not found:', entityName);
+                return;
+            }
+            
+            // Update UI to show selected entity
+            document.getElementById('selectedEntityName').textContent = entityName;
+            document.getElementById('selectedEntityBadge').classList.remove('hidden');
+            document.getElementById('entityDetailPanel').classList.remove('hidden');
+            
+            // Highlight selected row
+            document.querySelectorAll('.entity-row').forEach(row => {
+                if (row.cells[0].textContent === entityName) {
+                    row.classList.add('bg-blue-50');
+                } else {
+                    row.classList.remove('bg-blue-50');
+                }
+            });
             // Update UI to show selected entity
             document.getElementById('selectedEntityName').textContent = entityName;
             document.getElementById('selectedEntityBadge').classList.remove('hidden');
