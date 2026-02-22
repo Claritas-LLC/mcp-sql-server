@@ -5500,7 +5500,7 @@ DATA_MODEL_HTML = """
             
             const safeType = (type) => {
                 // Clean up data types for Mermaid
-                return type.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_()]/g, '');
+                return type.replace(/\\s+/g, '_').replace(/[^a-zA-Z0-9_()]/g, '');
             };
 
             // Entities with proper error handling - limit to first 50 for performance
@@ -5575,7 +5575,7 @@ DATA_MODEL_HTML = """
                         if (!fromSafe || !toSafe) return; // Skip invalid relationships
                         
                         // Clean relationship name for label
-                        const label = (r.name || '').replace(/"/g, "'").replace(/[^\w\s\-_]/g, '').trim();
+                        const label = (r.name || '').replace(/"/g, "'").replace(/[^\\w\\s\\-_]/g, '').trim();
                         const cleanLabel = label || 'FK';
                         
                         // Mermaid ERD relationship syntax: Parent ||--|| Child : "label"
