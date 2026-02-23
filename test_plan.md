@@ -27,6 +27,7 @@ Based on the code review of `server.py`, the following tools have been identifie
 - `db_sql2019_run_query`
 - `db_sql2019_explain_query`
 - `ping`
+- `db_sql2019_server_info_mcp`
 - `server_info_mcp`
 - `monitor_sessions`
 

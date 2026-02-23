@@ -17,6 +17,7 @@ This server exposes a suite of DBA-grade tools to inspect schemas, analyze perfo
 - **SSH Tunneling**: Built-in support for connecting via SSH bastion hosts.
 - **Python 3.11**: Built on a stable Python runtime for improved compatibility.
 - **Broad Compatibility**: Fully tested with **SQL Server 2019** and **SQL Server 2022**.
+- **Comprehensive Testing**: Includes unit tests with mocked data for core functionality like server information retrieval (`db_sql2019_server_info_mcp`).
 
 ---
 
@@ -247,6 +248,9 @@ This project includes a comprehensive test suite covering **Unit**, **Integratio
     
     # 2. Run Comprehensive Test Suite
     pytest -v tests/
+    
+    # Or run specific tests like server info validation
+    python test_server_info_mcp.py
     ```
 
 3.  **Verification Coverage**:
@@ -499,22 +503,14 @@ Here are some real-world examples of using the tools via an MCP client.
 **Result:**
 ```json
 {
-  "name": "SQL Server MCP Server",
-  "version": "1.0.0",
-  "status": "healthy",
-  "transport": "http",
-  "server_ip": "localhost",
-  "server_port": 8085,
-  "allow_write": false,
-  "default_max_rows": 500,
+  "server_version": "Microsoft SQL Server 2022 (RTM) - 16.0.4001.0 (X64) Build 16.0.4001.0",
+  "server_name": "MYSERVER",
   "database": "master",
-  "user": "n8n_DBMonitor",
-  "server_name": "gisdevsql01",
-  "server_addr": "10.125.1.7",
-  "version": "Microsoft SQL Server 2019 (RTM-CU32-GDR) (KB5068404) - 15.0.4455.2 (X64) \n\tOct  7 2025 21:10:15 \n\tCopyright (C) 2019 Microsoft Corporation\n\tDeveloper Edition (64-bit) on Windows Server 2019 Datacenter 10.0 <X64> (Build 17763: ) (Hypervisor)\n",
-  "product_version": "15.0.4455.2",
-  "product_level": "RTM",
-  "edition": "Developer Edition (64-bit)"
+  "user": "sa",
+  "server_version_short": "16.0.4001.0",
+  "server_edition": "Enterprise",
+  "server_addr": "127.0.0.1",
+  "server_port": 1433
 }
 ```
 
