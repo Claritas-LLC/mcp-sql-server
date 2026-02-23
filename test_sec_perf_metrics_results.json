@@ -1,0 +1,731 @@
+{
+  "profile": "oltp",
+  "analysis_timestamp": "2026-02-23T18:37:19.475099",
+  "security_assessment": {
+    "login_audit": [
+      {
+        "name": "CLARITAS\\artsai-dev-readonly",
+        "type_desc": "WINDOWS_GROUP",
+        "is_disabled": false,
+        "create_date": "2023-11-22 17:30:05.487000",
+        "modify_date": "2023-11-22 17:30:05.493000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "CLARITAS\\Cloud Engineering",
+        "type_desc": "WINDOWS_GROUP",
+        "is_disabled": false,
+        "create_date": "2021-09-21 20:12:07.660000",
+        "modify_date": "2021-09-21 20:12:07.670000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "CLARITAS\\Geoscape Infrastructure Management",
+        "type_desc": "WINDOWS_GROUP",
+        "is_disabled": false,
+        "create_date": "2021-09-21 20:00:17.293000",
+        "modify_date": "2021-09-21 20:00:17.353000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "CLARITAS\\gis-sql-cmd-dev",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2022-02-03 15:40:25.447000",
+        "modify_date": "2022-02-03 15:40:25.453000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "CLARITAS\\harry.valdez",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2023-05-30 11:14:56.607000",
+        "modify_date": "2023-05-30 11:14:56.650000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "CLARITAS\\Jing.An",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2024-09-27 17:33:59.423000",
+        "modify_date": "2024-09-27 17:33:59.463000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "CLARITAS\\Koti.Madhiraju",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-09-29 13:55:07.560000",
+        "modify_date": "2021-09-29 13:55:07.587000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "CLARITAS\\Mike.Fontana",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2022-05-09 21:10:59.333000",
+        "modify_date": "2022-05-09 21:10:59.350000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "CLARITAS\\muller.paul",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2024-01-05 14:41:16.430000",
+        "modify_date": "2024-01-05 14:41:16.437000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "CLARITAS\\Ryan.Buschmeyer",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2024-01-05 14:41:45.887000",
+        "modify_date": "2024-01-05 14:41:45.893000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "gis",
+        "type_desc": "SQL_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-09-24 17:29:14.140000",
+        "modify_date": "2021-09-24 17:29:14.153000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "gisapp",
+        "type_desc": "SQL_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-09-24 17:37:58.193000",
+        "modify_date": "2021-09-24 17:37:58.203000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "gisdevsql01\\gisadmin",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-09-14 17:19:58.883000",
+        "modify_date": "2021-09-14 17:19:58.893000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "gissqladmin",
+        "type_desc": "SQL_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-09-14 17:20:42.090000",
+        "modify_date": "2021-09-14 17:20:42.153000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "n8n_DBMonitor",
+        "type_desc": "SQL_LOGIN",
+        "is_disabled": false,
+        "create_date": "2025-09-28 04:06:12.040000",
+        "modify_date": "2026-02-13 06:10:57.020000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "n8n_ro",
+        "type_desc": "SQL_LOGIN",
+        "is_disabled": false,
+        "create_date": "2025-09-15 18:45:44.123000",
+        "modify_date": "2025-11-21 19:21:49.263000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "NT AUTHORITY\\SYSTEM",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-08-11 05:54:51.913000",
+        "modify_date": "2021-09-14 17:19:58.897000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "NT Service\\MSSQLSERVER",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-08-11 05:54:52.110000",
+        "modify_date": "2021-08-11 05:54:52.120000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "NT Service\\SQLIaaSExtensionQuery",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-09-14 17:20:35.853000",
+        "modify_date": "2021-09-14 17:20:35.863000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "NT SERVICE\\SQLSERVERAGENT",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-08-11 05:54:52.867000",
+        "modify_date": "2021-08-11 05:54:52.877000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "NT SERVICE\\SQLTELEMETRY",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-08-11 05:54:53.850000",
+        "modify_date": "2021-08-11 05:54:53.857000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "NT SERVICE\\SQLWriter",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-08-11 05:54:52.080000",
+        "modify_date": "2021-08-11 05:54:52.090000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "NT SERVICE\\Winmgmt",
+        "type_desc": "WINDOWS_LOGIN",
+        "is_disabled": false,
+        "create_date": "2021-08-11 05:54:52.100000",
+        "modify_date": "2021-08-11 05:54:52.110000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      },
+      {
+        "name": "repo",
+        "type_desc": "SQL_LOGIN",
+        "is_disabled": false,
+        "create_date": "2023-09-01 21:17:46.493000",
+        "modify_date": "2025-03-04 20:29:50.150000",
+        "default_database_name": "repo",
+        "is_fixed_role": false
+      },
+      {
+        "name": "sa",
+        "type_desc": "SQL_LOGIN",
+        "is_disabled": true,
+        "create_date": "2003-04-08 09:10:35.460000",
+        "modify_date": "2021-08-11 05:54:52.193000",
+        "default_database_name": "master",
+        "is_fixed_role": false
+      }
+    ],
+    "permissions_audit": [
+      {
+        "principal_name": "CLARITAS\\artsai-dev-readonly",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ADMINISTER BULK OPERATIONS",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER ANY AVAILABILITY GROUP",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER ANY CONNECTION",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER ANY CREDENTIAL",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER ANY DATABASE",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER ANY ENDPOINT",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER ANY EVENT NOTIFICATION",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER ANY EVENT SESSION",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER ANY SERVER AUDIT",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER RESOURCES",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER SETTINGS",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "ALTER TRACE",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "CONTROL SERVER",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "CREATE ANY DATABASE",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "CREATE DDL EVENT NOTIFICATION",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "CREATE ENDPOINT",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "CREATE SERVER ROLE",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "CREATE TRACE EVENT NOTIFICATION",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "EXTERNAL ACCESS ASSEMBLY",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "IMPERSONATE ANY LOGIN",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "SELECT ALL USER SECURABLES",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "UNSAFE ASSEMBLY",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Cloud Engineering",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "VIEW ANY DEFINITION",
+        "permission_state": "DENY",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Geoscape Infrastructure Management",
+        "principal_type": "WINDOWS_GROUP",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\gis-sql-cmd-dev",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\harry.valdez",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Jing.An",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Koti.Madhiraju",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Mike.Fontana",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\muller.paul",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "CLARITAS\\Ryan.Buschmeyer",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "gis",
+        "principal_type": "SQL_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "gisapp",
+        "principal_type": "SQL_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "gisdevsql01\\gisadmin",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "gissqladmin",
+        "principal_type": "SQL_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "n8n_DBMonitor",
+        "principal_type": "SQL_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "n8n_DBMonitor",
+        "principal_type": "SQL_LOGIN",
+        "permission_name": "VIEW ANY DEFINITION",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "n8n_DBMonitor",
+        "principal_type": "SQL_LOGIN",
+        "permission_name": "VIEW SERVER STATE",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "n8n_ro",
+        "principal_type": "SQL_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "NT AUTHORITY\\SYSTEM",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "NT Service\\MSSQLSERVER",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "NT SERVICE\\SQLSERVERAGENT",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "NT SERVICE\\SQLTELEMETRY",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "ALTER ANY EVENT SESSION",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "NT SERVICE\\SQLTELEMETRY",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT ANY DATABASE",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "NT SERVICE\\SQLTELEMETRY",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "NT SERVICE\\SQLTELEMETRY",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "VIEW ANY DEFINITION",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "NT SERVICE\\SQLTELEMETRY",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "VIEW SERVER STATE",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "NT SERVICE\\SQLWriter",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "NT SERVICE\\Winmgmt",
+        "principal_type": "WINDOWS_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "public",
+        "principal_type": "SERVER_ROLE",
+        "permission_name": "CONNECT",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "public",
+        "principal_type": "SERVER_ROLE",
+        "permission_name": "CONNECT",
+        "permission_state": "GRANT",
+        "object_name": "sysrscols",
+        "object_type": "SYSTEM_TABLE"
+      },
+      {
+        "principal_name": "public",
+        "principal_type": "SERVER_ROLE",
+        "permission_name": "CONNECT",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "public",
+        "principal_type": "SERVER_ROLE",
+        "permission_name": "CONNECT",
+        "permission_state": "GRANT",
+        "object_name": "sysrowsets",
+        "object_type": "SYSTEM_TABLE"
+      },
+      {
+        "principal_name": "public",
+        "principal_type": "SERVER_ROLE",
+        "permission_name": "VIEW ANY DATABASE",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "repo",
+        "principal_type": "SQL_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      },
+      {
+        "principal_name": "sa",
+        "principal_type": "SQL_LOGIN",
+        "permission_name": "CONNECT SQL",
+        "permission_state": "GRANT",
+        "object_name": null,
+        "object_type": null
+      }
+    ],
+    "security_config": {
+      "error": "Could not execute query: ('08S01', '[08S01] [Microsoft][ODBC Driver 17 for SQL Server]TCP Provider: An existing connection was forcibly closed by the remote host.\\r\\n (10054) (SQLExecDirectW); [08S01] [Microsoft][ODBC Driver 17 for SQL Server]Communication link failure (10054)')"
+    }
+  },
+  "performance_metrics": {
+    "wait_stats": {
+      "error": "Could not execute query: ('08S01', '[08S01] [Microsoft][ODBC Driver 17 for SQL Server]Communication link failure (0) (SQLExecDirectW)')"
+    },
+    "memory_usage": {
+      "error": "Could not execute query: ('08S01', '[08S01] [Microsoft][ODBC Driver 17 for SQL Server]Communication link failure (0) (SQLExecDirectW)')"
+    },
+    "cpu_stats": {
+      "error": "Could not execute query: ('08S01', '[08S01] [Microsoft][ODBC Driver 17 for SQL Server]Communication link failure (0) (SQLExecDirectW)')"
+    }
+  },
+  "risk_assessment": {
+    "overall_risk_score": 0,
+    "risk_level": "LOW",
+    "risk_factors": [],
+    "profile_specific_metrics": {
+      "profile": "oltp",
+      "thresholds": {
+        "max_acceptable_wait_percentage": 30,
+        "max_memory_utilization": 80,
+        "critical_wait_types": [
+          "LCK_M_S",
+          "LCK_M_X",
+          "PAGELATCH_EX",
+          "PAGELATCH_SH"
+        ],
+        "performance_priorities": [
+          "Lock waits",
+          "Latch contention",
+          "Memory pressure"
+        ]
+      },
+      "current_metrics": {},
+      "compliance_status": "COMPLIANT"
+    }
+  },
+  "recommendations": []
+}
