@@ -1302,6 +1302,78 @@ def db_sql2019_db_stats(database: str | None = None) -> list[dict[str, Any]] | d
         if conn:
             conn.close()
 
+@mcp.tool
+def db_sql2019_server_info_mcp() -> dict[str, Any]:
+    """
+    Retrieves SQL Server instance information including server name, version, edition, and connection details.
+    
+    Returns comprehensive server information including:
+    - Server version and edition
+    - Server name and current database
+    - Current user and connection details
+    
+    Returns:
+        Dictionary containing server information with keys:
+            server_version: Full SQL Server version string
+            server_name: Server name
+            database: Current database name
+            user: Current user
+            server_version_short: Short version number
+            server_edition: Server edition (Enterprise, Standard, etc.)
+            server_addr: Server IP address
+            server_port: Server port number
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        
+        # Get server properties
+        server_props_sql = """
+            SELECT 
+                @@VERSION as server_version,
+                @@SERVERNAME as server_name,
+                DB_NAME() as database_name,
+                SYSTEM_USER as current_user,
+                SERVERPROPERTY('ProductVersion') as product_version,
+                SERVERPROPERTY('ProductLevel') as product_level,
+                SERVERPROPERTY('Edition') as edition
+        """
+        
+        _execute_safe(cur, server_props_sql)
+        server_info = cur.fetchone()
+        
+        # Get connection info
+        conn_info_sql = """
+            SELECT 
+                CONNECTIONPROPERTY('local_net_address') as local_addr,
+                CONNECTIONPROPERTY('local_tcp_port') as local_port
+        """
+        
+        _execute_safe(cur, conn_info_sql)
+        conn_info = cur.fetchone()
+        
+        if server_info and conn_info:
+            return {
+                'server_version': server_info[0],
+                'server_name': server_info[1],
+                'database': server_info[2],
+                'user': server_info[3],
+                'server_version_short': server_info[4],
+                'server_edition': server_info[6],
+                'server_addr': conn_info[0] or '127.0.0.1',
+                'server_port': conn_info[1] or 1433
+            }
+        else:
+            return {}
+            
+    except Exception as e:
+        logger.error(f"Error retrieving server info: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
+
 # Main entry point
 async def main():
     

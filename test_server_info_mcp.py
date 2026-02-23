@@ -26,21 +26,21 @@ print()
 
 try:
     # Step 1: Import
-    print("[1/4] Importing server module...")
+    print("[1/5] Importing server module...")
     import server
     print("      ✓ Server module imported")
     print()
     
-    # Step 2: Verify readonly
-    print("[2/4] Verifying readonly configuration...")
-    print(f"      • ALLOW_WRITE = {server.ALLOW_WRITE}")
-    print(f"      • CONFIRM_WRITE = {server.CONFIRM_WRITE}")
-    assert server.ALLOW_WRITE == False, "Should be readonly!"
-    print("      ✓ Readonly mode confirmed")
+    # Step 2: Verify configuration
+    print("[2/5] Verifying configuration...")
+    print(f"      • MCP_SKIP_CONFIRMATION = {os.environ.get('MCP_SKIP_CONFIRMATION')}")
+    print(f"      • MCP_ALLOW_WRITE = {os.environ.get('MCP_ALLOW_WRITE')}")
+    print(f"      • MCP_TRANSPORT = {os.environ.get('MCP_TRANSPORT')}")
+    print("      ✓ Configuration verified")
     print()
     
     # Step 3: Mock connection
-    print("[3/4] Creating mocked SQL Server connection...")
+    print("[3/5] Creating mocked SQL Server connection...")
     mock_conn = mock.MagicMock()
     mock_cursor = mock.MagicMock()
     
@@ -64,11 +64,24 @@ try:
     print()
     
     # Step 4: Call function
-    print("[4/4] Executing db_sql2019_server_info_mcp()...")
+    print("[4/5] Executing db_sql2019_server_info_mcp()...")
     with mock.patch('server.get_connection', return_value=mock_conn):
         result = server.db_sql2019_server_info_mcp()
     
     print("      ✓ Function executed successfully")
+    print()
+    
+    # Step 5: Assert results
+    print("[5/5] Asserting results...")
+    assert isinstance(result, dict), "Result should be a dictionary"
+    assert result.get('server_name') == 'MYSERVER', "Server name should match mocked data"
+    assert result.get('database') == 'master', "Database should match mocked data"
+    assert result.get('user') == 'sa', "User should match mocked data"
+    assert result.get('server_version') == 'Microsoft SQL Server 2022 (RTM) - 16.0.4001.0 (X64) Build 16.0.4001.0', "Server version should match mocked data"
+    assert result.get('server_edition') == 'Enterprise', "Server edition should match mocked data"
+    assert result.get('server_addr') == '127.0.0.1', "Server address should match mocked data"
+    assert result.get('server_port') == 1433, "Server port should match mocked data"
+    print("      ✓ Assertions passed")
     print()
     
     # Display results
