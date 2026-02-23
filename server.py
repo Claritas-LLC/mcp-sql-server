@@ -2,6 +2,8 @@ import asyncio
 import json
 import hashlib
 import logging
+
+logger = logging.getLogger(__name__)
 import os
 import re
 import sys
@@ -1073,175 +1075,280 @@ def db_sql2019_analyze_table_health(
         Dictionary containing table size, indexes with sizes/types, foreign key dependencies, 
         statistics, missing constraints analysis, enhanced index analysis, and tuning recommendations.
     """
-    if not is_valid_sql_identifier(database_name):
-        raise ValueError(f"Invalid database name: {database_name}")
-    if not is_valid_sql_identifier(schema):
-        raise ValueError(f"Invalid schema name: {schema}")
-    if not is_valid_sql_identifier(table_name):
-        raise ValueError(f"Invalid table name: {table_name}")
-
-    conn = None
     try:
-        conn = get_connection()
-        cur = conn.cursor()
+        # Validate parameters
+        if not is_valid_sql_identifier(database_name):
+            raise ValueError(f"Invalid database name: {database_name}")
+        if not is_valid_sql_identifier(schema):
+            raise ValueError(f"Invalid schema name: {schema}")
+        if not is_valid_sql_identifier(table_name):
+            raise ValueError(f"Invalid table name: {table_name}")
+
+        logger.info(f"Starting table health analysis for {database_name}.{schema}.{table_name}")
         
-        # Use the specified database
-        _execute_safe(cur, f"USE [{database_name}]")
-        
+        conn = None
+        try:
+            conn = get_connection()
+            cur = conn.cursor()
+            logger.info("Successfully connected to database")
+            
+            # Use the specified database
+            logger.info(f"Attempting to use database: {database_name}")
+            try:
+                _execute_safe(cur, f"USE [{database_name}]")
+                logger.info("Successfully connected to database")
+            except Exception as e:
+                logger.error(f"Failed to connect to database {database_name}: {e}")
+                raise
+            
+            # Check if table exists
+            logger.info(f"Checking if table {schema}.{table_name} exists")
+            table_exists_sql = "SELECT OBJECT_ID(CONCAT(?, '.', ?))"
+            try:
+                _execute_safe(cur, table_exists_sql, [schema, table_name])
+                table_exists = cur.fetchone()
+                logger.info(f"Table exists check result: {table_exists}")
+                if not table_exists or table_exists[0] is None:
+                    logger.warning(f"Table {schema}.{table_name} not found in database {database_name}")
+                    return {
+                        "table_info": {},
+                        "indexes": [],
+                        "foreign_keys": [],
+                        "statistics_sample": [],
+                        "health_analysis": {
+                            "constraint_issues": [{"type": "Table Not Found", "message": f"Table '{schema}.{table_name}' does not exist in database '{database_name}'."}],
+                            "index_issues": [],
+                        },
+                        "recommendations": [{"severity": "High", "recommendation": f"Verify that the table '{schema}.{table_name}' exists in the '{database_name}' database."}]
+                    }
+            except Exception as e:
+                logger.error(f"Error checking table existence: {e}")
+                raise
+            
+            # Initialize lists for recommendations and data
+            recommendations = []
+            constraint_issues = []
+            index_issues = []
+            table_size_info_data = {}
+            indexes_info = []
+            fk_info = []
+            stats_info = []
+            
+            # 1. Table Size and Row Count
+            logger.info("Executing table size query")
+            size_sql = '''
+                SELECT 
+                    t.name AS TableName,
+                    s.name AS SchemaName,
+                    p.rows AS RowCounts,
+                    SUM(a.total_pages) * 8 AS TotalSpaceKB,
+                    SUM(a.used_pages) * 8 AS UsedSpaceKB,
+                    (SUM(a.total_pages) - SUM(a.used_pages)) * 8 AS UnusedSpaceKB
+                FROM 
+                    sys.tables t
+                INNER JOIN      
+                    sys.indexes i ON t.object_id = i.object_id
+                INNER JOIN 
+                    sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+                INNER JOIN 
+                    sys.allocation_units a ON p.partition_id = a.container_id
+                LEFT OUTER JOIN 
+                    sys.schemas s ON t.schema_id = s.schema_id
+                WHERE 
+                    t.name = ? AND s.name = ?
+                GROUP BY 
+                    t.name, s.name, p.rows
+            '''
+            try:
+                _execute_safe(cur, size_sql, [table_name, schema])
+                table_size_info = _format_results(cur)
+                logger.info(f"Table size query returned: {table_size_info}")
+                table_size_info_data = table_size_info[0] if table_size_info else {}
+                logger.info(f"Table size info data: {table_size_info_data}")
+            except Exception as e:
+                logger.error(f"Error in table size query: {e}")
+                table_size_info_data = {}
+            
+            # 2. Index Analysis (including size and type)
+            logger.info("Executing index analysis query")
+            index_sql = '''
+                SELECT 
+                    i.name as IndexName,
+                    i.type_desc as IndexType,
+                    SUM(s.used_page_count) * 8.0 / 1024 AS IndexSizeMB
+                FROM sys.dm_db_partition_stats s
+                JOIN sys.indexes i ON s.object_id = i.object_id AND s.index_id = i.index_id
+                WHERE s.object_id = OBJECT_ID(CONCAT(?, '.', ?))
+                GROUP BY i.name, i.type_desc
+                ORDER BY IndexSizeMB DESC;
+            '''
+            try:
+                _execute_safe(cur, index_sql, [schema, table_name])
+                indexes_info = _format_results(cur)
+                logger.info(f"Index analysis query returned: {indexes_info}")
+            except Exception as e:
+                logger.error(f"Error in index analysis query: {e}")
+                indexes_info = []
+            
+            # 3. Foreign Key Dependencies
+            logger.info("Executing foreign key dependencies query")
+            fk_sql = '''
+                SELECT 
+                    fk.name AS FK_Name,
+                    OBJECT_NAME(fk.parent_object_id) AS ParentTable,
+                    cpa.name AS ParentColumn,
+                    OBJECT_NAME(fk.referenced_object_id) AS ReferencedTable,
+                    cre.name AS ReferencedColumn
+                FROM sys.foreign_keys fk
+                JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+                JOIN sys.columns cpa ON fkc.parent_object_id = cpa.object_id AND fkc.parent_column_id = cpa.column_id
+                JOIN sys.columns cre ON fkc.referenced_object_id = cre.object_id AND fkc.referenced_column_id = cre.column_id
+                WHERE fk.parent_object_id = OBJECT_ID(CONCAT(?, '.', ?)) OR fk.referenced_object_id = OBJECT_ID(CONCAT(?, '.', ?));
+            '''
+            try:
+                _execute_safe(cur, fk_sql, [schema, table_name, schema, table_name])
+                fk_info = _format_results(cur)
+                logger.info(f"Foreign key query returned: {fk_info}")
+            except Exception as e:
+                logger.error(f"Error in foreign key query: {e}")
+                fk_info = []
+            
+            # 4. Column Statistics (for a few key columns, as an example)
+            logger.info("Executing column statistics query")
+            stats_sql = '''
+                SELECT TOP 5
+                    c.name AS ColumnName,
+                    st.name AS StatsName,
+                    sp.last_updated,
+                    sp.rows,
+                    sp.rows_sampled,
+                    sp.modification_counter
+                FROM sys.stats st
+                JOIN sys.stats_columns sc ON st.object_id = sc.object_id AND st.stats_id = sc.stats_id
+                JOIN sys.columns c ON sc.object_id = c.object_id AND sc.column_id = c.column_id
+                CROSS APPLY sys.dm_db_stats_properties(st.object_id, st.stats_id) AS sp
+                WHERE st.object_id = OBJECT_ID(CONCAT(?, '.', ?));
+            '''
+            try:
+                _execute_safe(cur, stats_sql, [schema, table_name])
+                stats_info = _format_results(cur)
+                logger.info(f"Column statistics query returned: {stats_info}")
+            except Exception as e:
+                logger.error(f"Error in column statistics query: {e}")
+                stats_info = []
+            
+            # 5. Health Analysis: Missing Primary Key
+            logger.info("Checking for missing primary key")
+            pk_check_sql = "SELECT i.name FROM sys.indexes i WHERE i.is_primary_key = 1 AND i.object_id = OBJECT_ID(CONCAT(?, '.', ?));"
+            try:
+                _execute_safe(cur, pk_check_sql, [schema, table_name])
+                pk_result = cur.fetchone()
+                logger.info(f"Primary key check result: {pk_result}")
+                if not pk_result:
+                    msg = "Critical: Table is missing a primary key. This can lead to duplicate data and performance issues."
+                    constraint_issues.append({"type": "Missing Primary Key", "message": msg})
+                    recommendations.append({"severity": "High", "recommendation": "Define a primary key for this table."})
+            except Exception as e:
+                logger.error(f"Error checking primary key: {e}")
+                # Continue execution even if primary key check fails
+            
+            # 6. Health Analysis: Un-indexed Foreign Keys
+            logger.info("Checking for un-indexed foreign keys")
+            unindexed_fk_sql = '''
+                SELECT fk.name AS ForeignKeyName, cl.name AS ColumnName
+                FROM sys.foreign_keys AS fk
+                INNER JOIN sys.foreign_key_columns AS fkc ON fk.object_id = fkc.constraint_object_id
+                INNER JOIN sys.columns AS cl ON fkc.parent_object_id = cl.object_id AND fkc.parent_column_id = cl.column_id
+                WHERE fkc.parent_object_id = OBJECT_ID(CONCAT(?, '.', ?))
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM sys.index_columns AS ic
+                    WHERE ic.object_id = fkc.parent_object_id AND ic.column_id = fkc.parent_column_id AND ic.index_column_id = 1
+                );
+            '''
+            try:
+                _execute_safe(cur, unindexed_fk_sql, [schema, table_name])
+                unindexed_fks = _format_results(cur)
+                logger.info(f"Un-indexed foreign keys query returned: {unindexed_fks}")
+                for fk in unindexed_fks:
+                    msg = f"Warning: Foreign key '{fk['ForeignKeyName']}' on column '{fk['ColumnName']}' is not indexed. This can cause performance problems during joins and cascading operations."
+                    constraint_issues.append({"type": "Unindexed Foreign Key", "message": msg})
+                    recommendations.append({
+                        "severity": "Medium",
+                        "recommendation": f"Create an index on column '{fk['ColumnName']}' to support the foreign key '{fk['ForeignKeyName']}'."
+                    })
+            except Exception as e:
+                logger.error(f"Error checking for un-indexed foreign keys: {e}")
+            
+            # 7. Health Analysis: Unused Indexes
+            logger.info("Checking for unused indexes")
+            unused_index_sql = '''
+                SELECT i.name AS IndexName,
+                       (SUM(s.user_seeks) + SUM(s.user_scans) + SUM(s.user_lookups)) AS TotalReads,
+                       SUM(s.user_updates) AS TotalWrites,
+                       (SUM(ps.used_page_count) * 8.0 / 1024) as IndexSizeMB
+                FROM sys.dm_db_index_usage_stats s
+                JOIN sys.indexes i ON s.object_id = i.object_id AND s.index_id = i.index_id
+                JOIN sys.dm_db_partition_stats ps ON i.object_id = ps.object_id AND i.index_id = ps.index_id
+                WHERE s.database_id = DB_ID()
+                  AND s.object_id = OBJECT_ID(CONCAT(?, '.', ?))
+                  AND i.is_primary_key = 0
+                GROUP BY i.name
+                HAVING (SUM(s.user_seeks) + SUM(s.user_scans) + SUM(s.user_lookups)) = 0;
+            '''
+            try:
+                _execute_safe(cur, unused_index_sql, [schema, table_name])
+                unused_indexes = _format_results(cur)
+                logger.info(f"Unused indexes query returned: {unused_indexes}")
+                for idx in unused_indexes:
+                    if idx.get('IndexSizeMB') is not None and idx['IndexSizeMB'] > 10: # Only flag large, unused indexes
+                        msg = f"Info: Index '{idx['IndexName']}' appears to be unused and consumes {idx['IndexSizeMB']:.2f} MB. It has high write overhead ({idx['TotalWrites']} writes) with no reads."
+                        index_issues.append({"type": "Unused Index", "message": msg})
+                        recommendations.append({
+                            "severity": "Low",
+                            "recommendation": f"Consider dropping unused index '{idx['IndexName']}' to reduce storage and maintenance overhead, after confirming it's not needed for specific infrequent queries."
+                        })
+            except Exception as e:
+                logger.error(f"Error checking for unused indexes: {e}")
+            
+            # Prepare final result
+            logger.info("Preparing final result")
+            
+            result = {
+                "table_info": table_size_info_data,
+                "indexes": indexes_info,
+                "foreign_keys": fk_info,
+                "statistics_sample": stats_info,
+                "health_analysis": {
+                    "constraint_issues": constraint_issues,
+                    "index_issues": index_issues
+                },
+                "recommendations": recommendations
+            }
+            logger.info(f"Final result prepared successfully: {len(result['table_info'])} table info fields, {len(result['indexes'])} indexes, {len(result['foreign_keys'])} foreign keys")
+            return result
 
-        
-        # Initialize lists for recommendations and data
-        recommendations = []
-        constraint_issues = []
-        index_issues = []
+        except Exception as e:
+            logger.error(f"Error in database operations: {e}")
+            raise
+        finally:
+            if conn:
+                conn.close()
+                logger.info("Database connection closed")
 
-        # 1. Table Size and Row Count
-        size_sql = '''
-            SELECT 
-                t.name AS TableName,
-                s.name AS SchemaName,
-                p.rows AS RowCounts,
-                SUM(a.total_pages) * 8 AS TotalSpaceKB,
-                SUM(a.used_pages) * 8 AS UsedSpaceKB,
-                (SUM(a.total_pages) - SUM(a.used_pages)) * 8 AS UnusedSpaceKB
-            FROM 
-                sys.tables t
-            INNER JOIN      
-                sys.indexes i ON t.object_id = i.object_id
-            INNER JOIN 
-                sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-            INNER JOIN 
-                sys.allocation_units a ON p.partition_id = a.container_id
-            LEFT OUTER JOIN 
-                sys.schemas s ON t.schema_id = s.schema_id
-            WHERE 
-                t.name = ? AND s.name = ?
-            GROUP BY 
-                t.name, s.name, p.rows
-        '''
-        _execute_safe(cur, size_sql, [table_name, schema])
-        table_size_info = _format_results(cur)
-
-        # 2. Index Analysis (including size and type)
-        index_sql = '''
-            SELECT 
-                i.name as IndexName,
-                i.type_desc as IndexType,
-                SUM(s.used_page_count) * 8.0 / 1024 AS IndexSizeMB
-            FROM sys.dm_db_partition_stats s
-            JOIN sys.indexes i ON s.object_id = i.object_id AND s.index_id = i.index_id
-            WHERE s.object_id = OBJECT_ID(CONCAT(?, '.', ?))
-            GROUP BY i.name, i.type_desc
-            ORDER BY IndexSizeMB DESC;
-        '''
-        _execute_safe(cur, index_sql, [schema, table_name])
-        indexes_info = _format_results(cur)
-
-        # 3. Foreign Key Dependencies
-        fk_sql = '''
-            SELECT 
-                fk.name AS FK_Name,
-                OBJECT_NAME(fk.parent_object_id) AS ParentTable,
-                cpa.name AS ParentColumn,
-                OBJECT_NAME(fk.referenced_object_id) AS ReferencedTable,
-                cre.name AS ReferencedColumn
-            FROM sys.foreign_keys fk
-            JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-            JOIN sys.columns cpa ON fkc.parent_object_id = cpa.object_id AND fkc.parent_column_id = cpa.column_id
-            JOIN sys.columns cre ON fkc.referenced_object_id = cre.object_id AND fkc.referenced_column_id = cre.column_id
-            WHERE fk.parent_object_id = OBJECT_ID(CONCAT(?, '.', ?)) OR fk.referenced_object_id = OBJECT_ID(CONCAT(?, '.', ?));
-        '''
-        _execute_safe(cur, fk_sql, [schema, table_name, schema, table_name])
-        fk_info = _format_results(cur)
-
-        # 4. Column Statistics (for a few key columns, as an example)
-        stats_sql = '''
-            SELECT TOP 5
-                c.name AS ColumnName,
-                st.name AS StatsName,
-                sp.last_updated,
-                sp.rows,
-                sp.rows_sampled,
-                sp.modification_counter
-            FROM sys.stats st
-            JOIN sys.stats_columns sc ON st.object_id = sc.object_id AND st.stats_id = sc.stats_id
-            JOIN sys.columns c ON sc.object_id = c.object_id AND sc.column_id = c.column_id
-            CROSS APPLY sys.dm_db_stats_properties(st.object_id, st.stats_id) AS sp
-            WHERE st.object_id = OBJECT_ID(CONCAT(?, '.', ?));
-        '''
-        _execute_safe(cur, stats_sql, [schema, table_name])
-        stats_info = _format_results(cur)
-
-        # 5. Health Analysis: Missing Primary Key
-        pk_check_sql = "SELECT i.name FROM sys.indexes i WHERE i.is_primary_key = 1 AND i.object_id = OBJECT_ID(CONCAT(?, '.', ?));"
-        _execute_safe(cur, pk_check_sql, [schema, table_name])
-        if not cur.fetchone():
-            msg = "Critical: Table is missing a primary key. This can lead to duplicate data and performance issues."
-            constraint_issues.append({"type": "Missing Primary Key", "message": msg})
-            recommendations.append({"severity": "High", "recommendation": "Define a primary key for this table."})
-
-        # 6. Health Analysis: Un-indexed Foreign Keys
-        unindexed_fk_sql = '''
-            SELECT fk.name AS ForeignKeyName, cl.name AS ColumnName
-            FROM sys.foreign_keys AS fk
-            INNER JOIN sys.foreign_key_columns AS fkc ON fk.object_id = fkc.constraint_object_id
-            INNER JOIN sys.columns AS cl ON fkc.parent_object_id = cl.object_id AND fkc.parent_column_id = cl.column_id
-            WHERE fkc.parent_object_id = OBJECT_ID(CONCAT(?, '.', ?))
-            AND NOT EXISTS (
-                SELECT 1
-                FROM sys.index_columns AS ic
-                WHERE ic.object_id = fkc.parent_object_id AND ic.column_id = fkc.parent_column_id AND ic.index_column_id = 1
-            );
-        '''
-        _execute_safe(cur, unindexed_fk_sql, [schema, table_name])
-        unindexed_fks = _format_results(cur)
-        for fk in unindexed_fks:
-            msg = f"Warning: Foreign key '{fk['ForeignKeyName']}' on column '{fk['ColumnName']}' is not indexed. This can cause performance problems during joins and cascading operations."
-            constraint_issues.append({"type": "Unindexed Foreign Key", "message": msg})
-            recommendations.append({
-                "severity": "Medium",
-                "recommendation": f"Create an index on column '{fk['ColumnName']}' to support the foreign key '{fk['ForeignKeyName']}'."
-            })
-
-        # 7. Health Analysis: Unused Indexes
-        unused_index_sql = '''
-            SELECT i.name AS IndexName,
-                   (SUM(s.user_seeks) + SUM(s.user_scans) + SUM(s.user_lookups)) AS TotalReads,
-                   SUM(s.user_updates) AS TotalWrites,
-                   (SUM(s.used_page_count) * 8.0 / 1024) as IndexSizeMB
-            FROM sys.dm_db_index_usage_stats s
-            JOIN sys.indexes i ON s.object_id = i.object_id AND s.index_id = i.index_id
-            WHERE s.database_id = DB_ID()
-              AND s.object_id = OBJECT_ID(CONCAT(?, '.', ?))
-              AND i.is_primary_key = 0
-            GROUP BY i.name
-            HAVING (SUM(s.user_seeks) + SUM(s.user_scans) + SUM(s.user_lookups)) = 0;
-        '''
-        _execute_safe(cur, unused_index_sql, [schema, table_name])
-        unused_indexes = _format_results(cur)
-        for idx in unused_indexes:
-            if idx['IndexSizeMB'] > 10: # Only flag large, unused indexes
-                msg = f"Info: Index '{idx['IndexName']}' appears to be unused and consumes {idx['IndexSizeMB']:.2f} MB. It has high write overhead ({idx['TotalWrites']} writes) with no reads."
-                index_issues.append({"type": "Unused Index", "message": msg})
-                recommendations.append({
-                    "severity": "Low",
-                    "recommendation": f"Consider dropping unused index '{idx['IndexName']}' to reduce storage and maintenance overhead, after confirming it's not needed for specific infrequent queries."
-                })
-        
+    except Exception as e:
+        logger.error(f"Critical error in table health analysis: {e}")
         return {
-            "table_info": table_size_info[0] if table_size_info else {},
-            "indexes": indexes_info,
-            "foreign_keys": fk_info,
-            "statistics_sample": stats_info,
+            "table_info": {},
+            "indexes": [],
+            "foreign_keys": [],
+            "statistics_sample": [],
             "health_analysis": {
-                "constraint_issues": constraint_issues,
-                "index_issues": index_issues
+                "constraint_issues": [{"type": "Analysis Error", "message": f"Critical error during table analysis: {str(e)}"}],
+                "index_issues": []
             },
-            "recommendations": recommendations
+            "recommendations": [{"severity": "High", "recommendation": f"Analysis failed due to error: {str(e)}. Check server logs for details."}]
         }
-    finally:
-        if conn:
-            conn.close()
 
 @mcp.tool
 def db_sql2019_db_stats(database: str | None = None) -> list[dict[str, Any]] | dict[str, Any]:
@@ -1722,7 +1829,9 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
             conn.close()
 
 # Main entry point
-async def main():
+import anyio
+
+def main():
     
     # Environment-based configuration
     host = os.environ.get("MCP_HOST", "127.0.0.1")
@@ -1760,14 +1869,14 @@ async def main():
     
     # Run the MCP server
     try:
-        await mcp.run(**run_kwargs)
+        asyncio.run(mcp.run(**run_kwargs))
     except Exception as e:
         logger.critical(f"Failed to run MCP server: {e}", exc_info=True)
         sys.exit(1)
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         logger.info("Server shut down by user.")
     except Exception as e:
