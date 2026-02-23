@@ -10,6 +10,13 @@ import threading
 import atexit
 import signal
 import decimal
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, decimal.Decimal):
+            return float(o)
+        return super(DecimalEncoder, self).default(o)
+
 from datetime import datetime, date
 from typing import Any
 
@@ -1368,6 +1375,345 @@ def db_sql2019_server_info_mcp() -> dict[str, Any]:
     except Exception as e:
         logger.error(f"Error retrieving server info: {e}")
         raise
+    finally:
+        if conn:
+            conn.close()
+
+@mcp.tool
+def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
+    """
+    Analyzes Query Store data to identify top problematic queries and provide recommendations.
+    
+    Retrieves and analyzes Query Store data to find:
+    - Long-running queries (high average duration)
+    - Regressed queries (performance degradation over time)
+    - High CPU consumption queries
+    - High I/O queries
+    - Queries with high execution count and poor performance
+    
+    Provides specific recommendations for each identified issue based on execution patterns,
+    plan changes, and performance metrics.
+    
+    **Prerequisite**: Query Store must be enabled on the target database (not enabled by default 
+    in SQL Server 2019). If disabled, the tool will return empty results or errors. 
+    To enable: ALTER DATABASE [database_name] SET QUERY_STORE = ON;
+    
+    Args:
+        database_name: The database name to analyze Query Store data for.
+    
+    Returns:
+        Dictionary containing Query Store analysis, identified issues with recommendations,
+        and summary statistics.
+    """
+    if not is_valid_sql_identifier(database_name):
+        raise ValueError(f"Invalid database name: {database_name}")
+    
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        
+        # Check if Query Store is enabled
+        cur.execute(f"""
+            SELECT 
+                actual_state_desc,
+                current_storage_size_mb,
+                max_storage_size_mb,
+                stale_query_threshold_days,
+                desired_state_desc,
+                query_capture_mode_desc
+            FROM {database_name}.sys.database_query_store_options
+        """)
+        qs_config = cur.fetchone()
+        
+        if not qs_config or qs_config[0] == 'OFF':
+            return {
+                'database': database_name,
+                'query_store_enabled': False,
+                'error': 'Query Store is not enabled for this database. To enable: ALTER DATABASE [{}] SET QUERY_STORE = ON;'.format(database_name),
+                'recommendations': [{
+                    'type': 'configuration',
+                    'priority': 'high',
+                    'issue': 'Query Store is disabled',
+                    'recommendation': 'Enable Query Store to collect query performance data',
+                    'potential_actions': [
+                        f'ALTER DATABASE [{database_name}] SET QUERY_STORE = ON;',
+                        'Consider setting appropriate storage limits',
+                        'Configure data retention settings'
+                    ]
+                }]
+            }
+        
+        # Get Query Store configuration
+        query_store_config = {
+            'state': qs_config[0],
+            'current_storage_mb': qs_config[1],
+            'max_storage_mb': qs_config[2],
+            'stale_threshold_days': qs_config[3],
+            'capture_mode': qs_config[5]
+        }
+        
+        # Get analysis period
+        cur.execute(f"""
+            SELECT 
+                CONVERT(VARCHAR(50), MIN(rs.last_execution_time), 120),
+                CONVERT(VARCHAR(50), MAX(rs.last_execution_time), 120),
+                COUNT(DISTINCT q.query_id)
+            FROM {database_name}.sys.query_store_query q
+            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            WHERE rs.last_execution_time >= DATEADD(day, -30, GETDATE())
+        """)
+        analysis_period = cur.fetchone()
+        
+        # Get long-running queries (top 10)
+        cur.execute(f"""
+            SELECT TOP 10
+                q.query_id,
+                qt.query_sql_text,
+                SUM(rs.count_executions) as total_executions,
+                AVG(rs.avg_duration/1000.0) as avg_duration_ms,
+                AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms,
+                AVG(rs.avg_logical_io_reads) as avg_logical_io_reads,
+                MAX(o.name) as object_name
+            FROM {database_name}.sys.query_store_query q
+            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            LEFT JOIN {database_name}.sys.objects o ON q.object_id = o.object_id
+            WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
+                AND rs.avg_duration > 1000000  -- > 1 second
+            GROUP BY q.query_id, qt.query_sql_text
+            ORDER BY avg_duration_ms DESC
+        """)
+        long_running_queries = []
+        for row in cur.fetchall():
+            long_running_queries.append({
+                'query_id': row[0],
+                'query_text': row[1],
+                'executions': row[2],
+                'avg_duration_ms': round(row[3], 1),
+                'avg_cpu_ms': round(row[4], 1),
+                'avg_logical_io_reads': int(row[5]),
+                'object_name': row[6] or 'Ad-hoc Query'
+            })
+        
+        # Get regressed queries (top 5)
+        cur.execute(f"""
+            SELECT TOP 5
+                q.query_id,
+                qt.query_sql_text,
+                SUM(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.count_executions ELSE 0 END) as recent_executions,
+                AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) as recent_avg_duration_ms,
+                AVG(CASE WHEN rs.last_execution_time BETWEEN DATEADD(day, -14, GETDATE()) AND DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) as older_avg_duration_ms,
+                AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_cpu_time/1000.0 END) as recent_avg_cpu_ms
+            FROM {database_name}.sys.query_store_query q
+            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            WHERE rs.last_execution_time >= DATEADD(day, -14, GETDATE())
+                AND rs.count_executions > 10
+            GROUP BY q.query_id, qt.query_sql_text
+            HAVING AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) > 
+                    AVG(CASE WHEN rs.last_execution_time BETWEEN DATEADD(day, -14, GETDATE()) AND DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) * 1.5
+            ORDER BY (AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) - AVG(CASE WHEN rs.last_execution_time BETWEEN DATEADD(day, -14, GETDATE()) AND DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END)) DESC
+        """)
+        regressed_queries = []
+        for row in cur.fetchall():
+            if row[3] and row[4] and row[4] > 0:
+                regression_percent = round(((row[3] - row[4]) / row[4]) * 100, 1)
+                regressed_queries.append({
+                    'query_id': row[0],
+                    'query_text': row[1],
+                    'recent_executions': int(row[2]),
+                    'recent_avg_duration_ms': round(row[3], 1),
+                    'older_avg_duration_ms': round(row[4], 1),
+                    'regression_percent': regression_percent,
+                    'recent_avg_cpu_ms': round(row[5], 1)
+                })
+        
+        # Get high CPU queries (top 5)
+        cur.execute(f"""
+            SELECT TOP 5
+                q.query_id,
+                qt.query_sql_text,
+                SUM(rs.count_executions) as executions,
+                AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms,
+                MAX(rs.max_cpu_time/1000.0) as max_cpu_ms,
+                AVG(rs.avg_duration/1000.0) as avg_duration_ms,
+                AVG(rs.avg_logical_io_reads) as avg_logical_io_reads
+            FROM {database_name}.sys.query_store_query q
+            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
+                AND rs.avg_cpu_time > 500000  -- > 0.5 seconds CPU time
+            GROUP BY q.query_id, qt.query_sql_text
+            ORDER BY avg_cpu_ms DESC
+        """)
+        high_cpu_queries = []
+        for row in cur.fetchall():
+            high_cpu_queries.append({
+                'query_id': row[0],
+                'query_text': row[1],
+                'executions': int(row[2]),
+                'avg_cpu_ms': round(row[3], 1),
+                'max_cpu_ms': round(row[4], 1),
+                'avg_duration_ms': round(row[5], 1),
+                'avg_logical_io_reads': int(row[6])
+            })
+        
+        # Get high I/O queries (top 5)
+        cur.execute(f"""
+            SELECT TOP 5
+                q.query_id,
+                qt.query_sql_text,
+                SUM(rs.count_executions) as executions,
+                AVG(rs.avg_logical_io_reads) as avg_logical_io_reads,
+                AVG(rs.avg_logical_io_writes) as avg_logical_io_writes,
+                AVG(rs.avg_physical_io_reads) as avg_physical_io_reads,
+                AVG(rs.avg_duration/1000.0) as avg_duration_ms,
+                AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms
+            FROM {database_name}.sys.query_store_query q
+            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
+                AND (rs.avg_logical_io_reads + rs.avg_logical_io_writes) > 100000  -- > 100k logical I/O
+            GROUP BY q.query_id, qt.query_sql_text
+            ORDER BY (AVG(rs.avg_logical_io_reads) + AVG(rs.avg_logical_io_writes)) DESC
+        """)
+        high_io_queries = []
+        for row in cur.fetchall():
+            high_io_queries.append({
+                'query_id': row[0],
+                'query_text': row[1],
+                'executions': int(row[2]),
+                'avg_logical_io_reads': int(row[3]),
+                'avg_logical_io_writes': int(row[4]),
+                'avg_physical_io_reads': int(row[5]),
+                'avg_duration_ms': round(row[6], 1),
+                'avg_cpu_ms': round(row[7], 1)
+            })
+        
+        # Get high execution count queries (top 5)
+        cur.execute(f"""
+            SELECT TOP 5
+                q.query_id,
+                qt.query_sql_text,
+                SUM(rs.count_executions) as executions,
+                AVG(rs.avg_duration/1000.0) as avg_duration_ms,
+                AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms,
+                AVG(rs.avg_logical_io_reads) as avg_logical_io_reads
+            FROM {database_name}.sys.query_store_query q
+            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
+            GROUP BY q.query_id, qt.query_sql_text
+            HAVING SUM(rs.count_executions) > 1000  -- > 1000 executions
+            ORDER BY executions DESC
+        """)
+        high_execution_queries = []
+        for row in cur.fetchall():
+            high_execution_queries.append({
+                'query_id': row[0],
+                'query_text': row[1],
+                'executions': int(row[2]),
+                'avg_duration_ms': round(row[3], 1),
+                'avg_cpu_ms': round(row[4], 1),
+                'avg_logical_io_reads': int(row[5])
+            })
+        
+        # Generate recommendations based on findings
+        recommendations = []
+        
+        # Recommendations for long-running queries
+        for query in long_running_queries[:3]:  # Top 3 long-running queries
+            if query['avg_duration_ms'] > 2000:  # > 2 seconds
+                recommendations.append({
+                    'type': 'long_running_query',
+                    'priority': 'high',
+                    'query_id': query['query_id'],
+                    'issue': f"Query with {query['avg_duration_ms']}ms average duration executed {query['executions']} times",
+                    'recommendation': "Analyze execution plan for missing indexes, table scans, or inefficient joins. Consider query optimization or index creation.",
+                    'potential_actions': [
+                        'Review execution plan for optimization opportunities',
+                        'Check for missing indexes on join/filter columns',
+                        'Consider query parameterization if using literals',
+                        'Evaluate if query can be rewritten for better performance'
+                    ]
+                })
+        
+        # Recommendations for regressed queries
+        for query in regressed_queries[:2]:  # Top 2 regressed queries
+            if query['regression_percent'] > 50:  # > 50% regression
+                recommendations.append({
+                    'type': 'regressed_query',
+                    'priority': 'high',
+                    'query_id': query['query_id'],
+                    'issue': f"Query performance regressed by {query['regression_percent']}% (from {query['older_avg_duration_ms']}ms to {query['recent_avg_duration_ms']}ms)",
+                    'recommendation': "Check for plan changes, statistics updates, or data distribution changes. Consider plan forcing or statistics updates.",
+                    'potential_actions': [
+                        'Check query plan history for plan changes',
+                        'Update statistics on related tables',
+                        'Consider forcing a previous good plan',
+                        'Analyze data distribution changes'
+                    ]
+                })
+        
+        # General recommendations
+        if len(long_running_queries) > 5:
+            recommendations.append({
+                'type': 'general',
+                'priority': 'medium',
+                'issue': f"Found {len(long_running_queries)} long-running queries",
+                'recommendation': 'Consider implementing query performance monitoring and regular optimization reviews.',
+                'potential_actions': [
+                    'Set up query performance monitoring',
+                    'Schedule regular query optimization reviews',
+                    'Consider implementing query governor for resource limits',
+                    'Monitor Query Store storage usage'
+                ]
+            })
+        
+        return {
+            'database': database_name,
+            'query_store_enabled': True,
+            'query_store_config': query_store_config,
+            'analysis_period': {
+                'earliest_data': analysis_period[0] if analysis_period[0] else None,
+                        'latest_data': analysis_period[1] if analysis_period[1] else None,
+                        'days_covered': 0, # Cannot calculate days from string dates easily
+                'total_queries': analysis_period[2] if analysis_period[2] else 0
+            },
+            'long_running_queries': long_running_queries,
+            'regressed_queries': regressed_queries,
+            'high_cpu_queries': high_cpu_queries,
+            'high_io_queries': high_io_queries,
+            'high_execution_queries': high_execution_queries,
+            'recommendations': recommendations
+        }
+        
+    except Exception as e:
+        logger.error(f"Error analyzing Query Store data: {e}")
+        return {
+            'database': database_name,
+            'query_store_enabled': False,
+            'error': f"Error analyzing Query Store data: {str(e)}",
+            'recommendations': [{
+                'type': 'error',
+                'priority': 'high',
+                'issue': f"Failed to analyze Query Store: {str(e)}",
+                'recommendation': 'Check database permissions and Query Store configuration.',
+                'potential_actions': [
+                    'Verify database permissions for Query Store views',
+                    'Check if Query Store is enabled',
+                    'Verify SQL Server version compatibility'
+                ]
+            }]
+        }
     finally:
         if conn:
             conn.close()

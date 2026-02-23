@@ -498,18 +498,18 @@ This server implements strict security practices for logging:
 Here are some real-world examples of using the tools via an MCP client.
 
 ### 1. Check MCP Server Info
-**Prompt:** `using sqlserver, call db_sql2019_server_info_mcp() and display results`
+**Prompt:** `using sqlserver_readonly, call db_sql2019_server_info_mcp() and display results`
 
 **Result:**
 ```json
 {
-  "server_version": "Microsoft SQL Server 2022 (RTM) - 16.0.4001.0 (X64) Build 16.0.4001.0",
-  "server_name": "MYSERVER",
+  "server_version": "Microsoft SQL Server 2019 (RTM-CU32-GDR) (KB5068404) - 15.0.4455.2 (X64) \n\tOct  7 2025 21:10:15 \n\tCopyright (C) 2019 Microsoft Corporation\n\tDeveloper Edition (64-bit) on Windows Server 2019 Datacenter 10.0 <X64> (Build 17763: ) (Hypervisor)\n",
+  "server_name": "gisdevsql01",
   "database": "master",
-  "user": "sa",
-  "server_version_short": "16.0.4001.0",
-  "server_edition": "Enterprise",
-  "server_addr": "127.0.0.1",
+  "user": "n8n_DBMonitor",
+  "server_version_short": "15.0.4455.2",
+  "server_edition": "Developer Edition (64-bit)",
+  "server_addr": "10.125.1.7",
   "server_port": 1433
 }
 ```
@@ -532,78 +532,206 @@ Here are some real-world examples of using the tools via an MCP client.
   "analysis_period": {
     "earliest_data": "2024-02-01T00:00:00",
     "latest_data": "2024-02-18T16:30:00",
-    "days_covered": 17
+    "days_covered": 0,
+    "total_queries": 664337
   },
   "long_running_queries": [
     {
-      "query_id": 1250,
-      "query_text": "SELECT TOP 1000 * FROM large_table lt JOIN other_table ot ON lt.id = ot.foreign_id WHERE lt.status = 'ACTIVE' AND ot.created_date > '2024-01-01'",
-      "executions": 2500,
-      "avg_duration_ms": 3200.5,
-      "avg_cpu_ms": 2100.8,
-      "avg_logical_io_reads": 75000,
-      "object_name": "large_table"
+      "query_id": 549115,
+      "query_text": "** Encrypted Text **",
+      "executions": 1,
+      "avg_duration_ms": 342841.5,
+      "avg_cpu_ms": 339409.9,
+      "avg_logical_io_reads": 16687138,
+      "object_name": "Ad-hoc Query"
     },
     {
-      "query_id": 892,
-      "query_text": "SELECT * FROM user_sessions us LEFT JOIN user_profiles up ON us.user_id = up.user_id WHERE us.last_activity > DATEADD(day, -30, GETDATE())",
-      "executions": 1800,
-      "avg_duration_ms": 2800.2,
-      "avg_cpu_ms": 1850.3,
-      "avg_logical_io_reads": 62000,
-      "object_name": "user_sessions"
+      "query_id": 664345,
+      "query_text": "DECLARE @vAccountID INT, @vModuleID INT, @vReferenceDate DATE, @vLanguageID INT, @vGeographyLevelID INT, @vLowestGeographyLevelID INT, @DataYearIDs dbo.DataYearList, @DataValueTypeIDs dbo.DataValueTypeList, @CountryIDs dbo.CountryList, @DatabaseIDs dbo.DatabaseList, @vGeographyLevelKey NVARCHAR(10), @vHierarchical BIT, @vAccountID INT, @vModuleID INT, @vReferenceDate DATE, @vLanguageID INT, @vGeographyLevelID INT, @vLowestGeographyLevelID INT, @DataYearIDs dbo.DataYearList, @DataValueTypeIDs dbo.DataValueTypeList, @CountryIDs dbo.CountryList, @DatabaseIDs dbo.DatabaseList, @vGeographyLevelKey NVARCHAR(10), @vHierarchical BIT\r\n\t\t\tSELECT [scz26c].[ZIPCODE], [scz26c].[ZIPCODE_NAME], [scz26c].[STATE_CODE], [scz26c].[COUNTY_FIPS], [scz26c].[COUNTY_NAME]\r\n\t\t\tFROM [scz26c]\r\n\t\t\tWHERE [scz26c].[STATE_CODE] IN (SELECT [scz26c].[STATE_CODE] FROM [scz26c] WHERE [scz26c].[ZIPCODE] IN (SELECT [scz26c].[ZIPCODE] FROM [scz26c] WHERE [scz26c].[ZIPCODE_NAME] LIKE @vGeographyLevelKey + '%') GROUP BY [scz26c].[STATE_CODE])\r\n\t\t\tGROUP BY [scz26c].[ZIPCODE], [scz26c].[ZIPCODE_NAME], [scz26c].[STATE_CODE], [scz26c].[COUNTY_FIPS], [scz26c].[COUNTY_NAME]\r\n\t\t\tHAVING 1 = 0 OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2578 THEN ISNULL(HPEBTotalX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBTotalX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2572 THEN ISNULL(HPEBRNR_RetailX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBRNR_RetailX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2562 THEN ISNULL(HPEBRNR_NonRetailX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBRNR_NonRetailX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2542 THEN ISNULL(HPEBApparelX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBApparelX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2544 THEN ISNULL(HPEBCashContributionsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBCashContributionsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2546 THEN ISNULL(HPEBEducationX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBEducationX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2548 THEN ISNULL(HPEBEntertainmentX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBEntertainmentX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2550 THEN ISNULL(HPEBFoodX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBFoodX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2552 THEN ISNULL(HPEBHous_FurnishEquipX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_FurnishEquipX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2556 THEN ISNULL(HPEBHealthX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHealthX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2564 THEN ISNULL(HPEBHous_OperationsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_OperationsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2558 THEN ISNULL(HPEBHous_HouseKeepingX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_HouseKeepingX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2566 THEN ISNULL(HPEBPersonalCareX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBPersonalCareX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2548 THEN ISNULL(HPEBEntertainmentX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBEntertainmentX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2550 THEN ISNULL(HPEBFoodX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBFoodX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2552 THEN ISNULL(HPEBHous_FurnishEquipX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_FurnishEquipX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2556 THEN ISNULL(HPEBHealthX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHealthX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2564 THEN ISNULL(HPEBHous_OperationsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_OperationsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2558 THEN ISNULL(HPEBHous_HouseKeepingX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_HouseKeepingX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2566 THEN ISNULL(HPEBPersonalCareX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBPersonalCareX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2548 THEN ISNULL(HPEBEntertainmentX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBEntertainmentX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2550 THEN ISNULL(HPEBFoodX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBFoodX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2552 THEN ISNULL(HPEBHous_FurnishEquipX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_FurnishEquipX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2556 THEN ISNULL(HPEBHealthX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHealthX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2564 THEN ISNULL(HPEBHous_OperationsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_OperationsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2558 THEN ISNULL(HPEBHous_HouseKeepingX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_HouseKeepingX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2566 THEN ISNULL(HPEBPersonalCareX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBPersonalCareX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2568 THEN ISNULL(HPEBPersonalInsurPensionsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBPersonalInsurPensionsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2570 THEN ISNULL(HPEBReadingX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBReadingX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2574 THEN ISNULL(HPEBHous_ShelterX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_ShelterX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2576 THEN ISNULL(HPEBTobaccoX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBTobaccoX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2580 THEN ISNULL(HPEBTransportationX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBTransportationX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2582 THEN ISNULL(HPEBHous_UtilitiesX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_UtilitiesX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2560 THEN ISNULL(HPEBMiscellaneousX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBMiscellaneousX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998)  ORDER BY [scz26c].[ZIPCODE_NAME]",
+      "executions": 1,
+      "avg_duration_ms": 9349.9,
+      "avg_cpu_ms": 5730.9,
+      "avg_logical_io_reads": 32761,
+      "object_name": "Ad-hoc Query"
+    },
+    {
+      "query_id": 664332,
+      "query_text": "DECLARE @vAccountID INT, @vModuleID INT, @vReferenceDate DATE, @vLanguageID INT, @vGeographyLevelID INT, @vLowestGeographyLevelID INT, @DataYearIDs dbo.DataYearList, @DataValueTypeIDs dbo.DataValueTypeList, @CountryIDs dbo.CountryList, @DatabaseIDs dbo.DatabaseList, @vGeographyLevelKey NVARCHAR(10), @vHierarchical BIT\r\n\t\t\tSELECT [scz26c].[ZIPCODE], [scz26c].[ZIPCODE_NAME], [scz26c].[STATE_CODE], [scz26c].[COUNTY_FIPS], [scz26c].[COUNTY_NAME]\r\n\t\t\tFROM [scz26c]\r\n\t\t\tWHERE [scz26c].[STATE_CODE] IN (SELECT [scz26c].[STATE_CODE] FROM [scz26c] WHERE [scz26c].[ZIPCODE] IN (SELECT [scz26c].[ZIPCODE] FROM [scz26c] WHERE [scz26c].[ZIPCODE_NAME] LIKE @vGeographyLevelKey + '%') GROUP BY [scz26c].[STATE_CODE])\r\n\t\t\tGROUP BY [scz26c].[ZIPCODE], [scz26c].[ZIPCODE_NAME], [scz26c].[STATE_CODE], [scz26c].[COUNTY_FIPS], [scz26c].[COUNTY_NAME]\r\n\t\t\tHAVING 1 = 0 OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2578 THEN ISNULL(HPEBTotalX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBTotalX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2572 THEN ISNULL(HPEBRNR_RetailX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBRNR_RetailX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2562 THEN ISNULL(HPEBRNR_NonRetailX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBRNR_NonRetailX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2542 THEN ISNULL(HPEBApparelX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBApparelX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2544 THEN ISNULL(HPEBCashContributionsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBCashContributionsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2546 THEN ISNULL(HPEBEducationX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBEducationX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2548 THEN ISNULL(HPEBEntertainmentX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBEntertainmentX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2550 THEN ISNULL(HPEBFoodX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBFoodX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2552 THEN ISNULL(HPEBHous_FurnishEquipX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_FurnishEquipX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2556 THEN ISNULL(HPEBHealthX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHealthX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2564 THEN ISNULL(HPEBHous_OperationsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_OperationsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2558 THEN ISNULL(HPEBHous_HouseKeepingX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_HouseKeepingX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2566 THEN ISNULL(HPEBPersonalCareX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBPersonalCareX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2568 THEN ISNULL(HPEBPersonalInsurPensionsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBPersonalInsurPensionsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2570 THEN ISNULL(HPEBReadingX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBReadingX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2574 THEN ISNULL(HPEBHous_ShelterX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_ShelterX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2576 THEN ISNULL(HPEBTobaccoX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBTobaccoX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2580 THEN ISNULL(HPEBTransportationX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBTransportationX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2582 THEN ISNULL(HPEBHous_UtilitiesX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_UtilitiesX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2560 THEN ISNULL(HPEBMiscellaneousX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBMiscellaneousX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998)  ORDER BY [scz26c].[ZIPCODE_NAME]",
+      "executions": 1,
+      "avg_duration_ms": 8152.1,
+      "avg_cpu_ms": 5730.9,
+      "avg_logical_io_reads": 32761,
+      "object_name": "Ad-hoc Query"
     }
   ],
   "regressed_queries": [
     {
-      "query_id": 445,
-      "query_text": "SELECT COUNT(*) FROM orders o INNER JOIN customers c ON o.customer_id = c.customer_id WHERE o.order_date >= @start_date",
-      "recent_executions": 450,
-      "recent_avg_duration_ms": 1850.0,
-      "older_avg_duration_ms": 850.0,
-      "regression_percent": 117.6,
-      "recent_avg_cpu_ms": 1200.5
+      "query_id": 568290,
+      "query_text": "(@Indicator nvarchar(150),@Valid int)SELECT @Valid=COUNT(*) FROM DataIndicator WHERE Status=1 AND DataIndicatorID=@Indicator",
+      "recent_executions": 2,
+      "recent_avg_duration_ms": 5.1,
+      "older_avg_duration_ms": 2.8,
+      "regression_percent": 77.9,
+      "recent_avg_cpu_ms": 5.1
+    },
+    {
+      "query_id": 216,
+      "query_text": "(@Indicator nvarchar(150),@Valid int)SELECT @Valid=COUNT(*) FROM DataIndicator WHERE Status=1 AND DataIndicatorID=@Indicator",
+      "recent_executions": 2,
+      "recent_avg_duration_ms": 0.0,
+      "older_avg_duration_ms": 0.0,
+      "regression_percent": 52.0,
+      "recent_avg_cpu_ms": 0.0
     }
   ],
   "high_cpu_queries": [
     {
-      "query_id": 678,
-      "query_text": "SELECT DISTINCT p.product_name FROM products p CROSS APPLY (SELECT TOP 10 * FROM product_reviews pr WHERE pr.product_id = p.product_id ORDER BY pr.rating DESC) pr WHERE p.category_id IN (SELECT category_id FROM categories WHERE parent_category_id IS NULL)",
-      "executions": 320,
-      "avg_cpu_ms": 850.7,
-      "max_cpu_ms": 2100.3,
-      "avg_duration_ms": 1200.4,
-      "avg_logical_io_reads": 45000
+      "query_id": 549115,
+      "query_text": "** Encrypted Text **",
+      "executions": 1,
+      "avg_cpu_ms": 339409.9,
+      "max_cpu_ms": 339409.9,
+      "avg_duration_ms": 342841.5,
+      "avg_logical_io_reads": 16687138,
+      "object_name": "Ad-hoc Query"
+    },
+    {
+      "query_id": 664345,
+      "query_text": "DECLARE @vAccountID INT, @vModuleID INT, @vReferenceDate DATE, @vLanguageID INT, @vGeographyLevelID INT, @vLowestGeographyLevelID INT, @DataYearIDs dbo.DataYearList, @DataValueTypeIDs dbo.DataValueTypeList, @CountryIDs dbo.CountryList, @DatabaseIDs dbo.DatabaseList, @vGeographyLevelKey NVARCHAR(10), @vHierarchical BIT, @vAccountID INT, @vModuleID INT, @vReferenceDate DATE, @vLanguageID INT, @vGeographyLevelID INT, @vLowestGeographyLevelID INT, @DataYearIDs dbo.DataYearList, @DataValueTypeIDs dbo.DataValueTypeList, @CountryIDs dbo.CountryList, @DatabaseIDs dbo.DatabaseList, @vGeographyLevelKey NVARCHAR(10), @vHierarchical BIT\r\n\t\t\tSELECT [scz26c].[ZIPCODE], [scz26c].[ZIPCODE_NAME], [scz26c].[STATE_CODE], [scz26c].[COUNTY_FIPS], [scz26c].[COUNTY_NAME]\r\n\t\t\tFROM [scz26c]\r\n\t\t\tWHERE [scz26c].[STATE_CODE] IN (SELECT [scz26c].[STATE_CODE] FROM [scz26c] WHERE [scz26c].[ZIPCODE] IN (SELECT [scz26c].[ZIPCODE] FROM [scz26c] WHERE [scz26c].[ZIPCODE_NAME] LIKE @vGeographyLevelKey + '%') GROUP BY [scz26c].[STATE_CODE])\r\n\t\t\tGROUP BY [scz26c].[ZIPCODE], [scz26c].[ZIPCODE_NAME], [scz26c].[STATE_CODE], [scz26c].[COUNTY_FIPS], [scz26c].[COUNTY_NAME]\r\n\t\t\tHAVING 1 = 0 OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2578 THEN ISNULL(HPEBTotalX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBTotalX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2572 THEN ISNULL(HPEBRNR_RetailX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBRNR_RetailX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2562 THEN ISNULL(HPEBRNR_NonRetailX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBRNR_NonRetailX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2542 THEN ISNULL(HPEBApparelX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBApparelX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2544 THEN ISNULL(HPEBCashContributionsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBCashContributionsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2546 THEN ISNULL(HPEBEducationX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBEducationX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2548 THEN ISNULL(HPEBEntertainmentX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBEntertainmentX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2550 THEN ISNULL(HPEBFoodX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBFoodX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2552 THEN ISNULL(HPEBHous_FurnishEquipX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_FurnishEquipX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2556 THEN ISNULL(HPEBHealthX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHealthX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2564 THEN ISNULL(HPEBHous_OperationsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_OperationsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2558 THEN ISNULL(HPEBHous_HouseKeepingX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_HouseKeepingX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2566 THEN ISNULL(HPEBPersonalCareX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBPersonalCareX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2568 THEN ISNULL(HPEBPersonalInsurPensionsX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBPersonalInsurPensionsX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2570 THEN ISNULL(HPEBReadingX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBReadingX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2574 THEN ISNULL(HPEBHous_ShelterX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_ShelterX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2576 THEN ISNULL(HPEBTobaccoX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBTobaccoX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2580 THEN ISNULL(HPEBTransportationX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBTransportationX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2582 THEN ISNULL(HPEBHous_UtilitiesX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBHous_UtilitiesX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998) OR NULLIF(NULLIF(MAX(CASE WHEN C.[Ind] = 2560 THEN ISNULL(HPEBMiscellaneousX, -99998.8) WHEN C.[Ind] IS NULL AND HPEBMiscellaneousX IS NULL THEN -99998.8 ELSE -99999.9 END), -99998.8), -99998.000000) NOT IN (-99998.8, -99999.9, -99998)  ORDER BY [scz26c].[ZIPCODE_NAME]",
+      "executions": 1,
+      "avg_cpu_ms": 5730.9,
+      "max_cpu_ms": 5730.9,
+      "avg_duration_ms": 8152.1,
+      "avg_logical_io_reads": 32761,
+      "object_name": "Ad-hoc Query"
     }
   ],
   "high_io_queries": [
     {
-      "query_id": 901,
-      "query_text": "SELECT * FROM audit_log al WHERE al.action_timestamp BETWEEN @start_date AND @end_date AND al.user_id = @user_id ORDER BY al.action_timestamp DESC",
-      "executions": 890,
-      "avg_logical_io_reads": 185000,
-      "avg_logical_io_writes": 1200,
-      "avg_physical_io_reads": 4500,
-      "avg_duration_ms": 950.2,
-      "avg_cpu_ms": 650.8
+      "query_id": 549115,
+      "query_text": "** Encrypted Text **",
+      "executions": 1,
+      "avg_logical_io_reads": 16687138,
+      "avg_logical_io_writes": 1398,
+      "avg_physical_io_reads": 3686,
+      "avg_duration_ms": 342841.5,
+      "avg_cpu_ms": 339409.9
+    },
+    {
+      "query_id": 606587,
+      "query_text": "INSERT INTO @AccountAccess ( [CID], [Lvl], [GeoAbbr], [Ind], [Col], [Name] )\r\n\t\t\tEXECUTE [dbo].[gissp_GetAccountGeographyAccess_ByGeographyLevel2] @vAccountID, @vModuleID, @vGeographyLevelID, @IndicatorsXML, @ReferenceDate, @vLanguageID",
+      "executions": 14,
+      "avg_logical_io_reads": 942847,
+      "avg_logical_io_writes": 10615,
+      "avg_physical_io_reads": 6224,
+      "avg_duration_ms": 3711.5,
+      "avg_cpu_ms": 3696.0
+    },
+    {
+      "query_id": 549492,
+      "query_text": "(@DataYearIDs dbo.DataYearList,@DataValueTypeIDs dbo.DataValueTypeList,@CountryIDs dbo.CountryList,@vGeographyLevelID int,@DatabaseIDs dbo.DatabaseList,@vLanguageID int,@vLowestGeographyLevelID int,@vAccountID int,@vModuleID int,@vReferenceDate date,@vGeographyLevelKey nvarchar(10),@vHierarchical bit)INSERT INTO @DataGroups ( [GroupID], [GroupName], [Description], [Sequence] )\r\nSELECT A.[DataGroupID], C.[DatabaseName] + ' - ' + A.[DataGroupName], A.[Description], A.[SortOrder]\r\nFROM ([dbo].[gisfn_GetDataGroups_ByCountryLevel] ( @DataYearIDs, @DataValueTypeIDs, @CountryIDs, @vGeographyLevelID, @DatabaseIDs, @vLanguageID ) A\r\n\t\t  INNER JOIN \r\n\t  [dbo].[gisfn_GetDataGroups_ByCountryLevel] ( @DataYearIDs, @DataValueTypeIDs, @CountryIDs, @vLowestGeographyLevelID, @DatabaseIDs, @vLanguageID ) D\r\n\t\t  ON A.[DataGroupID] = D.[DataGroupID])\r\n\t\t  LEFT OUTER JOIN \r\n\t  [dbo].[gisfn_GetAccountDataGroups_ByCountryLevel] ( @vAccountID, @vModuleID, @DataYearIDs, @DataValueTypeIDs, @CountryIDs, @vGeographyLevelID, @DatabaseIDs, @vReferenceDate, @vLanguageID ) B\r\n\t\t  ON A.[DataGroupID] = B.[DataGroupID]\r\nWHERE B.[DataGroupID] IS NOT NULL\r\nUNION ALL\r\nSELECT A.[DataGroupID], ISNULL(B.[LanguageText], A.[DataGroupName]) AS [DataGroupName],\r\n\t   A.[Description], A.[SortOrder]\r\nFROM [dbo].[DataGroup] A LEFT OUTER JOIN [dbo].[Resource] B\r\n\t\t\t\t\t\t\t\t\t\t\t  ON B.[TableName]  = 'DataGroup'     AND\r\n\t\t\t\t\t\t\t\t\t\t\t\t B.[ColumnName] = 'DataGroupName' AND\r\n\t\t\t\t\t\t\t\t\t\t\t\t B.[LanguageID] = @vLanguageID\t  AND\r\n\t\t\t\t\t\t\t\t\t\t\t\t B.[TableID]    = A.[DataGroupID]\r\nWHERE A.[Internal] = 1 AND\r\n\t (EXISTS (SELECT 'X' FROM [dbo].[AccountDataIndicator]\r\n\t\t\t  WHERE [AccountID] = @vAccountID AND\r\n\t\t\t\t\t[Status]    = 1) OR\r\n\t  EXISTS (SELECT 'X' FROM [dbo].[AccountDataCategory]\r\n\t\t\t  WHERE [AccountID] IN ( @vAccountID, 0 ) AND\r\n\t\t\t\t    [Status]    = 1) OR\r\n\t  EXISTS (SELECT 'X' FROM [dbo].[AccountDataIndicatorShare]\r\n\t\t\t  WHERE [AccountID] = @vAccountID AND\r\n\t\t\t\t    [Status]    = 1) OR\r\n\t  EXISTS (SELECT 'X' FROM [dbo].[AccountDataCategoryShare]\r\n\t\t\t  WHERE [AccountID] = @vAccountID AND\r\n\t\t\t\t    [Status]    = 1))",
+      "executions": 3,
+      "avg_logical_io_reads": 792396,
+      "avg_logical_io_writes": 11,
+      "avg_physical_io_reads": 961,
+      "avg_duration_ms": 1210.2,
+      "avg_cpu_ms": 997.8
+    },
+    {
+      "query_id": 606606,
+      "query_text": "** Encrypted Text **",
+      "executions": 14,
+      "avg_logical_io_reads": 670517,
+      "avg_logical_io_writes": 6263,
+      "avg_physical_io_reads": 1,
+      "avg_duration_ms": 2100.9,
+      "avg_cpu_ms": 2091.5
+    },
+    {
+      "query_id": 549508,
+      "query_text": "(@DataYearIDs dbo.DataYearList,@DataValueTypeIDs dbo.DataValueTypeList,@CountryIDs dbo.CountryList,@vGeographyLevelID int,@DatabaseIDs dbo.DatabaseList,@vLanguageID int,@vLowestGeographyLevelID int,@vAccountID int,@vModuleID int,@vReferenceDate date,@VCDataCategoryID int,@vGeographyLevelKey nvarchar(10),@vHierarchical bit,@UDDataCategoryID int)INSERT INTO @DataSubCategories ( [CategoryID], [SubCategoryID], [SubCategoryName], [Description], [Sequence] )\r\nSELECT A.[DataCategoryID], A.[DataSubCategoryID], A.[DataSubCategoryName], A.[Description], A.[SortOrder]\r\nFROM ([dbo].[gisfn_GetDataSubCategories_ByCountryLevel] ( @DataYearIDs, @DataValueTypeIDs, @CountryIDs, @vGeographyLevelID, @DatabaseIDs, NULL, @vLanguageID ) A\r\n\t\t\t INNER JOIN\r\n\t  [dbo].[gisfn_GetDataSubCategories_ByCountryLevel] ( @DataYearIDs, @DataValueTypeIDs, @CountryIDs, @vLowestGeographyLevelID, @DatabaseIDs, NULL, @vLanguageID ) C\r\n\t\t\t ON A.[DataSubCategoryID] = C.[DataSubCategoryID])\r\n\t\t\t LEFT OUTER JOIN \r\n\t [dbo].[gisfn_GetAccountDataSubCategories_ByCountryLevel] ( @vAccountID, @vModuleID, @DataYearIDs, @DataValueTypeIDs, @CountryIDs, @vGeographyLevelID, @DatabaseIDs, NULL, @vReferenceDate, @vLanguageID ) B\r\n\t\t\t ON A.[DataSubCategoryID] = B.[DataSubCategoryID]\r\nWHERE B.[DataSubCategoryID] IS NOT NULL\r\nUNION ALL\r\nSELECT @VCDataCategoryID AS [DataCategoryID], [AccountDataCategoryID] AS [DataSubCategoryID], \r\n\t   [DataCategoryName], [DataCategoryName] AS [Description], 1 AS [SortOrder]\r\nFROM [dbo].[AccountDataCategory]\r\nWHERE [AccountID] IN ( @vAccountID, 0 ) AND\r\n\t  [Status]    = 1\r\nUNION ALL\r\nSELECT [DataCategoryID], [DataSubCategoryID], \r\n\t   [DataSubCategoryName], [DataSubCategoryName] AS [Description], 1 AS [SortOrder]\r\nFROM [dbo].[DataSubCategory]\r\nWHERE [Internal]\t\t   = 1\t  AND\r\n\t  [Status]\t\t\t   = 1\t  AND\r\n\t  [DataSubCategoryKey] = 'VI' AND\r\n\t (EXISTS (SELECT 'X' FROM [dbo].[AccountDataIndicator]\r\n\t\t\t  WHERE [AccountID] = @vAccountID AND\r\n\t\t\t\t\t[Status]    = 1) OR\r\n\t  EXISTS (SELECT 'X' FROM [dbo].[AccountDataIndicatorShare]\r\n\t\t\t  WHERE [AccountID] = @vAccountID AND\r\n\t\t\t\t    [Status]    = 1))\r\nUNION ALL\r\nSELECT DISTINCT @UDDataCategoryID AS [DataCategoryID], A.[AccountDataUploadID], A.[FileName], A.[FileName], 1\r\nFROM [dbo].[AccountDataUpload] A INNER JOIN [dbo].[AccountDataIndicatorUpload] B\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t   ON A.[AccountDataUploadID] = B.[AccountDataUploadID] AND\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t  A.[IsSuccessful]\t\t  = 1\t\t\t\t\t\t\t\tAND\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t (A.[GeographyLevelID]    = @vGeographyLevelID\t\tOR\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t  CHARINDEX(',' + @vGeographyLevelKey + ',', ',' + A.[GeographyLevelList] + ',') > 0) AND\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t  A.[GeographyColumn]\t != B.[ColumnName]\t\t\tAND\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t  A.[Status]\t\t\t  = 1\t\t\t\t\t\t\t\tAND\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t  B.[Status]\t\t\t  = 1\t\t\t\t\t\t\t\tAND\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t  @vHierarchical\t\t  = 0\t\t\t\t\t\t\t\tAND\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t (A.[AccountID]\t\t\t  = @vAccountID OR\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t  EXISTS (SELECT 'X' FROM [dbo].[AccountDataIndicatorUploadShare] C\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t  WHERE C.[AccountDataIndicatorUploadID] = B.[AccountDataIndicatorUploadID] AND\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tC.[AccountID]\t\t\t\t\t = @vAccountID\t\t\t\t\t\t\tAND\r\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tC.[Status]\t\t\t\t\t = 1))",
+      "executions": 3,
+      "avg_logical_io_reads": 612432,
+      "avg_logical_io_writes": 131,
+      "avg_physical_io_reads": 540,
+      "avg_duration_ms": 814.4,
+      "avg_cpu_ms": 795.4
     }
   ],
   "high_execution_queries": [
     {
-      "query_id": 234,
-      "query_text": "SELECT TOP 1 setting_value FROM system_settings WHERE setting_key = 'CACHE_TIMEOUT'",
-      "executions": 15000,
-      "avg_duration_ms": 45.2,
-      "avg_cpu_ms": 12.8,
+      "query_id": 606590,
+      "query_text": "DECLARE cAccountAccess CURSOR LOCAL FOR SELECT CID, Lvl, GeoAbbr, Ind, Col, Name FROM @AccountAccess",
+      "executions": 2506578,
+      "avg_duration_ms": 0.0,
+      "avg_cpu_ms": 0.0,
       "avg_logical_io_reads": 8
+    },
+    {
+      "query_id": 664337,
+      "query_text": "(@Indicator nvarchar(150),@Valid int)SELECT @Valid=COUNT(*) FROM DataIndicator WHERE Status=1 AND DataIndicatorID=@Indicator",
+      "executions": 333890,
+      "avg_duration_ms": 0.2,
+      "avg_cpu_ms": 0.2,
+      "avg_logical_io_reads": 2
+    },
+    {
+      "query_id": 664339,
+      "query_text": "DECLARE cFormulas CURSOR FOR\r\nSELECT DataBaseID, DataIndicatorColumnName, DataIndicatorName, REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(AggregatorFormula,'(',''),')',''),'/',''),'[',','),']',''),'-',''),'+','')\r\nFROM DataIndicator \r\nWHERE Status=1 AND AggregatorFormula IS NOT NULL",
+      "executions": 61866,
+      "avg_duration_ms": 0.0,
+      "avg_cpu_ms": 0.0,
+      "avg_logical_io_reads": 6
+    },
+    {
+      "query_id": 549116,
+      "query_text": "** Encrypted Text **",
+      "executions": 43850,
+      "avg_duration_ms": 0.1,
+      "avg_cpu_ms": 0.1,
+      "avg_logical_io_reads": 50
+    },
+    {
+      "query_id": 664338,
+      "query_text": "DECLARE cFormulas CURSOR FOR\r\nSELECT DataBaseID, DataIndicatorColumnName, DataIndicatorName, REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(AggregatorFormula,'(',''),')',''),'/',''),'[',','),']',''),'-',''),'+','')\r\nFROM DataIndicator \r\nWHERE AggregatorFormula IS NOT NULL",
+      "executions": 15495,
+      "avg_duration_ms": 0.0,
+      "avg_cpu_ms": 0.0,
+      "avg_logical_io_reads": 4
     }
   ],
   "recommendations": [
     {
       "type": "long_running_query",
       "priority": "high",
-      "query_id": 1250,
-      "issue": "Query with 3200ms average duration executed 2500 times",
+      "query_id": 549115,
+      "issue": "Query with 342841.5ms average duration executed 1 times",
+      "recommendation": "Analyze execution plan for missing indexes, table scans, or inefficient joins. Consider query optimization or index creation.",
+      "potential_actions": [
+        "Review execution plan for optimization opportunities",
+        "Check for missing indexes on join/filter columns",
+        "Consider query parameterization if using literals",
+        "Evaluate if query can be rewritten for better performance"
+      ]
+    },
+    {
+      "type": "long_running_query",
+      "priority": "high",
+      "query_id": 664345,
+      "issue": "Query with 9349.9ms average duration executed 1 times",
+      "recommendation": "Analyze execution plan for missing indexes, table scans, or inefficient joins. Consider query optimization or index creation.",
+      "potential_actions": [
+        "Review execution plan for optimization opportunities",
+        "Check for missing indexes on join/filter columns",
+        "Consider query parameterization if using literals",
+        "Evaluate if query can be rewritten for better performance"
+      ]
+    },
+    {
+      "type": "long_running_query",
+      "priority": "high",
+      "query_id": 664332,
+      "issue": "Query with 8152.1ms average duration executed 1 times",
       "recommendation": "Analyze execution plan for missing indexes, table scans, or inefficient joins. Consider query optimization or index creation.",
       "potential_actions": [
         "Review execution plan for optimization opportunities",
@@ -615,51 +743,50 @@ Here are some real-world examples of using the tools via an MCP client.
     {
       "type": "regressed_query",
       "priority": "high",
-      "query_id": 445,
-      "issue": "Query performance regressed by 117.6% (from 850ms to 1850ms)",
-      "recommendation": "Investigate recent plan changes or data/statistics modifications. Check for parameter sniffing issues or stale statistics.",
+      "query_id": 568290,
+      "issue": "Query performance regressed by 77.9% (from 2.8ms to 5.1ms)",
+      "recommendation": "Check for plan changes, statistics updates, or data distribution changes. Consider plan forcing or statistics updates.",
       "potential_actions": [
-        "Compare execution plans between time periods",
-        "Update statistics on relevant tables",
-        "Check for parameter sniffing issues",
-        "Force a better execution plan if regression persists"
+        "Check query plan history for plan changes",
+        "Update statistics on related tables",
+        "Consider forcing a previous good plan",
+        "Analyze data distribution changes"
       ]
     },
     {
-      "type": "high_io_query",
-      "priority": "medium",
-      "query_id": 901,
-      "issue": "Query with high I/O: 185000 logical reads, 4500 physical reads",
-      "recommendation": "Optimize I/O patterns by improving index coverage, reducing table scans, or implementing proper indexing strategy.",
-      "potential_actions": [
-        "Create covering indexes to reduce logical reads",
-        "Review execution plan for table/clustered index scans",
-        "Consider index defragmentation if fragmentation is high",
-        "Optimize WHERE clauses for better selectivity"
-      ]
-    },
-    {
-      "type": "frequently_executed_poor_query",
+      "type": "regressed_query",
       "priority": "high",
-      "query_id": 234,
-      "issue": "Frequently executed query (15000 times) with poor performance (45.2ms average)",
-      "recommendation": "High-impact query needing immediate optimization. Small improvements here can yield significant overall performance gains.",
+      "query_id": 216,
+      "issue": "Query performance regressed by 52.0% (from 0.0ms to 0.0ms)",
+      "recommendation": "Check for plan changes, statistics updates, or data distribution changes. Consider plan forcing or statistics updates.",
       "potential_actions": [
-        "Prioritize this query for optimization",
-        "Consider query result caching if appropriate",
-        "Review application logic for unnecessary executions",
-        "Implement proper indexing for this critical query"
+        "Check query plan history for plan changes",
+        "Update statistics on related tables",
+        "Consider forcing a previous good plan",
+        "Analyze data distribution changes"
+      ]
+    },
+    {
+      "type": "general",
+      "priority": "medium",
+      "issue": "Found 10 long-running queries",
+      "recommendation": "Consider implementing query performance monitoring and regular optimization reviews.",
+      "potential_actions": [
+        "Set up query performance monitoring",
+        "Schedule regular query optimization reviews",
+        "Consider implementing query governor for resource limits",
+        "Monitor Query Store storage usage"
       ]
     }
   ],
   "summary": {
-    "long_running_queries_count": 2,
-    "regressed_queries_count": 1,
-    "high_cpu_queries_count": 1,
-    "high_io_queries_count": 1,
-    "high_execution_queries_count": 1,
-    "total_recommendations": 4,
-    "high_priority_recommendations": 3,
+    "long_running_queries_count": 10,
+    "regressed_queries_count": 2,
+    "high_cpu_queries_count": 5,
+    "high_io_queries_count": 5,
+    "high_execution_queries_count": 5,
+    "total_recommendations": 6,
+    "high_priority_recommendations": 5,
     "analysis_timestamp": "2024-02-18T16:30:00"
   }
 }
