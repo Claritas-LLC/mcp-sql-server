@@ -21,16 +21,50 @@ docker run -d \
 
 ## Environment Variables
 
-- `DB_SERVER`: SQL Server hostname (also `SQL_SERVER`)
-- `DB_DATABASE`: Database name (also `SQL_DATABASE` or `DB_NAME`)
-- `DB_USER`: Database user (also `SQL_USER`)
-- `DB_PASSWORD`: Database password (also `SQL_PASSWORD`)
-- `DB_DRIVER`: ODBC driver (default: `ODBC Driver 17 for SQL Server`) (also `SQL_DRIVER`)
-- `DB_PORT`: SQL Server port (default: 1433) (also `SQL_PORT`)
+- `SQL_SERVER`: SQL Server hostname (also `DB_SERVER`)
+- `SQL_DATABASE`: Database name (also `DB_DATABASE` or `DB_NAME`)
+- `SQL_USER`: Database user (also `DB_USER`)
+- `SQL_PASSWORD`: Database password (also `DB_PASSWORD`)
+- `SQL_DRIVER`: ODBC driver (default: `ODBC Driver 18 for SQL Server`) (also `DB_DRIVER`)
+- `SQL_PORT`: SQL Server port (default: 1433) (also `DB_PORT`)
 - `SSH_HOST`: SSH tunnel host (optional)
 - `SSH_PORT`: SSH tunnel port (default: 22)
 - `SSH_USER`: SSH tunnel user (optional)
 - `SSH_PASSWORD`: SSH tunnel password (optional)
+
+## Security Note
+
+**⚠️ Critical Security Warning**: `SQL_PASSWORD` and `SSH_PASSWORD` are highly sensitive credentials that should **never** be passed directly via command-line `-e` flags, as they can be exposed in:
+- Process listings (`ps aux`)
+- Shell history
+- Docker logs
+- Container inspection
+
+### Secure Configuration Methods (in order of preference):
+
+1. **Docker Secrets** (Swarm/Compose): Use Docker's built-in secrets management
+   ```yaml
+   secrets:
+     db_password:
+       external: true
+   ```
+
+2. **Environment Files** with restricted permissions:
+   ```bash
+   # Create .env file with chmod 600
+   echo "DB_PASSWORD=your_secure_password" > .env
+   chmod 600 .env
+   docker run --env-file .env ...
+   ```
+
+3. **External Secret Managers**: Integrate with HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, or similar services
+
+4. **SSH Key-Based Authentication**: Instead of `SSH_PASSWORD`, use SSH keys for tunnel authentication when possible
+
+### See Also:
+- [Quick Start section](#quick-start) for secure configuration examples
+- [Environment Variables section](#environment-variables) for complete variable reference
+- Docker documentation on [Managing Secrets](https://docs.docker.com/engine/swarm/secrets/)
 
 ## Usage
 
