@@ -2477,8 +2477,8 @@ def main():
     logger.debug(f"Type of mcp before tool logging: {type(mcp)}")
     logger.debug(f"Has 'tools' attribute: {'tools' in dir(mcp)}")
     logger.info("Registered MCP Tools:")
-    if mcp.tools:
-        for tool_name in mcp.tools.keys():
+    if hasattr(mcp, '_tool_registry') and mcp._tool_registry:
+        for tool_name in mcp._tool_registry.keys():
             logger.info(f"- {tool_name}")
     else:
         logger.info("No tools registered.")
