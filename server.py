@@ -2123,10 +2123,10 @@ def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
                     name,
                     type_desc,
                     is_disabled,
-                    is_policy_checked,
-                    is_expiration_checked,
                     create_date,
-                    modify_date
+                    modify_date,
+                    default_database_name,
+                    is_fixed_role
                 FROM sys.server_principals 
                 WHERE type IN ('S', 'U', 'G') 
                 AND name NOT LIKE '##%'
@@ -2232,48 +2232,77 @@ def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
         
         # Execute security queries
         for query_name, query in security_queries.items():
-            cursor.execute(query)
-            columns = [desc[0] for desc in cursor.description]
-            results['security_assessment'][query_name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            try:
+                cursor.execute(query)
+                columns = [desc[0] for desc in cursor.description]
+                results['security_assessment'][query_name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            except pyodbc.OperationalError as e:
+                logger.warning(f"Could not execute security query '{query_name}': {e}")
+                results['security_assessment'][query_name] = {"error": f"Could not execute query: {e}"}
         
         # Execute performance queries
         for query_name, query in performance_queries.items():
-            cursor.execute(query)
-            columns = [desc[0] for desc in cursor.description]
-            results['performance_metrics'][query_name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            try:
+                cursor.execute(query)
+                columns = [desc[0] for desc in cursor.description]
+                results['performance_metrics'][query_name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            except pyodbc.OperationalError as e:
+                logger.warning(f"Could not execute performance query '{query_name}': {e}")
+                results['performance_metrics'][query_name] = {"error": f"Could not execute query: {e}"}
         
         # Risk assessment based on profile
         risk_score = 0
         risk_factors = []
         
         # Security risk assessment
-        disabled_logins = len([login for login in results['security_assessment']['login_audit'] if login['is_disabled'] == False])
-        logins_without_policy = len([login for login in results['security_assessment']['login_audit'] if login['is_policy_checked'] == False])
+        active_logins = len([login for login in results['security_assessment']['login_audit'] if login.get('is_disabled') == False])
         
-        if logins_without_policy > 0:
-            risk_score += 20
-            risk_factors.append(f"{logins_without_policy} logins without password policy")
+        # Check for SQL logins (type = 'S') which might have weaker security
+        sql_logins = [login for login in results['security_assessment']['login_audit'] if login.get('type') == 'S' and login.get('is_disabled') == False]
+        if sql_logins:
+            risk_score += 10
+            risk_factors.append(f"{len(sql_logins)} SQL logins active (consider Windows authentication)")
+        
+        # Check for old logins (created more than 1 year ago)
+        from datetime import timedelta
+        one_year_ago = datetime.now() - timedelta(days=365)
+        old_logins = []
+        for login in results['security_assessment']['login_audit']:
+            try:
+                create_date = datetime.fromisoformat(login['create_date'].replace('Z', '+00:00'))
+                if create_date < one_year_ago and login.get('is_disabled') == False:
+                    old_logins.append(login)
+            except:
+                pass
+        
+        if old_logins:
+            risk_score += 15
+            risk_factors.append(f"{len(old_logins)} logins older than 1 year")
         
         # Check for dangerous configurations
-        dangerous_configs = [config for config in results['security_assessment']['security_config'] 
-                           if config['value_in_use'] == 1 and config['name'] in ['xp_cmdshell', 'Ad Hoc Distributed Queries']]
-        if dangerous_configs:
-            risk_score += 30
-            risk_factors.extend([f"{config['name']} is enabled" for config in dangerous_configs])
+        security_config_data = results['security_assessment']['security_config']
+        if isinstance(security_config_data, list):
+            dangerous_configs = [config for config in security_config_data 
+                               if config.get('value_in_use') == 1 and config.get('name') in ['xp_cmdshell', 'Ad Hoc Distributed Queries']]
+            if dangerous_configs:
+                risk_score += 30
+                risk_factors.extend([f"{config['name']} is enabled" for config in dangerous_configs])
         
         # Performance risk assessment
-        if results['performance_metrics']['wait_stats']:
-            top_wait = results['performance_metrics']['wait_stats'][0]
-            if top_wait['wait_percentage'] > 50:
+        wait_stats_data = results['performance_metrics']['wait_stats']
+        if isinstance(wait_stats_data, list) and wait_stats_data:
+            top_wait = wait_stats_data[0]
+            if top_wait.get('wait_percentage', 0) > 50:
                 risk_score += 25
-                risk_factors.append(f"High wait percentage: {top_wait['wait_type']} ({top_wait['wait_percentage']}%)")
+                risk_factors.append(f"High wait percentage: {top_wait.get('wait_type')} ({top_wait.get('wait_percentage')}%)")
         
         # Memory pressure check
-        if results['performance_metrics']['memory_usage']:
-            memory_data = results['performance_metrics']['memory_usage'][0]
-            if memory_data['memory_utilization_percent'] > 90:
+        memory_usage_data = results['performance_metrics']['memory_usage']
+        if isinstance(memory_usage_data, list) and memory_usage_data:
+            memory_data = memory_usage_data[0]
+            if memory_data.get('memory_utilization_percent', 0) > 90:
                 risk_score += 20
-                risk_factors.append(f"High memory utilization: {memory_data['memory_utilization_percent']}%")
+                risk_factors.append(f"High memory utilization: {memory_data.get('memory_utilization_percent')}%")
         
         results['risk_assessment'] = {
             'overall_risk_score': min(risk_score, 100),
@@ -2285,28 +2314,44 @@ def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
         # Generate recommendations
         recommendations = []
         
-        if logins_without_policy > 0:
+        if sql_logins:
             recommendations.append({
                 'category': 'SECURITY',
-                'priority': 'HIGH',
-                'issue': f'{logins_without_policy} logins without password policy',
-                'recommendation': 'Enable password policy enforcement for all SQL logins',
-                'sql_command': "ALTER LOGIN [login_name] WITH CHECK_POLICY = ON;"
+                'priority': 'MEDIUM',
+                'issue': f'{len(sql_logins)} SQL logins active',
+                'recommendation': 'Consider using Windows Authentication for better security',
+                'sql_command': "-- Review SQL logins and consider migrating to Windows Auth\nSELECT name, create_date FROM sys.server_principals WHERE type = 'S' AND is_disabled = 0;"
             })
         
-        if dangerous_configs:
-            for config in dangerous_configs:
-                recommendations.append({
-                    'category': 'SECURITY',
-                    'priority': 'CRITICAL',
-                    'issue': f"{config['name']} is enabled",
-                    'recommendation': f"Disable {config['name']} unless absolutely necessary",
-                    'sql_command': f"EXEC sp_configure '{config['name']}', 0; RECONFIGURE;"
-                })
+        if old_logins:
+            recommendations.append({
+                'category': 'SECURITY',
+                'priority': 'MEDIUM',
+                'issue': f'{len(old_logins)} logins older than 1 year',
+                'recommendation': 'Review and update old logins, consider password rotation',
+                'sql_command': "-- Review old logins\nSELECT name, create_date, modify_date FROM sys.server_principals WHERE create_date < DATEADD(year, -1, GETDATE()) AND is_disabled = 0;"
+            })
         
-        if results['performance_metrics']['wait_stats']:
-            top_wait = results['performance_metrics']['wait_stats'][0]
-            if top_wait['wait_percentage'] > 50:
+        # Check for dangerous configurations
+        security_config_data = results['security_assessment']['security_config']
+        if isinstance(security_config_data, list):
+            dangerous_configs = [config for config in security_config_data 
+                               if config.get('value_in_use') == 1 and config.get('name') in ['xp_cmdshell', 'Ad Hoc Distributed Queries']]
+            if dangerous_configs:
+                for config in dangerous_configs:
+                    recommendations.append({
+                        'category': 'SECURITY',
+                        'priority': 'CRITICAL',
+                        'issue': f"{config['name']} is enabled",
+                        'recommendation': f"Disable {config['name']} unless absolutely necessary",
+                        'sql_command': f"EXEC sp_configure '{config['name']}', 0; RECONFIGURE;"
+                    })
+        
+        # Performance recommendations
+        wait_stats_data = results['performance_metrics']['wait_stats']
+        if isinstance(wait_stats_data, list) and wait_stats_data:
+            top_wait = wait_stats_data[0]
+            if top_wait.get('wait_percentage', 0) > 50:
                 recommendations.append({
                     'category': 'PERFORMANCE',
                     'priority': 'HIGH',
@@ -2315,14 +2360,17 @@ def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
                     'sql_command': "-- Check specific wait type details\nSELECT * FROM sys.dm_os_wait_stats WHERE wait_type = '{wait_type}';"
                 })
         
-        if memory_data and memory_data['memory_utilization_percent'] > 90:
-            recommendations.append({
-                'category': 'PERFORMANCE',
-                'priority': 'HIGH',
-                'issue': 'High memory utilization',
-                'recommendation': 'Consider adding more memory or optimizing queries',
-                'sql_command': "-- Check memory-consuming queries\nSELECT TOP 10 \n    session_id, \n    memory_usage * 8 AS memory_kb, \n    status \nFROM sys.dm_exec_sessions \nORDER BY memory_usage DESC;"
-            })
+        memory_usage_data = results['performance_metrics']['memory_usage']
+        if isinstance(memory_usage_data, list) and memory_usage_data:
+            memory_data = memory_usage_data[0]
+            if memory_data.get('memory_utilization_percent', 0) > 90:
+                recommendations.append({
+                    'category': 'PERFORMANCE',
+                    'priority': 'HIGH',
+                    'issue': 'High memory utilization',
+                    'recommendation': 'Consider adding more memory or optimizing queries',
+                    'sql_command': "-- Check memory-consuming queries\nSELECT TOP 10 \n    session_id, \n    memory_usage * 8 AS memory_kb, \n    status \nFROM sys.dm_exec_sessions \nORDER BY memory_usage DESC;"
+                })
         
         results['recommendations'] = recommendations
         
@@ -2374,16 +2422,18 @@ def get_profile_metrics(profile: str, results: dict) -> dict:
     # Analyze current metrics against profile thresholds
     current_metrics = {}
     
-    if results['performance_metrics'].get('wait_stats'):
-        critical_waits = [wait for wait in results['performance_metrics']['wait_stats'] 
-                         if wait['wait_type'] in config['critical_wait_types']]
+    wait_stats_data = results['performance_metrics'].get('wait_stats')
+    if isinstance(wait_stats_data, list) and wait_stats_data:
+        critical_waits = [wait for wait in wait_stats_data 
+                         if wait.get('wait_type') in config['critical_wait_types']]
         current_metrics['critical_wait_count'] = len(critical_waits)
         current_metrics['highest_critical_wait'] = critical_waits[0] if critical_waits else None
     
-    if results['performance_metrics'].get('memory_usage'):
-        memory_data = results['performance_metrics']['memory_usage'][0]
+    memory_usage_data = results['performance_metrics'].get('memory_usage')
+    if isinstance(memory_usage_data, list) and memory_usage_data:
+        memory_data = memory_usage_data[0]
         current_metrics['memory_threshold_exceeded'] = (
-            memory_data['memory_utilization_percent'] > config['max_memory_utilization']
+            memory_data.get('memory_utilization_percent') > config['max_memory_utilization']
         )
     
     return {
