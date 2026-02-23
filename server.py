@@ -2445,7 +2445,7 @@ def get_profile_metrics(profile: str, results: dict) -> dict:
 
 def list_mcp_registered_tools():
     """Lists the names of all tools registered with the FastMCP instance."""
-    tools = mcp.get_tools()
+    tools = mcp.tools # Access the tools attribute directly
     print("Registered MCP Tools:")
     if tools:
         for tool_name in tools.keys():
