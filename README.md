@@ -498,7 +498,7 @@ This server implements strict security practices for logging:
 Here are some real-world examples of using the tools via an MCP client.
 
 ### 1. Check MCP Server Info
-**Prompt:** `using sqlserver_readonly, call db_sql2019_server_info_mcp() and display results`
+**Prompt:** `using sqlserver, call db_sql2019_server_info_mcp() and display results`
 
 **Result:**
 ```json
@@ -517,6 +517,11 @@ Here are some real-world examples of using the tools via an MCP client.
 ### 2. Query Store Performance Analysis
 **Prompt:** `using sqlserver_readonly, call db_sql2019_show_top_queries(database='USGISPRO_800') and display results`
 
+> **Note**: The `sqlserver_readonly` alias is used to explicitly indicate that the MCP client is configured with read-only credentials, ensuring no data modification operations are possible. This is a common practice for monitoring and analysis tools.
+
+> **Note**: The `sqlserver_readonly` alias is used to explicitly indicate that the MCP client is configured with read-only credentials, ensuring no data modification operations are possible. This is a common practice for monitoring and analysis tools.
+
+
 **Result:**
 ```json
 {
@@ -532,7 +537,7 @@ Here are some real-world examples of using the tools via an MCP client.
   "analysis_period": {
     "earliest_data": "2024-02-01T00:00:00",
     "latest_data": "2024-02-18T16:30:00",
-    "days_covered": 0,
+    "days_covered": 18,
     "total_queries": 664337
   },
   "long_running_queries": [
@@ -580,7 +585,7 @@ Here are some real-world examples of using the tools via an MCP client.
       "recent_executions": 2,
       "recent_avg_duration_ms": 0.0,
       "older_avg_duration_ms": 0.0,
-      "regression_percent": 52.0,
+      "regression_percent": null,
       "recent_avg_cpu_ms": 0.0
     }
   ],
@@ -757,7 +762,7 @@ Here are some real-world examples of using the tools via an MCP client.
       "type": "regressed_query",
       "priority": "high",
       "query_id": 216,
-      "issue": "Query performance regressed by 52.0% (from 0.0ms to 0.0ms)",
+      "issue": "Query performance changed (from 0.0ms to 0.0ms)",
       "recommendation": "Check for plan changes, statistics updates, or data distribution changes. Consider plan forcing or statistics updates.",
       "potential_actions": [
         "Check query plan history for plan changes",
