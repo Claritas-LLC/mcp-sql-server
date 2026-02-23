@@ -2,13 +2,12 @@ import asyncio
 import sys
 sys.path.append('.')
 
-from server import mcp, _configure_fastmcp_runtime
+from server import mcp
 
 async def list_tools():
     """List all available tools from the MCP server"""
     try:
-        # Configure the runtime to ensure all decorators are processed
-        _configure_fastmcp_runtime()
+
         
         tools = await mcp.list_tools()
         print("Available tools:")
