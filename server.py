@@ -2089,6 +2089,310 @@ EXEC sp_executesql @SQL;
             conn.close()
 
 
+@mcp.tool
+def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
+    """
+    Security and performance metrics analysis for SQL Server databases.
+    
+    This tool provides comprehensive security and performance monitoring
+    with different profiles for various workload types (OLTP, OLAP, Mixed).
+    
+    Features:
+    - Security configuration assessment
+    - Performance baseline metrics
+    - Risk assessment scoring
+    - Best practice recommendations
+    - Compliance checking
+    
+    Args:
+        profile: Workload profile ('oltp', 'olap', 'mixed'). Defaults to 'oltp'.
+        
+    Returns:
+        dict: Security and performance metrics analysis results
+    """
+    logger.info(f"Analyzing security and performance metrics for profile: {profile}")
+    
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Security metrics queries
+        security_queries = {
+            'login_audit': """
+                SELECT 
+                    name,
+                    type_desc,
+                    is_disabled,
+                    is_policy_checked,
+                    is_expiration_checked,
+                    create_date,
+                    modify_date
+                FROM sys.server_principals 
+                WHERE type IN ('S', 'U', 'G') 
+                AND name NOT LIKE '##%'
+                ORDER BY name
+            """,
+            'permissions_audit': """
+                SELECT 
+                    prin.name AS principal_name,
+                    prin.type_desc AS principal_type,
+                    perm.permission_name,
+                    perm.state_desc AS permission_state,
+                    obj.name AS object_name,
+                    obj.type_desc AS object_type
+                FROM sys.server_permissions perm
+                JOIN sys.server_principals prin ON perm.grantee_principal_id = prin.principal_id
+                LEFT JOIN sys.objects obj ON perm.major_id = obj.object_id
+                WHERE prin.name NOT LIKE '##%'
+                ORDER BY prin.name, perm.permission_name
+            """,
+            'security_config': """
+                SELECT 
+                    name,
+                    value,
+                    value_in_use,
+                    description
+                FROM sys.configurations 
+                WHERE name IN (
+                    'cross db ownership chaining',
+                    'xp_cmdshell', 
+                    'Ad Hoc Distributed Queries',
+                    'clr enabled',
+                    'Database Mail XPs',
+                    'Ole Automation Procedures'
+                )
+                ORDER BY name
+            """
+        }
+        
+        # Performance metrics queries
+        performance_queries = {
+            'wait_stats': """
+                SELECT TOP 10
+                    wait_type,
+                    waiting_tasks_count,
+                    wait_time_ms,
+                    max_wait_time_ms,
+                    signal_wait_time_ms,
+                    CAST(100.0 * wait_time_ms / SUM(wait_time_ms) OVER() AS DECIMAL(5,2)) AS wait_percentage
+                FROM sys.dm_os_wait_stats 
+                WHERE wait_type NOT IN (
+                    'BROKER_EVENTHANDLER', 'BROKER_RECEIVE_WAITFOR', 'BROKER_TASK_STOP',
+                    'BROKER_TO_FLUSH', 'BROKER_TRANSMITTER', 'CHECKPOINT_QUEUE',
+                    'CLR_AUTO_EVENT', 'CLR_MANUAL_EVENT', 'CLR_SEMAPHORE',
+                    'DBMIRROR_DBM_EVENT', 'DBMIRROR_EVENTS_QUEUE', 'DBMIRROR_WORKER_QUEUE',
+                    'DBMIRRORING_CMD', 'DIRTY_PAGE_POLL', 'DISPATCHER_QUEUE_SEMAPHORE',
+                    'EXECSYNC', 'FSAGENT', 'FT_IFTS_SCHEDULER_IDLE_WAIT', 'FT_IFTSHC_MUTEX',
+                    'HADR_CLUSAPI_CALL', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION', 'HADR_LOGCAPTURE_WAIT',
+                    'HADR_NOTIFICATION_DEQUEUE', 'HADR_TIMER_TASK', 'HADR_WORK_QUEUE',
+                    'KSOURCE_WAKEUP', 'LAZYWRITER_SLEEP', 'LOGMGR_QUEUE', 'MEMORY_ALLOCATION_EXT',
+                    'ONDEMAND_TASK_QUEUE', 'PARALLEL_REDO_DRAIN_WORKER', 'PARALLEL_REDO_LOG_CACHE',
+                    'PARALLEL_REDO_TRAN_LIST', 'PARALLEL_REDO_WORKER_SYNC', 'PARALLEL_REDO_WORKER_WAIT_WORK',
+                    'PREEMPTIVE_XE_GETTARGETSTATE', 'PWAIT_ALL_COMPONENTS_INITIALIZED', 'PWAIT_DIRECTLOGCONSUMER_GETNEXT',
+                    'QDS_ASYNC_QUEUE', 'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP', 'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
+                    'QDS_SHUTDOWN_QUEUE', 'QDS_WIP', 'REDO_THREAD_PENDING_WORK', 'REQUEST_FOR_DEADLOCK_SEARCH',
+                    'RESOURCE_QUEUE', 'SERVER_IDLE_CHECK', 'SLEEP_BPOOL_FLUSH', 'SLEEP_DBSTARTUP',
+                    'SLEEP_DCOMSTARTUP', 'SLEEP_MSDBSTARTUP', 'SLEEP_SYSTEMTASK', 'SLEEP_TASK',
+                    'SLEEP_TEMPDBSTARTUP', 'SNI_HTTP_ACCEPT', 'SP_SERVER_DIAGNOSTICS_SLEEP', 'SQLTRACE_BUFFER_FLUSH',
+                    'SQLTRACE_INCREMENTAL_FLUSH_SLEEP', 'SQLTRACE_WAIT_ENTRIES', 'STARTUP_DEPENDENCY_MANAGER',
+                    'UCS_SESSION_REGISTRATION', 'WAIT_FOR_RESULTS', 'WAIT_XTP_HOST_WAIT', 'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
+                    'WAIT_XTP_CKPT_CLOSE', 'WAIT_XTP_RECOVERY', 'XE_BUFFERMGR_ALLPROCESSED_EVENT', 'XE_DISPATCHER_JOIN',
+                    'XE_DISPATCHER_WAIT', 'XE_LIVE_TARGET_TVF', 'XE_TIMER_EVENT'
+                )
+                ORDER BY wait_time_ms DESC
+            """,
+            'memory_usage': """
+                SELECT 
+                    physical_memory_kb / 1024 AS physical_memory_mb,
+                    virtual_memory_kb / 1024 AS virtual_memory_mb,
+                    committed_kb / 1024 AS committed_mb,
+                    committed_target_kb / 1024 AS committed_target_mb,
+                    CAST(100.0 * committed_kb / committed_target_kb AS DECIMAL(5,2)) AS memory_utilization_percent
+                FROM sys.dm_os_sys_memory
+            """,
+            'cpu_stats': """
+                SELECT 
+                    cpu_count,
+                    hyperthread_ratio,
+                    physical_memory_kb / 1024 AS physical_memory_mb,
+                    virtual_machine_type_desc,
+                    softnuma_configuration_desc
+                FROM sys.dm_os_sys_info
+            """
+        }
+        
+        results = {
+            'profile': profile,
+            'analysis_timestamp': datetime.now().isoformat(),
+            'security_assessment': {},
+            'performance_metrics': {},
+            'risk_assessment': {},
+            'recommendations': []
+        }
+        
+        # Execute security queries
+        for query_name, query in security_queries.items():
+            cursor.execute(query)
+            columns = [desc[0] for desc in cursor.description]
+            results['security_assessment'][query_name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        
+        # Execute performance queries
+        for query_name, query in performance_queries.items():
+            cursor.execute(query)
+            columns = [desc[0] for desc in cursor.description]
+            results['performance_metrics'][query_name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        
+        # Risk assessment based on profile
+        risk_score = 0
+        risk_factors = []
+        
+        # Security risk assessment
+        disabled_logins = len([login for login in results['security_assessment']['login_audit'] if login['is_disabled'] == False])
+        logins_without_policy = len([login for login in results['security_assessment']['login_audit'] if login['is_policy_checked'] == False])
+        
+        if logins_without_policy > 0:
+            risk_score += 20
+            risk_factors.append(f"{logins_without_policy} logins without password policy")
+        
+        # Check for dangerous configurations
+        dangerous_configs = [config for config in results['security_assessment']['security_config'] 
+                           if config['value_in_use'] == 1 and config['name'] in ['xp_cmdshell', 'Ad Hoc Distributed Queries']]
+        if dangerous_configs:
+            risk_score += 30
+            risk_factors.extend([f"{config['name']} is enabled" for config in dangerous_configs])
+        
+        # Performance risk assessment
+        if results['performance_metrics']['wait_stats']:
+            top_wait = results['performance_metrics']['wait_stats'][0]
+            if top_wait['wait_percentage'] > 50:
+                risk_score += 25
+                risk_factors.append(f"High wait percentage: {top_wait['wait_type']} ({top_wait['wait_percentage']}%)")
+        
+        # Memory pressure check
+        if results['performance_metrics']['memory_usage']:
+            memory_data = results['performance_metrics']['memory_usage'][0]
+            if memory_data['memory_utilization_percent'] > 90:
+                risk_score += 20
+                risk_factors.append(f"High memory utilization: {memory_data['memory_utilization_percent']}%")
+        
+        results['risk_assessment'] = {
+            'overall_risk_score': min(risk_score, 100),
+            'risk_level': 'HIGH' if risk_score >= 70 else 'MEDIUM' if risk_score >= 40 else 'LOW',
+            'risk_factors': risk_factors,
+            'profile_specific_metrics': get_profile_metrics(profile, results)
+        }
+        
+        # Generate recommendations
+        recommendations = []
+        
+        if logins_without_policy > 0:
+            recommendations.append({
+                'category': 'SECURITY',
+                'priority': 'HIGH',
+                'issue': f'{logins_without_policy} logins without password policy',
+                'recommendation': 'Enable password policy enforcement for all SQL logins',
+                'sql_command': "ALTER LOGIN [login_name] WITH CHECK_POLICY = ON;"
+            })
+        
+        if dangerous_configs:
+            for config in dangerous_configs:
+                recommendations.append({
+                    'category': 'SECURITY',
+                    'priority': 'CRITICAL',
+                    'issue': f"{config['name']} is enabled",
+                    'recommendation': f"Disable {config['name']} unless absolutely necessary",
+                    'sql_command': f"EXEC sp_configure '{config['name']}', 0; RECONFIGURE;"
+                })
+        
+        if results['performance_metrics']['wait_stats']:
+            top_wait = results['performance_metrics']['wait_stats'][0]
+            if top_wait['wait_percentage'] > 50:
+                recommendations.append({
+                    'category': 'PERFORMANCE',
+                    'priority': 'HIGH',
+                    'issue': f"High wait on {top_wait['wait_type']}",
+                    'recommendation': f"Investigate and optimize for {top_wait['wait_type']} waits",
+                    'sql_command': "-- Check specific wait type details\nSELECT * FROM sys.dm_os_wait_stats WHERE wait_type = '{wait_type}';"
+                })
+        
+        if memory_data and memory_data['memory_utilization_percent'] > 90:
+            recommendations.append({
+                'category': 'PERFORMANCE',
+                'priority': 'HIGH',
+                'issue': 'High memory utilization',
+                'recommendation': 'Consider adding more memory or optimizing queries',
+                'sql_command': "-- Check memory-consuming queries\nSELECT TOP 10 \n    session_id, \n    memory_usage * 8 AS memory_kb, \n    status \nFROM sys.dm_exec_sessions \nORDER BY memory_usage DESC;"
+            })
+        
+        results['recommendations'] = recommendations
+        
+        logger.info(f"Security and performance analysis completed for profile: {profile}")
+        return results
+        
+    except Exception as e:
+        logger.exception(f"Error analyzing security and performance metrics: {e}")
+        return {
+            'profile': profile,
+            'error': f"Failed to analyze security and performance metrics: {str(e)}",
+            'recommendations': [{
+                'category': 'ERROR',
+                'priority': 'CRITICAL',
+                'issue': 'Analysis failed',
+                'recommendation': 'Check database permissions and SQL Server version compatibility',
+                'sql_command': '-- Ensure proper permissions for system views'
+            }]
+        }
+    finally:
+        if conn:
+            conn.close()
+
+def get_profile_metrics(profile: str, results: dict) -> dict:
+    """Get profile-specific metrics and thresholds."""
+    profile_configs = {
+        'oltp': {
+            'max_acceptable_wait_percentage': 30,
+            'max_memory_utilization': 80,
+            'critical_wait_types': ['LCK_M_S', 'LCK_M_X', 'PAGELATCH_EX', 'PAGELATCH_SH'],
+            'performance_priorities': ['Lock waits', 'Latch contention', 'Memory pressure']
+        },
+        'olap': {
+            'max_acceptable_wait_percentage': 50,
+            'max_memory_utilization': 95,
+            'critical_wait_types': ['CXPACKET', 'SOS_SCHEDULER_YIELD', 'THREADPOOL'],
+            'performance_priorities': ['Parallelism', 'CPU contention', 'I/O waits']
+        },
+        'mixed': {
+            'max_acceptable_wait_percentage': 40,
+            'max_memory_utilization': 85,
+            'critical_wait_types': ['LCK_M_S', 'CXPACKET', 'PAGELATCH_EX'],
+            'performance_priorities': ['Lock waits', 'Parallelism', 'Memory pressure']
+        }
+    }
+    
+    config = profile_configs.get(profile, profile_configs['oltp'])
+    
+    # Analyze current metrics against profile thresholds
+    current_metrics = {}
+    
+    if results['performance_metrics'].get('wait_stats'):
+        critical_waits = [wait for wait in results['performance_metrics']['wait_stats'] 
+                         if wait['wait_type'] in config['critical_wait_types']]
+        current_metrics['critical_wait_count'] = len(critical_waits)
+        current_metrics['highest_critical_wait'] = critical_waits[0] if critical_waits else None
+    
+    if results['performance_metrics'].get('memory_usage'):
+        memory_data = results['performance_metrics']['memory_usage'][0]
+        current_metrics['memory_threshold_exceeded'] = (
+            memory_data['memory_utilization_percent'] > config['max_memory_utilization']
+        )
+    
+    return {
+        'profile': profile,
+        'thresholds': config,
+        'current_metrics': current_metrics,
+        'compliance_status': 'COMPLIANT' if not current_metrics.get('memory_threshold_exceeded') and current_metrics.get('critical_wait_count', 0) == 0 else 'NON_COMPLIANT'
+    }
+
 # Main entry point
 import anyio
 
