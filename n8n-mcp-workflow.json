@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "url": "http://mcp-sqlserver:8085/sse"
+        "url": "={{ $env.MCP_SERVER_URL || 'http://mcp-sqlserver:8085/sse' }}"
       },
       "id": "3",
       "name": "SQL Server MCP",

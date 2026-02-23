@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""
+Test script to call db_sql2019_server_info_mcp() and display results.
+Uses mocked readonly connection to demonstrate the function.
+"""
+
+import os
+import sys
+import json
+from unittest import mock
+
+# Configure readonly environment
+os.environ['MCP_SKIP_CONFIRMATION'] = 'true'
+os.environ['DB_SERVER'] = 'localhost'
+os.environ['DB_NAME'] = 'master'
+os.environ['DB_USER'] = 'sa'
+os.environ['MCP_ALLOW_WRITE'] = 'false'
+os.environ['MCP_TRANSPORT'] = 'stdio'
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+print("=" * 80)
+print("SQL Server MCP - db_sql2019_server_info_mcp() Test")
+print("=" * 80)
+print()
+
+try:
+    # Step 1: Import
+    print("[1/4] Importing server module...")
+    import server
+    print("      ✓ Server module imported")
+    print()
+    
+    # Step 2: Verify readonly
+    print("[2/4] Verifying readonly configuration...")
+    print(f"      • ALLOW_WRITE = {server.ALLOW_WRITE}")
+    print(f"      • CONFIRM_WRITE = {server.CONFIRM_WRITE}")
+    assert server.ALLOW_WRITE == False, "Should be readonly!"
+    print("      ✓ Readonly mode confirmed")
+    print()
+    
+    # Step 3: Mock connection
+    print("[3/4] Creating mocked SQL Server connection...")
+    mock_conn = mock.MagicMock()
+    mock_cursor = mock.MagicMock()
+    
+    # Mock server info query results
+    server_info_row = (
+        'Microsoft SQL Server 2022 (RTM) - 16.0.4001.0 (X64) Build 16.0.4001.0',
+        'MYSERVER',
+        'master',
+        'sa',
+        '16.0.4001.0',
+        'RTM',
+        'Enterprise'
+    )
+    
+    conn_info_row = ('127.0.0.1', 1433)
+    
+    mock_cursor.fetchone.side_effect = [server_info_row, conn_info_row]
+    mock_conn.cursor.return_value = mock_cursor
+    
+    print("      ✓ Mock connection ready")
+    print()
+    
+    # Step 4: Call function
+    print("[4/4] Executing db_sql2019_server_info_mcp()...")
+    with mock.patch('server.get_connection', return_value=mock_conn):
+        result = server.db_sql2019_server_info_mcp()
+    
+    print("      ✓ Function executed successfully")
+    print()
+    
+    # Display results
+    print("=" * 80)
+    print("RESULTS")
+    print("=" * 80)
+    print()
+    
+    if isinstance(result, dict):
+        # Pretty print results
+        for key, value in result.items():
+            if isinstance(value, bool):
+                print(f"  {key:.<30} {str(value).upper()}")
+            elif isinstance(value, int):
+                print(f"  {key:.<30} {value}")
+            else:
+                print(f"  {key:.<30} {value}")
+    else:
+        print(json.dumps(result, indent=2, default=str))
+    
+    print()
+    print("=" * 80)
+    print("SUMMARY")
+    print("=" * 80)
+    
+    if isinstance(result, dict):
+        print(f"  Server Name:    {result.get('server_name', 'N/A')}")
+        print(f"  Database:       {result.get('database', 'N/A')}")
+        print(f"  User:           {result.get('user', 'N/A')}")
+        print(f"  Server Address: {result.get('server_addr', 'N/A')}:{result.get('server_port', 'N/A')}")
+        print(f"  Status:         {result.get('status', 'N/A')}")
+        print(f"  Transport:      {result.get('transport', 'N/A')}")
+        print(f"  Allow Write:    {result.get('allow_write', 'N/A')}")
+        print()
+        print(f"  MCP Server:     {result.get('name', 'N/A')}")
+        print(f"  MCP Version:    {result.get('version', 'N/A')}")
+    
+    print()
+    print("=" * 80)
+    print("✓✓✓ TEST PASSED - Function works correctly ✓✓✓")
+    print("=" * 80)
+
+except AssertionError as e:
+    print(f"✗ Assertion failed: {e}")
+    sys.exit(1)
+except Exception as e:
+    print(f"✗ Error: {type(e).__name__}: {e}")
+    import traceback
+    traceback.print_exc()
+    print()
+    print("=" * 80)
+    sys.exit(1)

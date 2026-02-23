@@ -12,7 +12,7 @@ services:
       - DB_SERVER=sql-server
       - DB_PORT=1433
       - DB_USER=sa
-      - DB_PASSWORD=YourPassword123!
+      - DB_PASSWORD=${MSSQL_SA_PASSWORD}
       - DB_NAME=master
       - MCP_TRANSPORT=http
       - MCP_PORT=8085
@@ -28,7 +28,9 @@ services:
       - "1433:1433"
     environment:
       - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=YourPassword123!
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
+    volumes:
+      - sqlserver_data:/var/opt/mssql
     networks:
       - mcp-network
 
@@ -53,3 +55,4 @@ networks:
 
 volumes:
   n8n_data:
+  sqlserver_data:
