@@ -2475,7 +2475,7 @@ def main():
         mcp.http_app().add_middleware(BrowserFriendlyMiddleware)
 
     logger.info("Registered MCP Tools:")
-    if mcp.get_tools():
+    if mcp.tools:
         for tool_name in mcp.tools.keys():
             logger.info(f"- {tool_name}")
     else:
