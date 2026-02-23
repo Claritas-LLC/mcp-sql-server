@@ -2083,8 +2083,6 @@ EXEC sp_executesql @SQL;
                 'message': 'Unable to analyze fragmentation',
                 'action': 'Check database permissions and SQL Server version compatibility'
             }]
-        }
-    }
     finally:
         if conn:
             conn.close()
