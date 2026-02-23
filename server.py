@@ -2084,9 +2084,11 @@ EXEC sp_executesql @SQL;
                 'action': 'Check database permissions and SQL Server version compatibility'
             }]
         }
+    }
     finally:
         if conn:
             conn.close()
+
 
 # Main entry point
 import anyio
@@ -2141,4 +2143,3 @@ if __name__ == "__main__":
         logger.info("Server shut down by user.")
     except Exception as e:
         logger.critical(f"Unhandled exception in main: {e}", exc_info=True)
-        sys.exit(1)
