@@ -782,121 +782,116 @@ Here are some real-world examples of using the tools via an MCP client.
 **Result:**
 ```json
 {
-  "database": "USGISPRO_800",
-  "schema": "dbo",
-  "table": "Account",
-  "table_size": {
-    "schema_name": "dbo",
-    "table_name": "Account",
-    "row_count": 6398,
-    "total_space_mb": "1.46",
-    "used_space_mb": "1.23",
-    "data_space_mb": "1.19",
-    "unused_space_mb": "0.23"
+  "table_info": {
+    "TableName": "Account",
+    "SchemaName": "dbo",
+    "RowCounts": 3199,
+    "TotalSpaceKB": 1496,
+    "UsedSpaceKB": 1256,
+    "UnusedSpaceKB": 240
   },
   "indexes": [
     {
-      "index_name": "PK_Account",
-      "index_type": "CLUSTERED",
-      "is_unique": true,
-      "is_primary_key": true,
-      "fragmentation_percent": 0.77,
-      "page_count": 130,
-      "index_size_mb": "1.02",
-      "index_columns": "AccountID"
+      "IndexName": "PK_Account",
+      "IndexType": "CLUSTERED",
+      "IndexSizeMB": 1.039062
     },
     {
-      "index_name": "IX_Account_AccountNameStatus",
-      "index_type": "NONCLUSTERED",
-      "is_unique": false,
-      "is_primary_key": false,
-      "fragmentation_percent": 77.27,
-      "page_count": 22,
-      "index_size_mb": "0.17",
-      "index_columns": "AccountName, Status"
+      "IndexName": "IX_Account_AccountNameStatus",
+      "IndexType": "NONCLUSTERED",
+      "IndexSizeMB": 0.1875
     }
   ],
-  "foreign_keys": {
-    "tables_referencing_this": [
-      {
-        "referencing_schema": "dbo",
-        "referencing_table": "AccountModule",
-        "fk_name": "FK_AccountModule_Account",
-        "referencing_columns": "AccountID",
-        "referenced_columns": "AccountID"
-      },
-      {
-        "referencing_schema": "dbo",
-        "referencing_table": "AccountLogin",
-        "fk_name": "FK_AccountLogin_Account",
-        "referencing_columns": "AccountID",
-        "referenced_columns": "AccountID"
-      }
-    ],
-    "tables_referenced_by_this": [
-      {
-        "referenced_schema": "dbo",
-        "referenced_table": "Company",
-        "fk_name": "FK_Account_Company",
-        "referencing_columns": "CompanyID",
-        "referenced_columns": "CompanyID"
-      },
-      {
-        "referenced_schema": "dbo",
-        "referenced_table": "Account",
-        "fk_name": "FK_Account_Account",
-        "referencing_columns": "ParentAccountID",
-        "referenced_columns": "AccountID"
-      }
-    ]
-  },
-  "statistics": [
+  "foreign_keys": [
     {
-      "stats_name": "PK_Account",
-      "table_name": "Account",
+      "FK_Name": "FK_AccountLogin_Account",
+      "ParentTable": "AccountLogin",
+      "ParentColumn": "AccountID",
+      "ReferencedTable": "Account",
+      "ReferencedColumn": "AccountID"
+    },
+    {
+      "FK_Name": "FK_AccountReportFormat_Account",
+      "ParentTable": "AccountReportFormat",
+      "ParentColumn": "AccountID",
+      "ReferencedTable": "Account",
+      "ReferencedColumn": "AccountID"
+    },
+    {
+      "FK_Name": "FK_AccountModule_Account",
+      "ParentTable": "AccountModule",
+      "ParentColumn": "AccountID",
+      "ReferencedTable": "Account",
+      "ReferencedColumn": "AccountID"
+    }
+    // ... 40+ more foreign key relationships
+  ],
+  "statistics_sample": [
+    {
+      "ColumnName": "AccountID",
+      "StatsName": "PK_Account",
       "last_updated": "2026-01-07T20:41:01.340000",
-      "row_count": 3199,
+      "rows": 3199,
       "rows_sampled": 3199,
-      "modification_counter": 0,
-      "modification_percent": "0.00"
+      "modification_counter": 0
     },
     {
-      "stats_name": "IX_Account_AccountNameStatus",
-      "table_name": "Account",
-      "last_updated": "2026-01-07T20:41:01.470000",
-      "row_count": 3199,
+      "ColumnName": "CompanyID",
+      "StatsName": "_WA_Sys_00000002_69485A5F",
+      "last_updated": "2026-01-07T20:41:01.353000",
+      "rows": 3199,
       "rows_sampled": 3199,
-      "modification_counter": 0,
-      "modification_percent": "0.00"
+      "modification_counter": 0
+    },
+    {
+      "ColumnName": "ParentAccountID",
+      "StatsName": "_WA_Sys_00000018_69485A5F",
+      "last_updated": "2026-01-07T20:41:01.360000",
+      "rows": 3199,
+      "rows_sampled": 3199,
+      "modification_counter": 0
+    },
+    {
+      "ColumnName": "Status",
+      "StatsName": "_WA_Sys_0000000D_69485A5F",
+      "last_updated": "2026-01-07T20:41:01.370000",
+      "rows": 3199,
+      "rows_sampled": 3199,
+      "modification_counter": 0
+    },
+    {
+      "ColumnName": "AccountName",
+      "StatsName": "_WA_Sys_00000003_69485A5F",
+      "last_updated": "2026-01-07T20:41:01.377000",
+      "rows": 3199,
+      "rows_sampled": 3199,
+      "modification_counter": 0
     }
   ],
-  "constraints": {
-    "missing_constraints": [
+  "health_analysis": {
+    "constraint_issues": [
       {
-        "type": "missing_foreign_key",
-        "column": "CompanyID",
-        "potential_reference": "dbo.Company",
-        "severity": "medium",
-        "recommendation": "Consider adding foreign key constraint to Company table"
+        "type": "Unindexed Foreign Key",
+        "message": "Warning: Foreign key 'FK_Account_Company' on column 'CompanyID' is not indexed. This can cause performance problems during joins and cascading operations."
       },
       {
-        "type": "missing_check_constraint",
-        "column": "Status",
-        "severity": "low",
-        "recommendation": "Consider adding check constraint for Status to enforce valid values"
+        "type": "Unindexed Foreign Key",
+        "message": "Warning: Foreign key 'FK_Account_Account' on column 'ParentAccountID' is not indexed. This can cause performance problems during joins and cascading operations."
       }
     ],
-    "constraint_analysis": "Found 2 potential constraint issues"
+    "index_issues": []
   },
-  "index_analysis": {
-    "index_issues": [
-      {
-        "type": "missing_foreign_key_index",
-        "column": "CompanyID",
-        "severity": "medium",
-        "recommendation": "Create index on foreign key column CompanyID to improve join performance"
-      },
-      {
+  "recommendations": [
+    {
+      "severity": "Medium",
+      "recommendation": "Create an index on column 'CompanyID' to support the foreign key 'FK_Account_Company'."
+    },
+    {
+      "severity": "Medium",
+      "recommendation": "Create an index on column 'ParentAccountID' to support the foreign key 'FK_Account_Account'."
+    }
+  ]
+}
         "type": "unused_large_index",
         "index": "IX_Account_UnusedField",
         "size_mb": 15.2,
@@ -941,37 +936,94 @@ Here are some real-world examples of using the tools via an MCP client.
 ```json
 {
   "database": "USGISPRO_800",
-  "analysis_parameters": {
-    "table_filter": "All Tables",
-    "schema_filter": "All Schemas",
-    "min_fragmentation_percent": 5.0,
-    "min_page_count": 100
+  "analysis_timestamp": "2026-02-23T16:59:35.474000",
+  "total_fragmented_indexes": 8,
+  "fragmentation_summary": {
+    "severe": 0,
+    "high": 0,
+    "medium": 8,
+    "low": 0
   },
-  "fragmented_indexes": [
-    {
-      "schema": "dbo",
-      "table_name": "datasource_cn5441",
-      "index_name": null,
-      "index_type": "HEAP",
-      "fragmentation_percent": 80.00,
-      "page_count": 113,
-      "recommended_action": "REBUILD",
-      "priority": "High"
-    },
-    {
-      "schema": "dbo",
-      "table_name": "AccountAccessAnyZipLevel",
-      "index_name": null,
-      "index_type": "HEAP",
-      "fragmentation_percent": 78.62,
-      "page_count": 3359,
-      "recommended_action": "REBUILD",
-      "priority": "High"
-    },
+  "top_fragmented_indexes": [
     {
       "schema": "dbo",
       "table_name": "DataHierarchy",
       "index_name": "nc_DataHierarchy_status_pp",
+      "fragmentation_percent": 24.7,
+      "category": "MEDIUM",
+      "page_count": 1234,
+      "recommended_action": "REORGANIZE"
+    },
+    {
+      "schema": "dbo",
+      "table_name": "AccountDataPackage",
+      "index_name": "IX_AccountDataPackage_All",
+      "fragmentation_percent": 24.02,
+      "category": "MEDIUM",
+      "page_count": 567,
+      "recommended_action": "REORGANIZE"
+    },
+    {
+      "schema": "dbo",
+      "table_name": "AccountSite",
+      "index_name": "IX_AccountSite_SiteKey",
+      "fragmentation_percent": 21.65,
+      "category": "MEDIUM",
+      "page_count": 890,
+      "recommended_action": "REORGANIZE"
+    },
+    {
+      "schema": "dbo",
+      "table_name": "AccountSubscriptionItem",
+      "index_name": "nc_AccountSubscriptionItem_id_st",
+      "fragmentation_percent": 21.05,
+      "category": "MEDIUM",
+      "page_count": 456,
+      "recommended_action": "REORGANIZE"
+    },
+    {
+      "schema": "dbo",
+      "table_name": "AccountDataPackage",
+      "index_name": "IX_AccountDataPackage_AccountID_ModuleGroupID",
+      "fragmentation_percent": 20.71,
+      "category": "MEDIUM",
+      "page_count": 789,
+      "recommended_action": "REORGANIZE"
+    }
+  ],
+  "fix_commands": [
+    "ALTER INDEX [nc_DataHierarchy_status_pp] ON [dbo].[DataHierarchy] REORGANIZE;",
+    "ALTER INDEX [IX_AccountDataPackage_All] ON [dbo].[AccountDataPackage] REORGANIZE;",
+    "ALTER INDEX [IX_AccountSite_SiteKey] ON [dbo].[AccountSite] REORGANIZE;",
+    "ALTER INDEX [nc_AccountSubscriptionItem_id_st] ON [dbo].[AccountSubscriptionItem] REORGANIZE;",
+    "ALTER INDEX [IX_AccountDataPackage_AccountID_ModuleGroupID] ON [dbo].[AccountDataPackage] REORGANIZE;"
+  ],
+  "maintenance_plan": {
+    "immediate": 0,
+    "this_week": 0,
+    "this_month": 8,
+    "monitoring": 0
+  },
+  "recommendations": [
+    {
+      "category": "MAINTENANCE",
+      "message": "8 indexes need REORGANIZE operations (15-30% fragmentation).",
+      "action": "Run REORGANIZE during low-usage periods"
+    },
+    {
+      "category": "MONITORING",
+      "message": "Consider implementing automated index maintenance jobs.",
+      "action": "Set up SQL Agent jobs or maintenance plans"
+    }
+  ],
+  "sql_commands": {
+    "maintenance_script": "-- Automated maintenance script template\nDECLARE @SQL NVARCHAR(MAX) = '';\n\nSELECT @SQL = @SQL + \n    'ALTER INDEX [' + i.name + '] ON [' + s.name + '].[' + t.name + '] '\n    + CASE \n        WHEN ips.avg_fragmentation_in_percent \u003e= 30 THEN 'REBUILD WITH (ONLINE = ON);'\n        ELSE 'REORGANIZE;'\n      END + CHAR(13)\nFROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ips\nJOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id\nJOIN sys.tables t ON i.object_id = t.object_id\nJOIN sys.schemas s ON t.schema_id = s.schema_id\nWHERE ips.avg_fragmentation_in_percent \u003e 10\nAND ips.page_count \u003e 50\nAND i.name IS NOT NULL;\n\n-- Execute the generated script\nEXEC sp_executesql @SQL;"
+  }
+}
+```
+
+**Analysis:**
+The fragmentation analysis reveals 8 indexes with medium-level fragmentation (15-30%). The recommended action is to run REORGANIZE operations on these indexes during low-usage periods. No indexes require immediate REBUILD operations, indicating the database is in good overall health. Consider setting up automated maintenance jobs to prevent future fragmentation buildup.
       "index_type": "NONCLUSTERED",
       "fragmentation_percent": 24.70,
       "page_count": 842,
