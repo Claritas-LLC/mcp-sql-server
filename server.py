@@ -2443,6 +2443,16 @@ def get_profile_metrics(profile: str, results: dict) -> dict:
         'compliance_status': 'COMPLIANT' if not current_metrics.get('memory_threshold_exceeded') and current_metrics.get('critical_wait_count', 0) == 0 else 'NON_COMPLIANT'
     }
 
+def list_mcp_registered_tools():
+    """Lists the names of all tools registered with the FastMCP instance."""
+    tools = mcp.get_tools()
+    print("Registered MCP Tools:")
+    if tools:
+        for tool_name in tools.keys():
+            print(f"- {tool_name}")
+    else:
+        print("No tools registered.")
+
 # Main entry point
 import anyio
 
