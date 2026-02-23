@@ -1828,6 +1828,266 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
         if conn:
             conn.close()
 
+@mcp.tool
+def db_sql2019_check_fragmentation(
+    database_name: str,
+    min_fragmentation: float = 15.0,
+    min_page_count: int = 100,
+    include_recommendations: bool = True
+) -> dict[str, Any]:
+    """
+    Comprehensive index fragmentation analysis with actionable recommendations.
+    
+    This tool provides a complete fragmentation assessment of your SQL Server database,
+    including detailed analysis of problematic indexes and specific SQL commands to fix them.
+    
+    Features:
+    - Identifies fragmented indexes across the entire database
+    - Categorizes fragmentation levels (Low, Medium, High, Severe)
+    - Provides specific SQL commands for REORGANIZE vs REBUILD decisions
+    - Includes maintenance window recommendations
+    - Estimates time and resource requirements
+    
+    Fragmentation Guidelines:
+    - 5-30%: REORGANIZE (online operation, quick)
+    - >30%: REBUILD (can be offline/online depending on edition)
+    - >70%: Severe fragmentation requiring immediate attention
+    
+    Args:
+        database_name: The database to analyze for fragmentation.
+        min_fragmentation: Minimum fragmentation percentage to include (default: 10.0).
+        min_page_count: Minimum page count for indexes to analyze (default: 50).
+        include_recommendations: Whether to include fix recommendations (default: true).
+    
+    Returns:
+        Dictionary containing fragmentation analysis, categorized issues, and fix commands.
+    """
+    if not is_valid_sql_identifier(database_name):
+        raise ValueError(f"Invalid database name: {database_name}")
+    
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        _execute_safe(cur, f"USE [{database_name}]")
+        
+        # Get comprehensive fragmentation data (using LIMITED mode for performance)
+        fragmentation_query = '''
+            SELECT 
+                s.name as SchemaName,
+                t.name as TableName,
+                i.name as IndexName,
+                ips.index_type_desc,
+                ips.avg_fragmentation_in_percent,
+                ips.page_count,
+                ips.record_count,
+                ips.avg_page_space_used_in_percent,
+                i.fill_factor,
+                i.is_disabled,
+                i.is_padded,
+                CASE 
+                    WHEN ips.avg_fragmentation_in_percent >= 70 THEN 'SEVERE'
+                    WHEN ips.avg_fragmentation_in_percent >= 30 THEN 'HIGH' 
+                    WHEN ips.avg_fragmentation_in_percent >= 15 THEN 'MEDIUM'
+                    WHEN ips.avg_fragmentation_in_percent >= 5 THEN 'LOW'
+                    ELSE 'MINIMAL'
+                END as Severity,
+                CASE
+                    WHEN ips.avg_fragmentation_in_percent >= 30 AND ips.page_count >= 1000 THEN 'REBUILD'
+                    WHEN ips.avg_fragmentation_in_percent >= 15 THEN 'REORGANIZE'
+                    WHEN ips.avg_fragmentation_in_percent >= 5 THEN 'REORGANIZE'
+                    ELSE 'MONITOR'
+                END as RecommendedAction
+            FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ips
+            INNER JOIN sys.objects o ON ips.object_id = o.object_id
+            INNER JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
+            INNER JOIN sys.tables t ON o.object_id = t.object_id
+            INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+            WHERE o.is_ms_shipped = 0
+            AND i.name IS NOT NULL
+            AND ips.page_count >= ?
+            AND ips.avg_fragmentation_in_percent >= ?
+            AND ips.index_level = 0  -- Leaf level only
+            ORDER BY ips.avg_fragmentation_in_percent DESC
+        '''
+        
+        _execute_safe(cur, fragmentation_query, [min_page_count, min_fragmentation])
+        fragmented_indexes = []
+        
+        for row in cur.fetchall():
+            fragmented_indexes.append({
+                'SchemaName': row[0],
+                'TableName': row[1], 
+                'IndexName': row[2],
+                'IndexType': row[3],
+                'FragmentationPercent': round(row[4], 2),
+                'PageCount': row[5],
+                'RecordCount': row[6],
+                'AvgPageSpaceUsed': round(row[7], 2) if row[7] else 0,
+                'FillFactor': row[8],
+                'IsDisabled': row[9],
+                'IsPadded': row[10],
+                'Severity': row[11],
+                'RecommendedAction': row[12]
+            })
+        
+        # Categorize by severity
+        severe_indexes = [idx for idx in fragmented_indexes if idx['Severity'] == 'SEVERE']
+        high_indexes = [idx for idx in fragmented_indexes if idx['Severity'] == 'HIGH']
+        medium_indexes = [idx for idx in fragmented_indexes if idx['Severity'] == 'MEDIUM']
+        low_indexes = [idx for idx in fragmented_indexes if idx['Severity'] == 'LOW']
+        
+        # Generate fix commands
+        fix_commands = []
+        maintenance_plan = []
+        
+        if include_recommendations:
+            for idx in fragmented_indexes[:20]:  # Limit to top 20 for practical use
+                schema_table = f"[{idx['SchemaName']}].[{idx['TableName']}]"
+                index_name = idx['IndexName']
+                
+                if idx['RecommendedAction'] == 'REBUILD':
+                    # Check if Enterprise Edition for online rebuild
+                    fix_commands.append({
+                        'TableName': schema_table,
+                        'IndexName': index_name,
+                        'Fragmentation': idx['FragmentationPercent'],
+                        'Severity': idx['Severity'],
+                        'Command': f"ALTER INDEX [{index_name}] ON {schema_table} REBUILD WITH (FILLFACTOR = 90, ONLINE = ON, MAXDOP = 2);",
+                        'CommandOffline': f"ALTER INDEX [{index_name}] ON {schema_table} REBUILD WITH (FILLFACTOR = 90);",
+                        'EstimatedTime': f"{max(1, idx['PageCount'] // 1000)}-{(idx['PageCount'] // 500) + 1} minutes",
+                        'Impact': 'HIGH - Requires maintenance window'
+                    })
+                    
+                elif idx['RecommendedAction'] == 'REORGANIZE':
+                    fix_commands.append({
+                        'TableName': schema_table,
+                        'IndexName': index_name,
+                        'Fragmentation': idx['FragmentationPercent'],
+                        'Severity': idx['Severity'],
+                        'Command': f"ALTER INDEX [{index_name}] ON {schema_table} REORGANIZE;",
+                        'EstimatedTime': f"{max(1, idx['PageCount'] // 2000)}-{(idx['PageCount'] // 1000) + 1} minutes",
+                        'Impact': 'LOW - Can run during business hours'
+                    })
+        
+        # Generate maintenance plan
+        if fragmented_indexes:
+            maintenance_plan.append({
+                'Phase': 'IMMEDIATE (Severe)',
+                'Indexes': len(severe_indexes),
+                'Action': 'Schedule maintenance window for REBUILD operations',
+                'Priority': 'CRITICAL'
+            })
+            
+            maintenance_plan.append({
+                'Phase': 'THIS WEEK (High)',
+                'Indexes': len(high_indexes),
+                'Action': 'Plan REBUILD operations during low-usage periods',
+                'Priority': 'HIGH'
+            })
+            
+            maintenance_plan.append({
+                'Phase': 'THIS MONTH (Medium)',
+                'Indexes': len(medium_indexes),
+                'Action': 'Run REORGANIZE during maintenance window',
+                'Priority': 'MEDIUM'
+            })
+            
+            maintenance_plan.append({
+                'Phase': 'MONITORING (Low)',
+                'Indexes': len(low_indexes),
+                'Action': 'Monitor and consider REORGANIZE if trend continues',
+                'Priority': 'LOW'
+            })
+        
+        return {
+            'database': database_name,
+            'analysis_timestamp': datetime.now().isoformat(),
+            'total_fragmented_indexes': len(fragmented_indexes),
+            'fragmentation_summary': {
+                'severe_fragmentation': len(severe_indexes),
+                'high_fragmentation': len(high_indexes),
+                'medium_fragmentation': len(medium_indexes),
+                'low_fragmentation': len(low_indexes)
+            },
+            'top_fragmented_indexes': fragmented_indexes[:15],  # Top 15 for display
+            'fix_commands': fix_commands,
+            'maintenance_plan': maintenance_plan,
+            'recommendations': [
+                {
+                    'category': 'CRITICAL',
+                    'message': f"Found {len(severe_indexes)} indexes with severe fragmentation (>70%). Schedule immediate maintenance.",
+                    'action': 'Plan maintenance window for REBUILD operations'
+                },
+                {
+                    'category': 'PERFORMANCE',
+                    'message': f"{len(high_indexes)} indexes have high fragmentation (30-70%). Consider REBUILD operations.",
+                    'action': 'Schedule REBUILD during next maintenance window'
+                },
+                {
+                    'category': 'MAINTENANCE',
+                    'message': f"{len(medium_indexes)} indexes need REORGANIZE operations (15-30% fragmentation).",
+                    'action': 'Run REORGANIZE during low-usage periods'
+                },
+                {
+                    'category': 'MONITORING',
+                    'message': 'Consider implementing automated index maintenance jobs.',
+                    'action': 'Set up SQL Agent jobs or maintenance plans'
+                }
+            ],
+            'sql_commands': {
+                'check_all_indexes': f"""
+-- Quick check for all fragmented indexes
+SELECT 
+    OBJECT_NAME(ips.object_id) as TableName,
+    i.name as IndexName,
+    ips.avg_fragmentation_in_percent,
+    ips.page_count
+FROM sys.dm_db_index_physical_stats(DB_ID('{database_name}'), NULL, NULL, NULL, 'LIMITED') ips
+JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
+WHERE ips.avg_fragmentation_in_percent > {min_fragmentation}
+AND ips.page_count > {min_page_count}
+ORDER BY ips.avg_fragmentation_in_percent DESC;
+""",
+                'maintenance_script': """
+-- Automated maintenance script template
+DECLARE @SQL NVARCHAR(MAX) = '';
+
+SELECT @SQL = @SQL + 
+    'ALTER INDEX [' + i.name + '] ON [' + s.name + '].[' + t.name + '] '
+    + CASE 
+        WHEN ips.avg_fragmentation_in_percent >= 30 THEN 'REBUILD WITH (ONLINE = ON);'
+        ELSE 'REORGANIZE;'
+      END + CHAR(13)
+FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ips
+JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
+JOIN sys.tables t ON i.object_id = t.object_id
+JOIN sys.schemas s ON t.schema_id = s.schema_id
+WHERE ips.avg_fragmentation_in_percent > 10
+AND ips.page_count > 50
+AND i.name IS NOT NULL;
+
+-- Execute the generated script
+EXEC sp_executesql @SQL;
+"""
+            }
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error checking fragmentation: {e}")
+        return {
+            'database': database_name,
+            'error': f"Failed to analyze fragmentation: {str(e)}",
+            'recommendations': [{
+                'category': 'ERROR',
+                'message': 'Unable to analyze fragmentation',
+                'action': 'Check database permissions and SQL Server version compatibility'
+            }]
+        }
+    finally:
+        if conn:
+            conn.close()
+
 # Main entry point
 import anyio
 
