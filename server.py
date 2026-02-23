@@ -19,7 +19,7 @@ class DecimalEncoder(json.JSONEncoder):
             return float(o)
         return super(DecimalEncoder, self).default(o)
 
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Any
 
 from dotenv import load_dotenv
@@ -2474,6 +2474,8 @@ def main():
         mcp.http_app().add_middleware(APIKeyMiddleware)
         mcp.http_app().add_middleware(BrowserFriendlyMiddleware)
 
+    logger.debug(f"Type of mcp before tool logging: {type(mcp)}")
+    logger.debug(f"Has 'tools' attribute: {'tools' in dir(mcp)}")
     logger.info("Registered MCP Tools:")
     if mcp.tools:
         for tool_name in mcp.tools.keys():
