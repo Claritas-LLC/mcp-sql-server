@@ -677,7 +677,8 @@ def _execute_safe(cursor: pyodbc.Cursor, sql: str, params: list[Any] | None = No
     try:
         cursor.execute(sql, *params)
     except pyodbc.Error as e:
-        logger.error(f"SQL execution error: {e}. Query: {sql.strip()}, Params: {params}")
+        # Log sanitized error without exposing sensitive query details
+        logger.error(f"Database query failed: {e}")
         # Re-raise as a more generic exception to avoid leaking too much detail
         raise RuntimeError(f"Database query failed: {e}") from e
 
@@ -759,7 +760,7 @@ def db_list_tables(database_name: str, schema_name: str | None = None) -> list[d
         cur = conn.cursor()
 
         # Ensure the connection is using the correct database context
-        _execute_safe(cur, f"USE [{database_name}]")
+        _execute_safe(cur, "USE [?]")
 
         sql = "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES"
         params = []
@@ -1381,6 +1382,8 @@ def db_sql2019_server_info_mcp() -> dict[str, Any]:
 
 @mcp.tool
 def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
+    if not is_valid_sql_identifier(database_name):
+        raise ValueError(f"Invalid database name: {database_name}")
     """
     Analyzes Query Store data to identify top problematic queries and provide recommendations.
     
@@ -1414,7 +1417,7 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
         cur = conn.cursor()
         
         # Check if Query Store is enabled
-        cur.execute(f"""
+        _execute_safe(cur, f"""
             SELECT 
                 actual_state_desc,
                 current_storage_size_mb,
@@ -1422,7 +1425,7 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 stale_query_threshold_days,
                 desired_state_desc,
                 query_capture_mode_desc
-            FROM {database_name}.sys.database_query_store_options
+            FROM [{database_name}].sys.database_query_store_options
         """)
         qs_config = cur.fetchone()
         
@@ -1454,21 +1457,21 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
         }
         
         # Get analysis period
-        cur.execute(f"""
+        _execute_safe(cur, f"""
             SELECT 
                 CONVERT(VARCHAR(50), MIN(rs.last_execution_time), 120),
                 CONVERT(VARCHAR(50), MAX(rs.last_execution_time), 120),
                 COUNT(DISTINCT q.query_id)
-            FROM {database_name}.sys.query_store_query q
-            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(day, -30, GETDATE())
         """)
         analysis_period = cur.fetchone()
         
         # Get long-running queries (top 10)
-        cur.execute(f"""
+        _execute_safe(cur, f"""
             SELECT TOP 10
                 q.query_id,
                 qt.query_sql_text,
@@ -1477,11 +1480,11 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms,
                 AVG(rs.avg_logical_io_reads) as avg_logical_io_reads,
                 MAX(o.name) as object_name
-            FROM {database_name}.sys.query_store_query q
-            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-            LEFT JOIN {database_name}.sys.objects o ON q.object_id = o.object_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            LEFT JOIN [{database_name}].sys.objects o ON q.object_id = o.object_id
             WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
                 AND rs.avg_duration > 1000000  -- > 1 second
             GROUP BY q.query_id, qt.query_sql_text
@@ -1492,15 +1495,15 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
             long_running_queries.append({
                 'query_id': row[0],
                 'query_text': row[1],
-                'executions': row[2],
-                'avg_duration_ms': round(row[3], 1),
-                'avg_cpu_ms': round(row[4], 1),
-                'avg_logical_io_reads': int(row[5]),
+                'executions': row[2] if row[2] is not None else 0,
+                'avg_duration_ms': round(row[3], 1) if row[3] is not None else 0.0,
+                'avg_cpu_ms': round(row[4], 1) if row[4] is not None else 0.0,
+                'avg_logical_io_reads': int(row[5]) if row[5] is not None else 0,
                 'object_name': row[6] or 'Ad-hoc Query'
             })
         
         # Get regressed queries (top 5)
-        cur.execute(f"""
+        _execute_safe(cur, f"""
             SELECT TOP 5
                 q.query_id,
                 qt.query_sql_text,
@@ -1508,10 +1511,10 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) as recent_avg_duration_ms,
                 AVG(CASE WHEN rs.last_execution_time BETWEEN DATEADD(day, -14, GETDATE()) AND DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) as older_avg_duration_ms,
                 AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_cpu_time/1000.0 END) as recent_avg_cpu_ms
-            FROM {database_name}.sys.query_store_query q
-            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(day, -14, GETDATE())
                 AND rs.count_executions > 10
             GROUP BY q.query_id, qt.query_sql_text
@@ -1521,20 +1524,20 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
         """)
         regressed_queries = []
         for row in cur.fetchall():
-            if row[3] and row[4] and row[4] > 0:
+            if row[3] is not None and row[4] is not None and row[4] > 0:
                 regression_percent = round(((row[3] - row[4]) / row[4]) * 100, 1)
                 regressed_queries.append({
                     'query_id': row[0],
                     'query_text': row[1],
-                    'recent_executions': int(row[2]),
-                    'recent_avg_duration_ms': round(row[3], 1),
-                    'older_avg_duration_ms': round(row[4], 1),
+                    'recent_executions': int(row[2]) if row[2] is not None else 0,
+                    'recent_avg_duration_ms': round(row[3], 1) if row[3] is not None else 0.0,
+                    'older_avg_duration_ms': round(row[4], 1) if row[4] is not None else 0.0,
                     'regression_percent': regression_percent,
-                    'recent_avg_cpu_ms': round(row[5], 1)
+                    'recent_avg_cpu_ms': round(row[5], 1) if row[5] is not None else 0.0
                 })
         
         # Get high CPU queries (top 5)
-        cur.execute(f"""
+        _execute_safe(cur, f"""
             SELECT TOP 5
                 q.query_id,
                 qt.query_sql_text,
@@ -1543,10 +1546,10 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 MAX(rs.max_cpu_time/1000.0) as max_cpu_ms,
                 AVG(rs.avg_duration/1000.0) as avg_duration_ms,
                 AVG(rs.avg_logical_io_reads) as avg_logical_io_reads
-            FROM {database_name}.sys.query_store_query q
-            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
                 AND rs.avg_cpu_time > 500000  -- > 0.5 seconds CPU time
             GROUP BY q.query_id, qt.query_sql_text
@@ -1557,15 +1560,15 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
             high_cpu_queries.append({
                 'query_id': row[0],
                 'query_text': row[1],
-                'executions': int(row[2]),
-                'avg_cpu_ms': round(row[3], 1),
-                'max_cpu_ms': round(row[4], 1),
-                'avg_duration_ms': round(row[5], 1),
-                'avg_logical_io_reads': int(row[6])
+                'executions': int(row[2]) if row[2] is not None else 0,
+                'avg_cpu_ms': round(row[3], 1) if row[3] is not None else 0.0,
+                'max_cpu_ms': round(row[4], 1) if row[4] is not None else 0.0,
+                'avg_duration_ms': round(row[5], 1) if row[5] is not None else 0.0,
+                'avg_logical_io_reads': int(row[6]) if row[6] is not None else 0
             })
         
         # Get high I/O queries (top 5)
-        cur.execute(f"""
+        _execute_safe(cur, f"""
             SELECT TOP 5
                 q.query_id,
                 qt.query_sql_text,
@@ -1575,10 +1578,10 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 AVG(rs.avg_physical_io_reads) as avg_physical_io_reads,
                 AVG(rs.avg_duration/1000.0) as avg_duration_ms,
                 AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms
-            FROM {database_name}.sys.query_store_query q
-            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
                 AND (rs.avg_logical_io_reads + rs.avg_logical_io_writes) > 100000  -- > 100k logical I/O
             GROUP BY q.query_id, qt.query_sql_text
@@ -1589,16 +1592,16 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
             high_io_queries.append({
                 'query_id': row[0],
                 'query_text': row[1],
-                'executions': int(row[2]),
-                'avg_logical_io_reads': int(row[3]),
-                'avg_logical_io_writes': int(row[4]),
-                'avg_physical_io_reads': int(row[5]),
-                'avg_duration_ms': round(row[6], 1),
-                'avg_cpu_ms': round(row[7], 1)
+                'executions': int(row[2]) if row[2] is not None else 0,
+                'avg_logical_io_reads': int(row[3]) if row[3] is not None else 0,
+                'avg_logical_io_writes': int(row[4]) if row[4] is not None else 0,
+                'avg_physical_io_reads': int(row[5]) if row[5] is not None else 0,
+                'avg_duration_ms': round(row[6], 1) if row[6] is not None else 0.0,
+                'avg_cpu_ms': round(row[7], 1) if row[7] is not None else 0.0
             })
         
         # Get high execution count queries (top 5)
-        cur.execute(f"""
+        _execute_safe(cur, f"""
             SELECT TOP 5
                 q.query_id,
                 qt.query_sql_text,
@@ -1606,10 +1609,10 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 AVG(rs.avg_duration/1000.0) as avg_duration_ms,
                 AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms,
                 AVG(rs.avg_logical_io_reads) as avg_logical_io_reads
-            FROM {database_name}.sys.query_store_query q
-            JOIN {database_name}.sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN {database_name}.sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN {database_name}.sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
             GROUP BY q.query_id, qt.query_sql_text
             HAVING SUM(rs.count_executions) > 1000  -- > 1000 executions
@@ -1620,10 +1623,10 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
             high_execution_queries.append({
                 'query_id': row[0],
                 'query_text': row[1],
-                'executions': int(row[2]),
-                'avg_duration_ms': round(row[3], 1),
-                'avg_cpu_ms': round(row[4], 1),
-                'avg_logical_io_reads': int(row[5])
+                'executions': int(row[2]) if row[2] is not None else 0,
+                'avg_duration_ms': round(row[3], 1) if row[3] is not None else 0.0,
+                'avg_cpu_ms': round(row[4], 1) if row[4] is not None else 0.0,
+                'avg_logical_io_reads': int(row[5]) if row[5] is not None else 0
             })
         
         # Generate recommendations based on findings
@@ -1697,15 +1700,15 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"Error analyzing Query Store data: {e}")
+        logger.exception(f"Error analyzing Query Store data: {e}")
         return {
             'database': database_name,
             'query_store_enabled': False,
-            'error': f"Error analyzing Query Store data: {str(e)}",
+            'error': 'Error analyzing Query Store data',
             'recommendations': [{
                 'type': 'error',
                 'priority': 'high',
-                'issue': f"Failed to analyze Query Store: {str(e)}",
+                'issue': 'Failed to analyze Query Store',
                 'recommendation': 'Check database permissions and Query Store configuration.',
                 'potential_actions': [
                     'Verify database permissions for Query Store views',
