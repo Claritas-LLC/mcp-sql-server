@@ -19,7 +19,7 @@ class DecimalEncoder(json.JSONEncoder):
             return float(o)
         return super(DecimalEncoder, self).default(o)
 
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from typing import Any
 
 from dotenv import load_dotenv
@@ -108,11 +108,6 @@ if sys.platform == 'win32':
         logger.debug("Skipping asyncio ProactorEventLoop workaround (Python version < 3.8)")
 
 def _get_auth() -> Any:
-    # If server.py is imported as a module, return None for auth during FastMCP init
-    # This prevents blocking/errors when tools are imported by other scripts (like test_tools.py)
-    if __name__ != "__main__":
-        return None
-
     auth_type = os.environ.get("FASTMCP_AUTH_TYPE")
     if not auth_type:
         return None
@@ -721,7 +716,7 @@ def _format_results(cursor: pyodbc.Cursor) -> list[dict[str, Any]]:
         
     return results
 
-#####@mcp.tool
+@mcp.tool
 def db_list_databases() -> list[str]:
     """
     Lists all databases on the connected SQL Server instance that are accessible by the current user.
@@ -744,24 +739,22 @@ def db_list_databases() -> list[str]:
         if conn:
             conn.close()
 
-#@mcp.tool
-def db_sql2019_list_objects(database_name: str, object_type: str, schema: str = None, filter_pattern: str = None) -> list[dict[str, Any]]:
+@mcp.tool
+def db_list_tables(database_name: str, schema_name: str | None = None) -> list[dict[str, Any]]:
     """
-    Lists database objects with advanced filtering and sorting options.
+    Lists all tables within a specific database and optionally a schema.
 
     Args:
         database_name: The name of the database to query.
-        object_type: Type of objects to list ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'INDEX', 'TRIGGER', 'ALL').
-        schema: (Optional) The name of the schema to filter by.
-        filter_pattern: (Optional) Pattern to filter object names (supports SQL LIKE syntax).
+        schema_name: (Optional) The name of the schema to filter by. If not provided, tables from all schemas are listed.
 
     Returns:
-        A list of dictionaries containing object details.
+        A list of dictionaries, where each dictionary contains details about a table (schema, name, type).
     """
     if not is_valid_sql_identifier(database_name):
         raise ValueError(f"Invalid database name: {database_name}")
-    if schema and not is_valid_sql_identifier(schema):
-        raise ValueError(f"Invalid schema name: {schema}")
+    if schema_name and not is_valid_sql_identifier(schema_name):
+        raise ValueError(f"Invalid schema name: {schema_name}")
 
     conn = None
     try:
@@ -769,132 +762,15 @@ def db_sql2019_list_objects(database_name: str, object_type: str, schema: str = 
         cur = conn.cursor()
 
         # Ensure the connection is using the correct database context
-        _execute_safe(cur, f"USE [{database_name}]")
+        _execute_safe(cur, "USE [?]")
 
-        # Build query based on object type
-        if object_type.upper() == 'ALL':
-            sql = """
-            SELECT 
-                s.name as schema_name,
-                o.name as object_name,
-                o.type_desc as object_type,
-                o.create_date,
-                o.modify_date,
-                p.rows as row_count
-            FROM sys.objects o
-            JOIN sys.schemas s ON o.schema_id = s.schema_id
-            LEFT JOIN sys.partitions p ON o.object_id = p.object_id AND p.index_id IN (0,1)
-            WHERE o.is_ms_shipped = 0
-            """
-            params = []
-        elif object_type.upper() == 'TABLE':
-            sql = """
-            SELECT 
-                s.name as schema_name,
-                t.name as object_name,
-                'TABLE' as object_type,
-                t.create_date,
-                t.modify_date,
-                p.rows as row_count
-            FROM sys.tables t
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
-            LEFT JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0,1)
-            WHERE t.is_ms_shipped = 0
-            """
-            params = []
-        elif object_type.upper() == 'VIEW':
-            sql = """
-            SELECT 
-                s.name as schema_name,
-                v.name as object_name,
-                'VIEW' as object_type,
-                v.create_date,
-                v.modify_date,
-                NULL as row_count
-            FROM sys.views v
-            JOIN sys.schemas s ON v.schema_id = s.schema_id
-            WHERE v.is_ms_shipped = 0
-            """
-            params = []
-        elif object_type.upper() in ('PROCEDURE', 'PROC'):  
-            sql = """
-            SELECT 
-                s.name as schema_name,
-                p.name as object_name,
-                'PROCEDURE' as object_type,
-                p.create_date,
-                p.modify_date,
-                NULL as row_count
-            FROM sys.procedures p
-            JOIN sys.schemas s ON p.schema_id = s.schema_id
-            WHERE p.is_ms_shipped = 0
-            """
-            params = []
-        elif object_type.upper() == 'FUNCTION':
-            sql = """
-            SELECT 
-                s.name as schema_name,
-                o.name as object_name,
-                o.type_desc as object_type,
-                o.create_date,
-                o.modify_date,
-                NULL as row_count
-            FROM sys.objects o
-            JOIN sys.schemas s ON o.schema_id = s.schema_id
-            WHERE o.type IN ('FN', 'IF', 'TF', 'FS', 'FT')
-            """
-            params = []
-        elif object_type.upper() == 'INDEX':
-            sql = """
-            SELECT 
-                s.name as schema_name,
-                t.name as table_name,
-                i.name as object_name,
-                'INDEX' as object_type,
-                i.create_date,
-                i.modify_date,
-                NULL as row_count
-            FROM sys.indexes i
-            JOIN sys.tables t ON i.object_id = t.object_id
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
-            WHERE i.is_ms_shipped = 0 AND i.name IS NOT NULL
-            """
-            params = []
-        elif object_type.upper() == 'TRIGGER':
-            sql = """
-            SELECT 
-                s.name as schema_name,
-                t.name as table_name,
-                tr.name as object_name,
-                'TRIGGER' as object_type,
-                tr.create_date,
-                tr.modify_date,
-                NULL as row_count
-            FROM sys.triggers tr
-            JOIN sys.tables t ON tr.parent_id = t.object_id
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
-            WHERE tr.is_ms_shipped = 0
-            """
-            params = []
-        else:
-            raise ValueError(f"Unsupported object type: {object_type}")
-
-        # Add schema filter
-        if schema:
-            sql += " AND s.name = ?"
-            params.append(schema)
-            
-        # Add name pattern filter
-        if filter_pattern:
-            if object_type.upper() == 'INDEX':
-                sql += " AND i.name LIKE ?"
-            elif object_type.upper() == 'TRIGGER':
-                sql += " AND tr.name LIKE ?"
-            else:
-                sql += " AND o.name LIKE ?" if 'o.name' in sql else " AND p.name LIKE ?" if 'p.name' in sql else " AND v.name LIKE ?" if 'v.name' in sql else " AND t.name LIKE ?"
-            params.append(filter_pattern)
-
-        sql += " ORDER BY s.name, object_name"
+        sql = "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES"
+        params = []
+        if schema_name:
+            sql += " WHERE TABLE_SCHEMA = ?"
+            params.append(schema_name)
+        
+        sql += " ORDER BY TABLE_SCHEMA, TABLE_NAME"
         
         _execute_safe(cur, sql, params)
         
@@ -903,7 +779,7 @@ def db_sql2019_list_objects(database_name: str, object_type: str, schema: str = 
         if conn:
             conn.close()
 
-#@mcp.tool
+@mcp.tool
 def db_get_schema(
     database_name: str, 
     table_name: str, 
@@ -1508,9 +1384,9 @@ def db_sql2019_db_stats(database: str | None = None) -> list[dict[str, Any]] | d
             JOIN sys.master_files mf_log ON d.database_id = mf_log.database_id AND mf_log.type = 1 -- 1 = log
         '''
         params = []
-        if database_name:
+        if database:
             sql += " WHERE d.name = ?"
-            params.append(database_name)
+            params.append(database)
         else:
             sql += " WHERE d.database_id > 4" # Exclude system databases
             
@@ -2213,139 +2089,8 @@ EXEC sp_executesql @SQL;
             conn.close()
 
 
-def _get_db_configuration_and_settings(cursor: pyodbc.Cursor, database_name: str, profile: str) -> dict[str, Any]:
-    """
-    Retrieves various SQL Server configuration settings and database-specific parameters.
-    The specific configurations gathered can be influenced by the workload profile.
-    """
-    configs = {}
-    
-    try:
-        # Server-level configurations
-        cursor.execute("""
-            SELECT 
-                name,
-                value,
-                value_in_use,
-                description
-            FROM sys.configurations
-            WHERE name IN (
-                'max degree of parallelism',
-                'cost threshold for parallelism',
-                'fill factor (%)',
-                'remote access',
-                'remote admin connections',
-                'xp_cmdshell',
-                'Ad Hoc Distributed Queries',
-                'clr enabled',
-                'Database Mail XPs',
-                'Ole Automation Procedures',
-                'default trace enabled',
-                'common criteria compliance enabled'
-            )
-            ORDER BY name;
-        """)
-        configs['server_configurations'] = _format_results(cursor)
-    except pyodbc.OperationalError as e:
-        logger.warning(f"Could not retrieve server configurations: {e}")
-        configs['server_configurations'] = {"error": f"Could not retrieve server configurations: {e}"}
-
-    try:
-        # Database-level settings
-        cursor.execute(f"""
-            SELECT 
-                name,
-                is_read_only,
-                state_desc,
-                compatibility_level,
-                recovery_model_desc,
-                is_encrypted,
-                is_cdc_enabled,
-                is_broker_enabled,
-                snapshot_isolation_state_desc,
-                is_auto_create_stats_on,
-                is_auto_update_stats_on,
-                is_auto_shrink_on
-            FROM sys.databases
-            WHERE name = ?;
-        """, database_name)
-        configs['database_settings'] = _format_results(cursor)
-    except pyodbc.OperationalError as e:
-        logger.warning(f"Could not retrieve database settings for {database_name}: {e}")
-        configs['database_settings'] = {"error": f"Could not retrieve database settings for {database_name}: {e}"}
-
-    try:
-        # Backup history (last 7 days for full/diff backups)
-        cursor.execute(f"""
-            SELECT TOP 5
-                bs.database_name,
-                bs.backup_start_date,
-                bs.backup_finish_date,
-                bs.backup_size / 1024 / 1024 AS backup_size_mb,
-                bs.compressed_backup_size / 1024 / 1024 AS compressed_backup_size_mb,
-                bs.type, -- D=Database, L=Log, I=Differential
-                bmf.physical_device_name
-            FROM msdb.dbo.backupset bs
-            INNER JOIN msdb.dbo.backupmediafamily bmf ON bs.media_set_id = bmf.media_set_id
-            WHERE bs.database_name = ?
-              AND bs.backup_start_date >= DATEADD(day, -7, GETDATE())
-            ORDER BY bs.backup_start_date DESC;
-        """, database_name)
-        configs['backup_history'] = _format_results(cursor)
-    except pyodbc.OperationalError as e:
-        logger.warning(f"Could not retrieve backup history for {database_name}: {e}")
-        configs['backup_history'] = {"error": f"Could not retrieve backup history for {database_name}: {e}"}
-
-    try:
-        # Get Server Edition
-        cursor.execute("SELECT SERVERPROPERTY('Edition')")
-        edition = cursor.fetchone()
-        if edition:
-            configs['server_edition'] = edition[0]
-    except pyodbc.OperationalError as e:
-        logger.warning(f"Could not retrieve server edition: {e}")
-        configs['server_edition'] = {"error": f"Could not retrieve server edition: {e}"}
-
-
-    # Add more profile-specific configurations here
-    if profile == 'oltp':
-        try:
-            # Check for transaction log usage
-            cursor.execute(f"""
-                DBCC SQLPERF(LOGSPACE)
-            """)
-            configs['transaction_log_space'] = _format_results(cursor)
-        except pyodbc.OperationalError as e:
-            logger.warning(f"Could not retrieve transaction log space for OLTP profile: {e}")
-            configs['transaction_log_space'] = {"error": f"Could not retrieve transaction log space for OLTP profile: {e}"}
-
-    elif profile == 'analytics':
-        try:
-            # Check for columnstore index usage (if any)
-            cursor.execute(f"""
-                SELECT 
-                    OBJECT_NAME(i.object_id) AS TableName,
-                    i.name AS IndexName,
-                    i.type_desc,
-                    p.rows,
-                    SUM(au.data_pages) * 8 / 1024 AS DataSizeMB
-                FROM sys.indexes i
-                INNER JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-                INNER JOIN sys.allocation_units au ON p.partition_id = au.container_id
-                WHERE i.type IN (5, 6) -- 5 = Clustered Columnstore, 6 = Nonclustered Columnstore
-                  AND i.object_id IN (SELECT object_id FROM sys.tables WHERE is_ms_shipped = 0)
-                GROUP BY OBJECT_NAME(i.object_id), i.name, i.type_desc, p.rows;
-            """)
-            configs['columnstore_indexes'] = _format_results(cursor)
-        except pyodbc.OperationalError as e:
-            logger.warning(f"Could not retrieve columnstore index info for Analytics profile: {e}")
-            configs['columnstore_indexes'] = {"error": f"Could not retrieve columnstore index info for Analytics profile: {e}"}
-            
-    return configs
-
-
 @mcp.tool
-def db_sql2019_db_sec_perf_metrics(database_name: str, profile: str = 'oltp') -> dict[str, Any]:
+def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
     """
     Security and performance metrics analysis for SQL Server databases.
     
@@ -2365,23 +2110,12 @@ def db_sql2019_db_sec_perf_metrics(database_name: str, profile: str = 'oltp') ->
     Returns:
         dict: Security and performance metrics analysis results
     """
-    if profile not in ['oltp', 'analytics', 'mixed']:
-        raise ValueError(f"Invalid profile: {profile}. Possible values are 'oltp', 'analytics', 'mixed'.")
-
-    if not is_valid_sql_identifier(database_name):
-        raise ValueError(f"Invalid database name: {database_name}")
-
-    logger.info(f"Analyzing security and performance metrics for database '{database_name}', profile: {profile}")
+    logger.info(f"Analyzing security and performance metrics for profile: {profile}")
     
-    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        _execute_safe(cursor, f"USE [{database_name}]")
-
-        # Retrieve configurations and settings
-        configs = _get_db_configuration_and_settings(cursor, database_name, profile)
-
+        
         # Security metrics queries
         security_queries = {
             'login_audit': """
@@ -2489,9 +2223,7 @@ def db_sql2019_db_sec_perf_metrics(database_name: str, profile: str = 'oltp') ->
         
         results = {
             'profile': profile,
-            'database_name': database_name,
             'analysis_timestamp': datetime.now().isoformat(),
-            'configuration_and_settings': configs,
             'security_assessment': {},
             'performance_metrics': {},
             'risk_assessment': {},
@@ -2521,246 +2253,128 @@ def db_sql2019_db_sec_perf_metrics(database_name: str, profile: str = 'oltp') ->
         # Risk assessment based on profile
         risk_score = 0
         risk_factors = []
-
-        # Initial Security risk assessment (Login Audits)
-        sql_logins = [login for login in results['security_assessment']['login_audit'] if login.get('type_desc') == 'SQL_LOGIN' and login.get('is_disabled') == False]
+        
+        # Security risk assessment
+        active_logins = len([login for login in results['security_assessment']['login_audit'] if login.get('is_disabled') == False])
+        
+        # Check for SQL logins (type = 'S') which might have weaker security
+        sql_logins = [login for login in results['security_assessment']['login_audit'] if login.get('type') == 'S' and login.get('is_disabled') == False]
         if sql_logins:
             risk_score += 10
             risk_factors.append(f"{len(sql_logins)} SQL logins active (consider Windows authentication)")
-            recommendations.append({
-                'category': 'SECURITY',
-                'priority': 'MEDIUM',
-                'issue': f'{len(sql_logins)} SQL logins active',
-                'recommendation': 'Consider using Windows Authentication for better security, or ensure strong password policies for SQL logins.',
-                'sql_command': "-- Review SQL logins and consider migrating to Windows Auth\nSELECT name, create_date FROM sys.server_principals WHERE type = 'S' AND is_disabled = 0;"
-            })
-
+        
+        # Check for old logins (created more than 1 year ago)
+        from datetime import timedelta
         one_year_ago = datetime.now() - timedelta(days=365)
         old_logins = []
         for login in results['security_assessment']['login_audit']:
             try:
-                # Handle different date formats for robustness
-                login_create_date_str = str(login['create_date'])
-                if 'T' in login_create_date_str: # ISO format
-                    create_date = datetime.fromisoformat(login_create_date_str.replace('Z', '+00:00'))
-                else: # Assuming YYYY-MM-DD HH:MM:SS.ffffff
-                    create_date = datetime.strptime(login_create_date_str.split('.')[0], '%Y-%m-%d %H:%M:%S')
-
+                create_date = datetime.fromisoformat(login['create_date'].replace('Z', '+00:00'))
                 if create_date < one_year_ago and login.get('is_disabled') == False:
                     old_logins.append(login)
-            except Exception as e:
-                logger.warning(f"Could not parse login create_date '{login.get('create_date')}': {e}")
-
+            except:
+                pass
+        
         if old_logins:
             risk_score += 15
-            risk_factors.append(f"{len(old_logins)} logins older than 1 year (review for obsolescence)")
-            recommendations.append({
-                'category': 'SECURITY',
-                'priority': 'MEDIUM',
-                'issue': f'{len(old_logins)} logins older than 1 year',
-                'recommendation': 'Review and update old logins, consider password rotation and disabling unused accounts.',
-                'sql_command': "-- Review old logins\nSELECT name, create_date, modify_date FROM sys.server_principals WHERE create_date < DATEADD(year, -1, GETDATE()) AND is_disabled = 0;"
-            })
-
-        # Security risk assessment - Dangerous configurations
-        if 'server_configurations' in configs and not isinstance(configs['server_configurations'], dict):
-            for config in configs['server_configurations']:
-                if config.get('name') in ['xp_cmdshell', 'Ad Hoc Distributed Queries'] and config.get('value_in_use') == 1:
-                    risk_score += 30
-                    risk_factors.append(f"CRITICAL: Server config '{config['name']}' is enabled. This is a major security risk.")
-                    recommendations.append({
-                        'category': 'SECURITY',
-                        'priority': 'CRITICAL',
-                        'issue': f"{config['name']} is enabled",
-                        'recommendation': f"Disable {config['name']} unless absolutely necessary for application functionality. Reconfigure to 0.",
-                        'sql_command': f"EXEC sp_configure '{config['name']}', 0; RECONFIGURE;"
-                    })
-
-        # Security risk assessment - Database settings
-        if 'database_settings' in configs and not isinstance(configs['database_settings'], dict):
-            db_settings = configs['database_settings'][0] if configs['database_settings'] else {}
-            if db_settings.get('is_encrypted') == 0:
-                risk_score += 20
-                risk_factors.append("HIGH: Database is not encrypted. Data at rest is vulnerable.")
-                recommendations.append({
-                    'category': 'SECURITY',
-                    'priority': 'HIGH',
-                    'issue': 'Database not encrypted',
-                    'recommendation': 'Implement Transparent Data Encryption (TDE) or Always Encrypted.',
-                    'sql_command': f"-- Example (TDE): \n-- ALTER DATABASE [{database_name}] SET ENCRYPTION ON;"
-                })
-            
-            if db_settings.get('is_cdc_enabled') == 1:
-                risk_score += 5
-                risk_factors.append("INFO: Change Data Capture (CDC) is enabled. Ensure auditing is in place.")
-                recommendations.append({
-                    'category': 'SECURITY',
-                    'priority': 'LOW',
-                    'issue': 'CDC Enabled',
-                    'recommendation': 'Ensure appropriate monitoring and auditing for CDC activity.',
-                    'sql_command': f"-- Review CDC configuration: \n-- SELECT * FROM sys.databases WHERE name = '{database_name}';"
-                })
-            
-            if db_settings.get('recovery_model_desc') == 'SIMPLE':
-                # Only a security risk if point-in-time recovery is required for compliance
-                if profile == 'oltp': # OLTP usually requires full recovery
-                    risk_score += 10
-                    risk_factors.append("MEDIUM: Recovery model is SIMPLE for OLTP database. Point-in-time recovery is not possible.")
-                    recommendations.append({
-                        'category': 'AVAILABILITY',
-                        'priority': 'MEDIUM',
-                        'issue': 'Recovery model is SIMPLE',
-                        'recommendation': 'Change recovery model to FULL to enable point-in-time recovery and ensure proper transaction log backups.',
-                        'sql_command': f"ALTER DATABASE [{database_name}] SET RECOVERY FULL;"
-                    })
-
-            if db_settings.get('is_auto_shrink_on') == 1:
-                risk_score += 5
-                risk_factors.append("WARNING: AUTO_SHRINK is enabled. This can cause index fragmentation and performance issues.")
-                recommendations.append({
-                    'category': 'PERFORMANCE',
-                    'priority': 'MEDIUM',
-                    'issue': 'AUTO_SHRINK is ON',
-                    'recommendation': 'Disable AUTO_SHRINK. Manage database growth and space manually or through regular maintenance.',
-                    'sql_command': f"ALTER DATABASE [{database_name}] SET AUTO_SHRINK OFF WITH NO_WAIT;"
-                })
-
+            risk_factors.append(f"{len(old_logins)} logins older than 1 year")
+        
+        # Check for dangerous configurations
+        security_config_data = results['security_assessment']['security_config']
+        if isinstance(security_config_data, list):
+            dangerous_configs = [config for config in security_config_data 
+                               if config.get('value_in_use') == 1 and config.get('name') in ['xp_cmdshell', 'Ad Hoc Distributed Queries']]
+            if dangerous_configs:
+                risk_score += 30
+                risk_factors.extend([f"{config['name']} is enabled" for config in dangerous_configs])
+        
         # Performance risk assessment
-        # Index Fragmentation Check
-        try:
-            fragmentation_query = '''
-                SELECT TOP 5
-                    s.name as SchemaName,
-                    t.name as TableName,
-                    i.name as IndexName,
-                    ips.avg_fragmentation_in_percent
-                FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ips
-                INNER JOIN sys.objects o ON ips.object_id = o.object_id
-                INNER JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
-                INNER JOIN sys.tables t ON o.object_id = t.object_id
-                INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
-                WHERE o.is_ms_shipped = 0 AND i.name IS NOT NULL AND ips.page_count >= 100
-                AND ips.avg_fragmentation_in_percent >= 15
-                ORDER BY ips.avg_fragmentation_in_percent DESC
-            '''
-            cursor.execute(fragmentation_query)
-            fragmented_indexes = _format_results(cursor)
-            if fragmented_indexes:
-                server_edition = configs.get('server_edition', '')
-                is_enterprise = 'Enterprise' in server_edition
-
-                for idx in fragmented_indexes:
-                    frag_percent = idx['avg_fragmentation_in_percent']
-                    risk_score += 5 # Add base risk for any significant fragmentation
-                    risk_factors.append(f"PERFORMANCE: Index '{idx['IndexName']}' on table '{idx['SchemaName']}.{idx['TableName']}' has {frag_percent:.2f}% fragmentation.")
-                    
-                    if frag_percent > 30:
-                        priority = 'HIGH'
-                        action = 'REBUILD'
-                        command = f"ALTER INDEX [{idx['IndexName']}] ON [{idx['SchemaName']}].[{idx['TableName']}] REBUILD"
-                        if is_enterprise:
-                            command += " WITH (ONLINE = ON);"
-                            recommendation_text = "Rebuild the index online to avoid blocking."
-                        else:
-                            command += ";"
-                            recommendation_text = "Rebuild the index during a maintenance window to avoid blocking."
-                    else: # 15-30%
-                        priority = 'MEDIUM'
-                        action = 'REORGANIZE'
-                        command = f"ALTER INDEX [{idx['IndexName']}] ON [{idx['SchemaName']}].[{idx['TableName']}] REORGANIZE;"
-                        recommendation_text = "Reorganize the index. This is an online operation."
-
-                    recommendations.append({
-                        'category': 'PERFORMANCE',
-                        'priority': priority,
-                        'issue': f"Index Fragmentation ({frag_percent:.2f}%) on {idx['SchemaName']}.{idx['TableName']}",
-                        'recommendation': recommendation_text,
-                        'sql_command': command
-                    })
-
-        except pyodbc.OperationalError as e:
-            logger.warning(f"Could not check for index fragmentation: {e}")
-
-        # Performance risk assessment - Wait Stats
         wait_stats_data = results['performance_metrics']['wait_stats']
         if isinstance(wait_stats_data, list) and wait_stats_data:
             top_wait = wait_stats_data[0]
-            profile_thresholds = get_profile_metrics(profile, results)['thresholds']
-            if top_wait.get('wait_percentage', 0) > profile_thresholds['max_acceptable_wait_percentage']:
+            if top_wait.get('wait_percentage', 0) > 50:
                 risk_score += 25
-                risk_factors.append(f"HIGH: High wait percentage for {top_wait.get('wait_type')} ({top_wait.get('wait_percentage')}%). Exceeds {profile} profile threshold.")
-                recommendations.append({
-                    'category': 'PERFORMANCE',
-                    'priority': 'HIGH',
-                    'issue': f"High wait on {top_wait['wait_type']}",
-                    'recommendation': f"Investigate and optimize for {top_wait['wait_type']} waits, focusing on {profile_thresholds['performance_priorities'][0]} for {profile} profile.",
-                    'sql_command': f"-- Check specific wait type details\nSELECT * FROM sys.dm_os_wait_stats WHERE wait_type = '{top_wait.get('wait_type')}';"
-                })
+                risk_factors.append(f"High wait percentage: {top_wait.get('wait_type')} ({top_wait.get('wait_percentage')}%)")
         
         # Memory pressure check
         memory_usage_data = results['performance_metrics']['memory_usage']
         if isinstance(memory_usage_data, list) and memory_usage_data:
             memory_data = memory_usage_data[0]
-            profile_thresholds = get_profile_metrics(profile, results)['thresholds']
-            if memory_data.get('memory_utilization_percent', 0) > profile_thresholds['max_memory_utilization']:
+            if memory_data.get('memory_utilization_percent', 0) > 90:
                 risk_score += 20
-                risk_factors.append(f"HIGH: High memory utilization: {memory_data.get('memory_utilization_percent')}%. Exceeds {profile} profile threshold.")
-                recommendations.append({
-                    'category': 'PERFORMANCE',
-                    'priority': 'HIGH',
-                    'issue': 'High memory utilization',
-                    'recommendation': 'Consider adding more memory, optimizing memory-intensive queries, or adjusting server memory settings.',
-                    'sql_command': "-- Check memory-consuming queries\nSELECT TOP 10 \n    session_id, \n    memory_usage * 8 AS memory_kb, \n    status \nFROM sys.dm_exec_sessions \nORDER BY memory_usage DESC;"
-                })
-
-        # Additional profile-specific checks for OLTP
-        if profile == 'oltp':
-            if 'transaction_log_space' in configs and not isinstance(configs['transaction_log_space'], dict):
-                log_space = configs['transaction_log_space'][0] if configs['transaction_log_space'] else {}
-                log_used_percent = log_space.get('Log Used (%)', 0.0)
-                if log_used_percent > 80.0:
-                    risk_score += 15
-                    risk_factors.append(f"HIGH: Transaction log usage is {log_used_percent}%. High log usage can impact OLTP performance.")
-                    recommendations.append({
-                        'category': 'PERFORMANCE',
-                        'priority': 'HIGH',
-                        'issue': 'High Transaction Log Usage',
-                        'recommendation': 'Check transaction log backup frequency and size. Consider increasing log file size or adding more disk space.',
-                        'sql_command': "DBCC SQLPERF(LOGSPACE);"
-                    })
-        
-        # Additional profile-specific checks for Analytics
-        if profile == 'analytics':
-            if 'columnstore_indexes' in configs and not isinstance(configs['columnstore_indexes'], dict) and not configs['columnstore_indexes']:
-                risk_score += 10
-                risk_factors.append("MEDIUM: No Columnstore indexes found for Analytics profile. Consider implementing for large fact tables.")
-                recommendations.append({
-                    'category': 'PERFORMANCE',
-                    'priority': 'MEDIUM',
-                    'issue': 'Missing Columnstore Indexes',
-                    'recommendation': 'For large analytical tables, consider implementing Clustered or Nonclustered Columnstore Indexes to improve query performance.',
-                    'sql_command': "-- Example: CREATE CLUSTERED COLUMNSTORE INDEX CIX_FactTable ON FactTable;"
-                })
-
-        # Final risk level calculation
-        risk_level = 'LOW'
-        if risk_score >= 70:
-            risk_level = 'CRITICAL'
-        elif risk_score >= 40:
-            risk_level = 'HIGH'
-        elif risk_score >= 20:
-            risk_level = 'MEDIUM'
+                risk_factors.append(f"High memory utilization: {memory_data.get('memory_utilization_percent')}%")
         
         results['risk_assessment'] = {
             'overall_risk_score': min(risk_score, 100),
-            'risk_level': risk_level,
+            'risk_level': 'HIGH' if risk_score >= 70 else 'MEDIUM' if risk_score >= 40 else 'LOW',
             'risk_factors': risk_factors,
             'profile_specific_metrics': get_profile_metrics(profile, results)
         }
         
+        # Generate recommendations
+        recommendations = []
+        
+        if sql_logins:
+            recommendations.append({
+                'category': 'SECURITY',
+                'priority': 'MEDIUM',
+                'issue': f'{len(sql_logins)} SQL logins active',
+                'recommendation': 'Consider using Windows Authentication for better security',
+                'sql_command': "-- Review SQL logins and consider migrating to Windows Auth\nSELECT name, create_date FROM sys.server_principals WHERE type = 'S' AND is_disabled = 0;"
+            })
+        
+        if old_logins:
+            recommendations.append({
+                'category': 'SECURITY',
+                'priority': 'MEDIUM',
+                'issue': f'{len(old_logins)} logins older than 1 year',
+                'recommendation': 'Review and update old logins, consider password rotation',
+                'sql_command': "-- Review old logins\nSELECT name, create_date, modify_date FROM sys.server_principals WHERE create_date < DATEADD(year, -1, GETDATE()) AND is_disabled = 0;"
+            })
+        
+        # Check for dangerous configurations
+        security_config_data = results['security_assessment']['security_config']
+        if isinstance(security_config_data, list):
+            dangerous_configs = [config for config in security_config_data 
+                               if config.get('value_in_use') == 1 and config.get('name') in ['xp_cmdshell', 'Ad Hoc Distributed Queries']]
+            if dangerous_configs:
+                for config in dangerous_configs:
+                    recommendations.append({
+                        'category': 'SECURITY',
+                        'priority': 'CRITICAL',
+                        'issue': f"{config['name']} is enabled",
+                        'recommendation': f"Disable {config['name']} unless absolutely necessary",
+                        'sql_command': f"EXEC sp_configure '{config['name']}', 0; RECONFIGURE;"
+                    })
+        
+        # Performance recommendations
+        wait_stats_data = results['performance_metrics']['wait_stats']
+        if isinstance(wait_stats_data, list) and wait_stats_data:
+            top_wait = wait_stats_data[0]
+            if top_wait.get('wait_percentage', 0) > 50:
+                recommendations.append({
+                    'category': 'PERFORMANCE',
+                    'priority': 'HIGH',
+                    'issue': f"High wait on {top_wait['wait_type']}",
+                    'recommendation': f"Investigate and optimize for {top_wait['wait_type']} waits",
+                    'sql_command': "-- Check specific wait type details\nSELECT * FROM sys.dm_os_wait_stats WHERE wait_type = '{wait_type}';"
+                })
+        
+        memory_usage_data = results['performance_metrics']['memory_usage']
+        if isinstance(memory_usage_data, list) and memory_usage_data:
+            memory_data = memory_usage_data[0]
+            if memory_data.get('memory_utilization_percent', 0) > 90:
+                recommendations.append({
+                    'category': 'PERFORMANCE',
+                    'priority': 'HIGH',
+                    'issue': 'High memory utilization',
+                    'recommendation': 'Consider adding more memory or optimizing queries',
+                    'sql_command': "-- Check memory-consuming queries\nSELECT TOP 10 \n    session_id, \n    memory_usage * 8 AS memory_kb, \n    status \nFROM sys.dm_exec_sessions \nORDER BY memory_usage DESC;"
+                })
+        
         results['recommendations'] = recommendations
         
-        logger.info(f"Security and performance analysis completed for database '{database_name}', profile: {profile}")
+        logger.info(f"Security and performance analysis completed for profile: {profile}")
         return results
         
     except Exception as e:
@@ -2859,8 +2473,6 @@ def main():
         # not available in the stdio transport.
         mcp.http_app().add_middleware(APIKeyMiddleware)
         mcp.http_app().add_middleware(BrowserFriendlyMiddleware)
-
-
 
     # Define run kwargs, excluding those not applicable for stdio
     run_kwargs = {

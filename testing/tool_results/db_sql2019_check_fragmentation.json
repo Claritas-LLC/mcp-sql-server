@@ -1,0 +1,7 @@
+{
+  "status": "success",
+  "database": "TEST_DB",
+  "mode": "SAMPLED",
+  "fragmented_indexes": [],
+  "count": 0
+}

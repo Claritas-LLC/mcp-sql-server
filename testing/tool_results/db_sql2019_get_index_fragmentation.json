@@ -1,0 +1,7 @@
+{
+  "status": "success",
+  "database": "TEST_DB",
+  "schema": "sales",
+  "fragmented_indexes": [],
+  "count": 0
+}

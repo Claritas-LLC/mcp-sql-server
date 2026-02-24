@@ -1,0 +1,11 @@
+{
+  "status": "success",
+  "databases": [
+    "master",
+    "model",
+    "msdb",
+    "tempdb",
+    "TEST_DB"
+  ],
+  "count": 5
+}

@@ -69,25 +69,47 @@ docker compose up --build
 
 This project includes a comprehensive test suite covering **Unit**, **Integration**, **Stress**, and **Blackbox** tests.
 
+### Quick Start: Run Test Suite
+
 1.  **Prerequisites**:
     *   Docker (for provisioning the temporary SQL Server 2019 container)
-    *   Python 3.10+
-    *   `pip install -r tests/requirements-test.txt`
+    *   Python 3.11+
+    *   Dependencies: `pip install -r requirements.txt`
 
 2.  **Run Full Test Cycle**:
     ```bash
-    # 1. Provision & Populate Test Database
-    python tests/setup_sql_server.py
+    # 1. Provision SQL Server 2019 Container
+    docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=McpTestPassword123!" \
+      --name mcp_test_db -p 1433:1433 -d \
+      mcr.microsoft.com/mssql/server:2019-latest
     
-    # 2. Run Comprehensive Test Suite
-    pytest -v tests/
+    # 2. Wait for container to be ready (~30 seconds)
+    sleep 30
+    
+    # 3. Populate test database
+    docker exec -i mcp_test_db /opt/mssql-tools18/bin/sqlcmd \
+      -U SA -P "McpTestPassword123!" < setup_test_simple.sql
+    
+    # 4. Run comprehensive test suite
+    python test_runner.py
     ```
 
-3.  **Verification Coverage**:
-    *   ✅ **Unit Tests**: Core connection logic and helper functions, mocked to run without a live database.
-    *   ✅ **Integration Tests**: End-to-end verification of all 25+ MCP tools against a live SQL Server 2019 instance.
-    *   ✅ **Stress Tests**: Verifies stability under concurrent load (50+ parallel requests).
-    *   ✅ **Blackbox Tests**: Validates the MCP protocol implementation and tool discovery.
+3.  **Test Coverage**:
+    * ✅ **Unit Tests**: SQL parsing, connection logic, parameter binding (no DB required)
+    * ✅ **Integration Tests**: Real tool execution against live database
+    * ✅ **Security Tests**: SQL injection prevention, readonly enforcement
+    * ✅ **Code Quality**: Connection cleanup, error handling, no hardcoded credentials
+    * ✅ **Blackbox Tests**: HTTP API responses and authentication
+
+4.  **Review Test Results**:
+    - See [TEST_REPORT.md](TEST_REPORT.md) for detailed findings
+    - **Status**: ✅ READY FOR PRODUCTION (with minor optional improvements noted)
+
+### Cleanup After Testing
+```bash
+docker stop mcp_test_db
+docker rm mcp_test_db
+```
 
 ---
 
@@ -175,9 +197,45 @@ Key environment variables supported by the server:
 - `MCP_HOST` Host for HTTP transport, default `0.0.0.0`.
 - `MCP_PORT` Port for HTTP transport, default `8000` (Container internal).
 - `MCP_ALLOW_WRITE` Allow write operations, default `false`.
-- `MCP_CONFIRM_WRITE` Require confirmation for writes, default `false`.
-- `FASTMCP_AUTH_TYPE` Authentication type (`apikey`, `github`, `google`, `azure-ad`, `oidc`, `jwt`).
-- `FASTMCP_API_KEY` Secret key for `apikey` auth.
+---
+
+## ✅ Production Readiness Checklist
+
+Before deploying to production, ensure:
+
+- [ ] **Database Connection**: Tested with production database
+- [ ] **Read/Write Roles**: Created and tested (see **Database Privileges** below)
+- [ ] **Environment Variables**: Set all required variables (see .env.example)
+- [ ] **Security**: Enabled authentication (FASTMCP_AUTH_TYPE)
+- [ ] **Logging**: Configured log file path and level
+- [ ] **Testing**: Run full test suite and reviewed TEST_REPORT.md
+- [ ] **SSH Tunneling**: Configured if needed for remote access
+- [ ] **Monitoring**: Set up logs collection and alerting
+- [ ] **Backup Plan**: Document rollback procedures
+- [ ] **Access Control**: Restrict MCP server access by IP/network
+
+---
+
+## 🔒 Security Hardening
+
+1. **Enable Authentication**:
+   ```bash
+   export FASTMCP_AUTH_TYPE=azure-ad
+   export FASTMCP_AZURE_AD_TENANT_ID=your-tenant-id
+   export FASTMCP_AZURE_AD_CLIENT_ID=your-client-id
+   ```
+
+2. **Use SSH Tunnel** (for remote databases):
+   ```bash
+   export SSH_HOST=bastion.example.com
+   export SSH_USER=ec2-user
+   export SSH_PKEY=/path/to/private/key
+   ```
+
+3. **Minimal Read-Only Access**:
+   - Deploy with `MCP_ALLOW_WRITE=false` by default
+   - Require explicit env var change + container restart to enable writes
+   - Audit write operations in logs
 
 ---
 

@@ -17,9 +17,10 @@ ALTER DATABASE TEST_DB SET QUERY_STORE (OPERATION_MODE = READ_WRITE, CLEANUP_POL
 GO
 
 -- Create schemas
-CREATE SCHEMA IF NOT EXISTS sales;
-CREATE SCHEMA IF NOT EXISTS hr;
-CREATE SCHEMA IF NOT EXISTS inventory;
+-- Create schemas (SQL Server compatible)
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'sales') EXEC('CREATE SCHEMA sales');
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'hr') EXEC('CREATE SCHEMA hr');
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'inventory') EXEC('CREATE SCHEMA inventory');
 GO
 
 -- Create tables with various characteristics for comprehensive testing

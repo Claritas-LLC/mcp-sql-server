@@ -17,7 +17,9 @@ This server exposes a suite of DBA-grade tools to inspect schemas, analyze perfo
 - **SSH Tunneling**: Built-in support for connecting via SSH bastion hosts.
 - **Python 3.11**: Built on a stable Python runtime for improved compatibility.
 - **Broad Compatibility**: Fully tested with **SQL Server 2019** and **SQL Server 2022**.
-- **Comprehensive Testing**: Includes unit tests with mocked data for core functionality like server information retrieval (`db_sql2019_server_info_mcp`).
+- **Comprehensive Testing**: Full unit, integration, stress, and blackbox test suite with automated Docker provisioning.
+- **Production Ready**: Verified security audit, connection pooling, error handling, and resource cleanup.
+- **Monitoring & Logging**: Structured logging with DEBUG/INFO/WARNING levels, configurable output.
 
 ---
 
@@ -1301,6 +1303,49 @@ The fragmentation analysis reveals 8 indexes with medium-level fragmentation (15
 - **Detailed Tables**: Comprehensive entity structure with PKs, FKs, and indexes
 
 *Open the `erd_url` in your browser to view the full interactive ERD and analysis!*
+
+---
+
+## 🧪 Testing
+
+The MCP server includes comprehensive test coverage:
+
+### Running Tests Locally
+
+1. **Provision Test Database** (Docker):
+   ```bash
+   docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=McpTestPassword123!" \
+     --name mcp_sqlserver_test -p 1433:1433 -d \
+     mcr.microsoft.com/mssql/server:2019-latest
+   ```
+
+2. **Populate Test Data**:
+   ```bash
+   docker exec -i mcp_sqlserver_test /opt/mssql-tools18/bin/sqlcmd \
+     -U SA -P "McpTestPassword123!" < setup_test_simple.sql
+   ```
+
+3. **Run Unit Tests**:
+   ```bash
+   python -m pytest tests/unit_test_mocked.py -v
+   ```
+
+4. **Run Integration Tests**:
+   ```bash
+   pytest tests/test_server.py -v
+   ```
+
+5. **View Full Test Report**:
+   - See [TEST_REPORT.md](TEST_REPORT.md) for comprehensive test results
+   - Includes unit tests, integration tests, code review, and security audit
+
+### Test Coverage
+
+- ✅ **Unit Tests**: SQL parsing, connection management, parameter binding
+- ✅ **Integration Tests**: Real database operations, schema discovery, tool execution
+- ✅ **Security Audit**: SQL injection prevention, readonly enforcement, credential handling
+- ✅ **Code Quality**: No hardcoded credentials, proper error handling, connection cleanup
+- ✅ **Blackbox Tests**: HTTP API responses, SSE endpoint, authentication
 
 ---
 
