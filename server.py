@@ -2474,16 +2474,7 @@ def main():
         mcp.http_app().add_middleware(APIKeyMiddleware)
         mcp.http_app().add_middleware(BrowserFriendlyMiddleware)
 
-    logger.info("Registered MCP Tools:")
-    try:
-        if mcp.tools:
-            for tool_name in mcp.tools.keys():
-                logger.info(f"- {tool_name}")
-        else:
-            logger.info("No tools registered via mcp.tools.")
-    except AttributeError:
-        logger.warning("mcp object does not have a 'tools' attribute. This might be an unexpected FastMCP version or configuration.")
-        logger.info("No tools could be listed via mcp.tools.")
+
 
     # Define run kwargs, excluding those not applicable for stdio
     run_kwargs = {
