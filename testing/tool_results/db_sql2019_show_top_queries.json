@@ -1,0 +1,32 @@
+{
+  "status": "success",
+  "database": "TEST_DB",
+  "top_queries": [
+    {
+      "executions": 10,
+      "elapsed_seconds": 0,
+      "query": "SELECT target_data\r\n\t\t\t\t\t\t\t\t\tFROM sys.dm_xe_session_targets xet WITH(nolock)\r\n\t\t\t\t\t\t\t\t\tJOIN sys.dm_x"
+    },
+    {
+      "executions": 8,
+      "elapsed_seconds": 0,
+      "query": "\r\ncreate procedure sys.sp_datatype_info_100\r\n(\r\n    @data_type int = 0,\r\n    @ODBCVer tinyint = 2\r\n)"
+    },
+    {
+      "executions": 4,
+      "elapsed_seconds": 0,
+      "query": "-- SQL Server 2019 Test Database Setup Script\n-- This script creates a comprehensive test database w"
+    },
+    {
+      "executions": 2,
+      "elapsed_seconds": 0,
+      "query": "\n            SELECT TOP 10\n                t.name AS TableName,\n                ps.row_count,\n      "
+    },
+    {
+      "executions": 2,
+      "elapsed_seconds": 0,
+      "query": "SELECT TOP 10 * FROM sales.Customers"
+    }
+  ],
+  "count": 5
+}

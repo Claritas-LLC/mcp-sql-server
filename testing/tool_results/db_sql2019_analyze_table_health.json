@@ -1,0 +1,58 @@
+{
+  "status": "success",
+  "database": "TEST_DB",
+  "schema": "sales",
+  "tables": [
+    {
+      "table": "Customers",
+      "rows": 5,
+      "size_mb": 0.015625
+    },
+    {
+      "table": "Customers",
+      "rows": 5,
+      "size_mb": 0.015625
+    },
+    {
+      "table": "Customers",
+      "rows": 5,
+      "size_mb": 0.015625
+    },
+    {
+      "table": "Products",
+      "rows": 5,
+      "size_mb": 0.015625
+    },
+    {
+      "table": "Orders",
+      "rows": 5,
+      "size_mb": 0.015625
+    },
+    {
+      "table": "Orders",
+      "rows": 5,
+      "size_mb": 0.015625
+    },
+    {
+      "table": "Orders",
+      "rows": 5,
+      "size_mb": 0.015625
+    },
+    {
+      "table": "OrderDetails",
+      "rows": 5,
+      "size_mb": 0.015625
+    },
+    {
+      "table": "OrderDetails",
+      "rows": 5,
+      "size_mb": 0.015625
+    },
+    {
+      "table": "OrderDetails",
+      "rows": 5,
+      "size_mb": 0.015625
+    }
+  ],
+  "count": 10
+}
