@@ -1,6 +1,6 @@
 {
   "profile": "oltp",
-  "analysis_timestamp": "2026-02-23T18:37:19.475099",
+  "analysis_timestamp": "2026-02-23T19:02:25.104878",
   "security_assessment": {
     "login_audit": [
       {
