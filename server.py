@@ -1343,7 +1343,7 @@ def _analyze_logical_data_model_internal(
                 _execute_safe(
                     cur,
                     """
-                    SELECT c.name, c.column_id, ty.name, c.is_nullable, c.max_length, c.precision, c.scale
+                    SELECT c.name, c.column_id, ty.name AS type_name, c.is_nullable, c.max_length, c.precision, c.scale
                     FROM sys.columns c
                     JOIN sys.types ty ON c.user_type_id = ty.user_type_id
                     WHERE c.object_id = OBJECT_ID(?)
