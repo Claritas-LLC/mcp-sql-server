@@ -76,7 +76,7 @@ This method ensures you have all dependencies pre-installed. Note the `-i` flag 
         "-i",
         "--rm",
         "--env-file", ".env",
-        "harryvaldez/mcp_sqlserver:latest"
+        "harryvaldez/mcp-sql-server:latest"
       ]
     }
   }
@@ -106,18 +106,18 @@ If you prefer running the Python code directly and have `uv` installed:
 
 ### Option 2: Docker (Recommended)
 
-The Docker image is available on Docker Hub at `harryvaldez/mcp_sqlserver`.
+The Docker image is available on Docker Hub at `harryvaldez/mcp-sql-server`.
 
 ```bash
 # 1. Pull the image
-docker pull harryvaldez/mcp_sqlserver:latest
+docker pull harryvaldez/mcp-sql-server:latest
 
 # 2. Run in HTTP Mode (SSE)
 docker run -d \
   --name mcp-sqlserver-http \
   --env-file .env \
   -p 8085:8000 \
-  harryvaldez/mcp_sqlserver:latest
+  harryvaldez/mcp-sql-server:latest
 
 # 3. Run in Write Mode (HTTP - Secure)
 docker run -d \
@@ -130,7 +130,7 @@ docker run -d \
   -e FASTMCP_AZURE_AD_TENANT_ID=... \
   -e FASTMCP_AZURE_AD_CLIENT_ID=... \
   -p 8001:8000 \
-  harryvaldez/mcp_sqlserver:latest
+  harryvaldez/mcp-sql-server:latest
 ```
 
 ### Option 2b: Docker with SSH Tunneling
@@ -147,7 +147,7 @@ docker run -d \
   -e SSH_PKEY="/root/.ssh/id_rsa" \
   -e ALLOW_SSH_AGENT=true \
   -p 8000:8000 \
-  harryvaldez/mcp_sqlserver:latest
+  harryvaldez/mcp-sql-server:latest
 ```
 
 **Using Docker Compose:**
