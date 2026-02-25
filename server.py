@@ -1326,6 +1326,250 @@ def db_sql2019_analyze_logical_data_model(
     )
 
 
+def _analyze_erd_issues(
+    cur: pyodbc.Cursor,
+    entities: list[dict[str, Any]],
+    relationships: list[dict[str, Any]],
+    schema: str,
+) -> dict[str, Any]:
+    """Analyze ERD for data modeling issues and return structured findings."""
+    issues = {
+        "entities": [],
+        "attributes": [],
+        "relationships": [],
+        "identifiers": [],
+        "normalization": [],
+    }
+    recommendations = {
+        "entities": [],
+        "attributes": [],
+        "relationships": [],
+        "identifiers": [],
+        "normalization": [],
+    }
+
+    # Build FK lookup for quick access
+    fk_map = {}
+    for rel in relationships:
+        key = f"{rel['from_schema']}.{rel['from_entity']}"
+        if key not in fk_map:
+            fk_map[key] = []
+        fk_map[key].append(rel)
+
+    for entity in entities:
+        entity_name = entity["entity_name"]
+        schema_name = entity["schema_name"]
+        full_name = f"{schema_name}.{entity_name}"
+        object_id = entity["object_id"]
+
+        # Skip views from normalization checks
+        is_view = entity.get("type", "U").strip() == "V"
+
+        # 1. Check for missing primary key
+        _execute_safe(
+            cur,
+            """
+            SELECT COUNT(*) AS pk_count
+            FROM sys.indexes i
+            WHERE i.object_id = ? AND i.is_primary_key = 1
+            """,
+            [object_id],
+        )
+        pk_result = cur.fetchone()
+        has_pk = pk_result[0] > 0 if pk_result else False
+
+        if not has_pk and not is_view:
+            issues["identifiers"].append({
+                "severity": "high",
+                "entity": full_name,
+                "issue": "Missing primary key constraint",
+                "description": f"Table '{entity_name}' does not have a primary key defined",
+            })
+            recommendations["identifiers"].append({
+                "entity": full_name,
+                "recommendation": f"Add primary key constraint to '{entity_name}'",
+                "sql_fix": f"ALTER TABLE [{schema_name}].[{entity_name}] ADD CONSTRAINT PK_{entity_name} PRIMARY KEY (/* specify column(s) */);",
+            })
+
+        # 2. Check for FK columns without indexes
+        if full_name in fk_map:
+            for fk in fk_map[full_name]:
+                _execute_safe(
+                    cur,
+                    """
+                    SELECT COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS column_name
+                    FROM sys.foreign_key_columns fkc
+                    JOIN sys.foreign_keys fk ON fkc.constraint_object_id = fk.object_id
+                    WHERE fk.name = ?
+                    """,
+                    [fk["name"]],
+                )
+                fk_cols = [row[0] for row in cur.fetchall()]
+
+                for col_name in fk_cols:
+                    _execute_safe(
+                        cur,
+                        """
+                        SELECT COUNT(*) AS index_count
+                        FROM sys.index_columns ic
+                        JOIN sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+                        JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                        WHERE ic.object_id = ? AND c.name = ? AND ic.index_column_id = 1
+                        """,
+                        [object_id, col_name],
+                    )
+                    idx_result = cur.fetchone()
+                    has_index = idx_result[0] > 0 if idx_result else False
+
+                    if not has_index:
+                        issues["relationships"].append({
+                            "severity": "medium",
+                            "entity": full_name,
+                            "column": col_name,
+                            "issue": "Foreign key column without index",
+                            "description": f"Column '{col_name}' in foreign key '{fk['name']}' is not indexed",
+                        })
+                        recommendations["relationships"].append({
+                            "entity": full_name,
+                            "column": col_name,
+                            "recommendation": f"Create index on foreign key column '{col_name}'",
+                            "sql_fix": f"CREATE INDEX IX_{entity_name}_{col_name} ON [{schema_name}].[{entity_name}] ([{col_name}]);",
+                        })
+
+        # 3. Check for potential missing FK constraints (columns ending with ID)
+        if "attributes" in entity:
+            for attr in entity["attributes"]:
+                col_name = attr["name"]
+                if col_name.endswith("ID") and col_name != f"{entity_name}ID":
+                    # Check if this column has an FK
+                    _execute_safe(
+                        cur,
+                        """
+                        SELECT COUNT(*) AS fk_count
+                        FROM sys.foreign_key_columns fkc
+                        JOIN sys.columns c ON fkc.parent_object_id = c.object_id AND fkc.parent_column_id = c.column_id
+                        WHERE fkc.parent_object_id = ? AND c.name = ?
+                        """,
+                        [object_id, col_name],
+                    )
+                    fk_result = cur.fetchone()
+                    has_fk = fk_result[0] > 0 if fk_result else False
+
+                    if not has_fk:
+                        issues["relationships"].append({
+                            "severity": "low",
+                            "entity": full_name,
+                            "column": col_name,
+                            "issue": "Potential missing foreign key constraint",
+                            "description": f"Column '{col_name}' follows FK naming convention but has no constraint",
+                        })
+                        potential_ref_table = col_name[:-2]  # Remove 'ID' suffix
+                        recommendations["relationships"].append({
+                            "entity": full_name,
+                            "column": col_name,
+                            "recommendation": f"Consider adding FK constraint for '{col_name}' if it references another table",
+                            "sql_fix": f"-- Verify target table exists, then:\n-- ALTER TABLE [{schema_name}].[{entity_name}] ADD CONSTRAINT FK_{entity_name}_{potential_ref_table} FOREIGN KEY ([{col_name}]) REFERENCES [{schema_name}].[{potential_ref_table}](/* PK column */);",
+                        })
+
+        # 4. Check for datatype mismatches in FK relationships
+        if full_name in fk_map:
+            for fk in fk_map[full_name]:
+                _execute_safe(
+                    cur,
+                    """
+                    SELECT
+                        c_parent.name AS parent_col,
+                        ty_parent.name AS parent_type,
+                        c_parent.max_length AS parent_max_length,
+                        c_ref.name AS ref_col,
+                        ty_ref.name AS ref_type,
+                        c_ref.max_length AS ref_max_length
+                    FROM sys.foreign_key_columns fkc
+                    JOIN sys.columns c_parent ON fkc.parent_object_id = c_parent.object_id AND fkc.parent_column_id = c_parent.column_id
+                    JOIN sys.types ty_parent ON c_parent.user_type_id = ty_parent.user_type_id
+                    JOIN sys.columns c_ref ON fkc.referenced_object_id = c_ref.object_id AND fkc.referenced_column_id = c_ref.column_id
+                    JOIN sys.types ty_ref ON c_ref.user_type_id = ty_ref.user_type_id
+                    WHERE fkc.constraint_object_id = OBJECT_ID(?)
+                    """,
+                    [f"[{schema_name}].[{fk['name']}]"],
+                )
+                fk_cols_info = _rows_to_dicts(cur, cur.fetchall())
+
+                for col_info in fk_cols_info:
+                    if col_info["parent_type"] != col_info["ref_type"] or col_info["parent_max_length"] != col_info["ref_max_length"]:
+                        issues["relationships"].append({
+                            "severity": "high",
+                            "entity": full_name,
+                            "fk_name": fk["name"],
+                            "issue": "Datatype mismatch in foreign key relationship",
+                            "description": f"Column '{col_info['parent_col']}' ({col_info['parent_type']}) does not match referenced column '{col_info['ref_col']}' ({col_info['ref_type']})",
+                        })
+                        recommendations["relationships"].append({
+                            "entity": full_name,
+                            "fk_name": fk["name"],
+                            "recommendation": f"Align datatypes: change '{col_info['parent_col']}' to match '{col_info['ref_col']}'",
+                            "sql_fix": f"-- This may require dropping FK first:\n-- ALTER TABLE [{schema_name}].[{entity_name}] DROP CONSTRAINT [{fk['name']}];\n-- ALTER TABLE [{schema_name}].[{entity_name}] ALTER COLUMN [{col_info['parent_col']}] {col_info['ref_type']};\n-- Then recreate FK constraint",
+                        })
+
+        # 5. Check for normalization issues (wide tables)
+        if "attributes" in entity and not is_view:
+            col_count = len(entity["attributes"])
+            if col_count > 50:
+                issues["normalization"].append({
+                    "severity": "medium",
+                    "entity": full_name,
+                    "issue": "Potentially denormalized table (wide table)",
+                    "description": f"Table '{entity_name}' has {col_count} columns, which may indicate normalization issues",
+                })
+                recommendations["normalization"].append({
+                    "entity": full_name,
+                    "recommendation": f"Review table structure and consider vertical partitioning or normalization",
+                    "guidance": "Consider splitting into multiple related tables based on functional dependencies",
+                })
+
+            # Check for repeating column groups (e.g., Phone1, Phone2, Phone3)
+            col_names = [attr["name"] for attr in entity["attributes"]]
+            patterns = {}
+            for col_name in col_names:
+                # Extract base name (remove trailing numbers)
+                import re
+                match = re.match(r"^(.+?)(\d+)$", col_name)
+                if match:
+                    base_name = match.group(1)
+                    if base_name not in patterns:
+                        patterns[base_name] = []
+                    patterns[base_name].append(col_name)
+
+            for base_name, cols in patterns.items():
+                if len(cols) >= 3:
+                    issues["normalization"].append({
+                        "severity": "medium",
+                        "entity": full_name,
+                        "issue": "Repeating column group detected",
+                        "description": f"Columns {', '.join(cols)} suggest a repeating group that should be normalized",
+                    })
+                    recommendations["normalization"].append({
+                        "entity": full_name,
+                        "recommendation": f"Create a separate related table for '{base_name}' values",
+                        "guidance": f"Move repeating columns to a new table with FK back to '{entity_name}'",
+                    })
+
+    # Update issue counts
+    issue_counts = {
+        "entities": len(issues["entities"]),
+        "attributes": len(issues["attributes"]),
+        "relationships": len(issues["relationships"]),
+        "identifiers": len(issues["identifiers"]),
+        "normalization": len(issues["normalization"]),
+    }
+
+    return {
+        "issues": issues,
+        "recommendations": recommendations,
+        "issue_counts": issue_counts,
+    }
+
+
 def _analyze_logical_data_model_internal(
     database_name: str,
     schema: str = "dbo",
@@ -1354,6 +1598,9 @@ def _analyze_logical_data_model_internal(
                 attrs = _rows_to_dicts(cur, cur.fetchall())
                 entity["attributes"] = attrs
 
+        # Analyze ERD for issues
+        analysis = _analyze_erd_issues(cur, entities, relationships, schema)
+
         return {
             "summary": {
                 "database": database_name,
@@ -1361,13 +1608,7 @@ def _analyze_logical_data_model_internal(
                 "generated_at_utc": _now_utc_iso(),
                 "entities": len(entities),
                 "relationships": len(relationships),
-                "issues_count": {
-                    "entities": 0,
-                    "attributes": 0,
-                    "relationships": 0,
-                    "identifiers": 0,
-                    "normalization": 0,
-                },
+                "issues_count": analysis["issue_counts"],
             },
             "logical_model": {
                 "entities": entities,
@@ -1380,20 +1621,8 @@ def _analyze_logical_data_model_internal(
                     for rel in relationships
                 ],
             },
-            "issues": {
-                "entities": [],
-                "attributes": [],
-                "relationships": [],
-                "identifiers": [],
-                "normalization": [],
-            },
-            "recommendations": {
-                "entities": [],
-                "attributes": [],
-                "relationships": [],
-                "identifiers": [],
-                "normalization": [],
-            },
+            "issues": analysis["issues"],
+            "recommendations": analysis["recommendations"],
         }
     finally:
         conn.close()
