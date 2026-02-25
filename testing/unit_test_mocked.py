@@ -33,7 +33,7 @@ class TestMockedTools:
     """Unit tests for all MCP tools using mocked database connection"""
 
     def test_ping(self):
-        result = server.db_sql2019_ping.fn()
+        result = server.db_sql2019_ping()
         assert result == {"ok": True}
 
     def test_server_info_mcp(self):
@@ -44,7 +44,7 @@ class TestMockedTools:
             conn.cursor.return_value = cursor
             m.return_value = conn
             
-            result = server.db_sql2019_server_info_mcp.fn()
+            result = server.db_sql2019_server_info_mcp()
             assert result["status"] == "healthy"
             assert result["database"] == "mock_db"
 
@@ -53,7 +53,7 @@ class TestMockedTools:
         # mock fetchmany for _fetch_limited
         mock_conn.fetchmany.side_effect = [[("val1", 1), ("val2", 2)], []]
         
-        result = server.db_sql2019_run_query.fn(sql="SELECT * FROM table")
+        result = server.db_sql2019_run_query(sql="SELECT * FROM table")
         
         assert result["returned_rows"] == 2
         assert result["rows"][0]["col1"] == "val1"
@@ -65,7 +65,7 @@ class TestMockedTools:
         mock_conn.fetchmany.side_effect = [[("Test",)], []]
         
         params = json.dumps(["Test"])
-        result = server.db_sql2019_run_query.fn(sql="SELECT * FROM table WHERE name = ?", params_json=params)
+        result = server.db_sql2019_run_query(sql="SELECT * FROM table WHERE name = ?", params_json=params)
         
         assert result["rows"][0]["name"] == "Test"
         # Verify execute was called with parameters
@@ -75,7 +75,7 @@ class TestMockedTools:
         mock_conn.description = [("name",), ("schema",), ("type",)]
         mock_conn.fetchall.return_value = [("table1", "dbo", "BASE TABLE")]
         
-        result = server.db_sql2019_list_objects.fn(object_type="table")
+        result = server.db_sql2019_list_objects(object_type="table")
         assert len(result) == 1
         assert result[0]["name"] == "table1"
 
@@ -89,7 +89,7 @@ class TestMockedTools:
         ]
         mock_conn.fetchone.return_value = (1024, 512, 100) # Size/Rows
         
-        result = server.db_sql2019_describe_table.fn(schema="dbo", table="test")
+        result = server.db_sql2019_describe_table(schema="dbo", table="test")
         assert result["table"] == "test"
         assert len(result["columns"]) == 2
         assert result["approx_rows"] == 100
@@ -98,7 +98,7 @@ class TestMockedTools:
         mock_conn.description = [("object_name",), ("fragmentation_percent",)]
         mock_conn.fetchall.return_value = [("test_table", 25.5)]
         
-        result = server.db_sql2019_check_fragmentation.fn(limit=10)
+        result = server.db_sql2019_check_fragmentation(limit=10)
         assert len(result) == 1
         assert result[0]["object_name"] == "test_table"
 
@@ -106,7 +106,7 @@ class TestMockedTools:
         mock_conn.description = [("database",), ("active_connections",)]
         mock_conn.fetchall.return_value = [("master", 5)]
         
-        result = server.db_sql2019_db_stats.fn()
+        result = server.db_sql2019_db_stats()
         assert isinstance(result, list)
         assert result[0]["database"] == "master"
 
@@ -134,7 +134,7 @@ class TestMockedTools:
             [] # Locked
         ]
         
-        result = server.db_sql2019_analyze_sessions.fn()
+        result = server.db_sql2019_analyze_sessions()
         assert result["summary"]["total_sessions"] == 10
         assert len(result["active_sessions"]) == 1
         assert "recommendations" in result
@@ -142,7 +142,7 @@ class TestMockedTools:
     def test_create_object_table(self, mock_conn):
         with mock.patch("server.ALLOW_WRITE", True):
             cols = [{"name": "id", "type": "int"}]
-            result = server.db_sql2019_create_object.fn(
+            result = server.db_sql2019_create_object(
                 object_type="table",
                 object_name="new_table",
                 schema="dbo",
@@ -153,7 +153,7 @@ class TestMockedTools:
 
     def test_drop_object_table(self, mock_conn):
         with mock.patch("server.ALLOW_WRITE", True):
-            result = server.db_sql2019_drop_object.fn(
+            result = server.db_sql2019_drop_object(
                 object_type="table",
                 object_name="old_table",
                 schema="dbo"
@@ -166,7 +166,7 @@ class TestMockedTools:
             # 1. DB_NAME, 2. Check login, 3. Check user
             mock_conn.fetchone.side_effect = [("master",), None, None]
             
-            result = server.db_sql2019_create_db_user.fn(
+            result = server.db_sql2019_create_db_user(
                 username="new_user",
                 password="password123",
                 privileges="read"
@@ -180,14 +180,14 @@ class TestMockedTools:
             # mock_conn.fetchval is used to check self-kill
             mock_conn.fetchval.return_value = 1 # My SPID is 1
             
-            result = server.db_sql2019_kill_session.fn(session_id=99)
+            result = server.db_sql2019_kill_session(session_id=99)
             assert result["terminated"] is True
             mock_conn.execute.assert_called()
 
     def test_explain_query(self, mock_conn):
         mock_conn.fetchone.return_value = ("<xml_plan></xml_plan>",)
         
-        result = server.db_sql2019_explain_query.fn(sql="SELECT 1")
+        result = server.db_sql2019_explain_query(sql="SELECT 1")
         assert result["format"] == "xml"
         assert "<xml_plan>" in result["plan"]
 
@@ -201,14 +201,14 @@ class TestMockedTools:
             [("table2", "MISSING")] # Missing
         ]
         
-        result = server.db_sql2019_analyze_indexes.fn()
+        result = server.db_sql2019_analyze_indexes()
         assert len(result["unused_indexes"]) == 1
         assert len(result["missing_indexes"]) == 1
 
     def test_analyze_table_health(self, mock_conn):
         # Test the enhanced table health analysis tool
         # Mock data for multiple queries: table size, indexes, FKs, stats, duplicate indexes
-        
+
         def execute_side_effect(*args, **kwargs):
             sql = args[0] if args else ""
             sql_lower = sql.lower()
@@ -263,7 +263,7 @@ class TestMockedTools:
             []  # No duplicate indexes
         ]
         
-        result = server.db_sql2019_analyze_table_health.fn(database_name="TestDB", schema="dbo", table_name="TestTable")
+        result = server.db_sql2019_analyze_table_health(database_name="TestDB", schema="dbo", table_name="TestTable")
         
         # Verify the result structure
         assert result["database"] == "TestDB"
@@ -309,7 +309,7 @@ class TestMockedTools:
             (99.5,) # Buffer hit
         ]
         
-        result = server.db_sql2019_db_sec_perf_metrics.fn() # Fixed name if needed
+        result = server.db_sql2019_db_sec_perf_metrics() # Fixed name if needed
         assert "security" in result
         assert "performance" in result
 
@@ -317,7 +317,7 @@ class TestMockedTools:
         mock_conn.description = [("schema",), ("table",), ("size_gb",), ("row_count",)]
         mock_conn.fetchall.return_value = [("dbo", "big_table", 5.5, 1000000)]
         
-        result = server.db_sql2019_recommend_partitioning.fn(min_size_gb=1)
+        result = server.db_sql2019_recommend_partitioning(min_size_gb=1)
         assert len(result["candidates"]) == 1
         assert result["candidates"][0]["table"] == "big_table"
 
@@ -342,7 +342,7 @@ class TestIntegrationTools:
                     cursor.execute(sql, params if params else [])
             
             with mock.patch("server._execute_safe", mock_execute_safe):
-                result = server.db_sql2019_analyze_logical_data_model.fn(schema="main")
+                result = server.db_sql2019_analyze_logical_data_model(schema="main")
                 assert "summary" in result
                 assert result["summary"]["entities"] == 0  # SQLite fallback returns 0 entities
 
@@ -350,7 +350,7 @@ class TestIntegrationTools:
         with mock.patch("server.get_connection") as m:
             m.return_value = sqlite_conn
             # This tool is highly SQL Server specific, so we will just check if it returns a report_url
-            result = server.db_sql2019_db_analyze_query_store.fn(database="main")
+            result = server.db_sql2019_db_analyze_query_store(database="main")
             assert "report_url" in result
 
 if __name__ == "__main__":

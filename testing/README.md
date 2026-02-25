@@ -16,10 +16,10 @@ This directory contains comprehensive test results from executing all 11 MCP SQL
 testing/
 ├── tool_execution_summary.json           # ← START HERE - Overall execution results
 └── tool_results/
-    ├── db_list_databases.json            # List of all SQL Server databases
-    ├── db_list_tables.json               # Tables in sales schema
-    ├── db_get_schema.json                # Column definitions for Customers table
-    ├── db_execute_query.json             # Sample SELECT query results (10 rows)
+    ├── db_sql2019_list_databases.json            # List of all SQL Server databases
+    ├── db_sql2019_list_tables.json               # Tables in sales schema
+    ├── db_sql2019_get_schema.json                # Column definitions for Customers table
+    ├── db_sql2019_execute_query.json             # Sample SELECT query results (10 rows)
     ├── db_sql2019_get_index_fragmentation.json    # Index fragmentation analysis
     ├── db_sql2019_analyze_table_health.json       # Table health metrics
     ├── db_sql2019_db_stats.json                   # Database statistics (table/view/procedure/index counts)
@@ -42,10 +42,10 @@ cat tool_execution_summary.json
 ### View Individual Tool Results
 ```bash
 # Example: View database list
-cat tool_results/db_list_databases.json
+cat tool_results/db_sql2019_list_databases.json
 
 # Example: View table schema
-cat tool_results/db_get_schema.json
+cat tool_results/db_sql2019_get_schema.json
 
 # Example: View performance metrics
 cat tool_results/db_sql2019_db_stats.json
@@ -58,7 +58,7 @@ $summary = Get-Content tool_execution_summary.json | ConvertFrom-Json
 $summary.tools_executed | Select-Object -ExpandProperty '*' | Format-Table
 
 # Process individual tool result
-$databases = Get-Content tool_results/db_list_databases.json | ConvertFrom-Json
+$databases = Get-Content tool_results/db_sql2019_list_databases.json | ConvertFrom-Json
 $databases.databases
 ```
 
@@ -75,7 +75,7 @@ for tool_name, info in summary['tools_executed'].items():
     print(f"{tool_name}: {info['status']}")
 
 # Read individual tool result
-with open('tool_results/db_list_databases.json') as f:
+with open('tool_results/db_sql2019_list_databases.json') as f:
     databases = json.load(f)
     print(f"Found {databases['count']} databases: {databases['databases']}")
 ```
@@ -100,13 +100,13 @@ with open('tool_results/db_list_databases.json') as f:
     "db_name": "TEST_DB"
   },
   "tools_executed": {
-    "db_list_databases": {"status": "SUCCESS", "result_file": "..."},
+    "db_sql2019_list_databases": {"status": "SUCCESS", "result_file": "..."},
     ...
   }
 }
 ```
 
-### `db_list_databases.json`
+### `db_sql2019_list_databases.json`
 **Purpose:** List all SQL Server databases  
 **Key Fields:**
 - `status`: "success" or "error"
@@ -122,7 +122,7 @@ with open('tool_results/db_list_databases.json') as f:
 }
 ```
 
-### `db_list_tables.json`
+### `db_sql2019_list_tables.json`
 **Purpose:** List all tables in a schema  
 **Key Fields:**
 - `database`: Target database
@@ -130,13 +130,13 @@ with open('tool_results/db_list_databases.json') as f:
 - `tables`: Array of table names
 - `count`: Total number of tables
 
-### `db_get_schema.json`
+### `db_sql2019_get_schema.json`
 **Purpose:** Get table structure and column definitions  
 **Key Fields:**
 - `column_count`: Number of columns
 - `columns`: Array of column objects with name, type, nullable, default
 
-### `db_execute_query.json`
+### `db_sql2019_execute_query.json`
 **Purpose:** Execute SELECT query and return results  
 **Key Fields:**
 - `query`: The executed query (first 100 chars)
@@ -269,10 +269,10 @@ cp -r testing/ /artifacts/mcp-sql-server-test-results/
 
 | Tool | Status | Result Count | Query Time |
 |------|--------|--------------|------------|
-| db_list_databases | ✅ | 5 databases | <100ms |
-| db_list_tables | ✅ | 8 tables | <100ms |
-| db_get_schema | ✅ | 10 columns | <100ms |
-| db_execute_query | ✅ | 10 rows | <200ms |
+| db_sql2019_list_databases | ✅ | 5 databases | <100ms |
+| db_sql2019_list_tables | ✅ | 8 tables | <100ms |
+| db_sql2019_get_schema | ✅ | 10 columns | <100ms |
+| db_sql2019_execute_query | ✅ | 10 rows | <200ms |
 | db_sql2019_get_index_fragmentation | ✅ | Multiple indexes | <500ms |
 | db_sql2019_analyze_table_health | ✅ | 10 tables | <200ms |
 | db_sql2019_db_stats | ✅ | 4 counts | <100ms |

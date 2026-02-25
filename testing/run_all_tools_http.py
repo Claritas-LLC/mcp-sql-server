@@ -68,7 +68,7 @@ def get_connection():
     # If none work, raise error
     raise Exception(f"Could not connect with any available driver. Last error: {e}")
 
-def db_list_databases() -> Dict[str, Any]:
+def db_sql2019_list_databases() -> Dict[str, Any]:
     """List all databases."""
     try:
         conn = get_connection()
@@ -84,7 +84,7 @@ def db_list_databases() -> Dict[str, Any]:
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-def db_list_tables(database: str, schema: str = 'dbo') -> Dict[str, Any]:
+def db_sql2019_list_tables(database: str, schema: str = 'dbo') -> Dict[str, Any]:
     """List tables in a schema."""
     try:
         conn = get_connection()
@@ -106,7 +106,7 @@ def db_list_tables(database: str, schema: str = 'dbo') -> Dict[str, Any]:
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-def db_get_schema(database: str, table: str, schema: str = 'dbo') -> Dict[str, Any]:
+def db_sql2019_get_schema(database: str, table: str, schema: str = 'dbo') -> Dict[str, Any]:
     """Get table schema."""
     try:
         conn = get_connection()
@@ -141,7 +141,7 @@ def db_get_schema(database: str, table: str, schema: str = 'dbo') -> Dict[str, A
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-def db_execute_query(database: str, query: str) -> Dict[str, Any]:
+def db_sql2019_execute_query(database: str, query: str) -> Dict[str, Any]:
     """Execute a SELECT query."""
     try:
         conn = get_connection()
@@ -424,10 +424,10 @@ def main():
     
     # Tool definitions with parameters
     tools = [
-        ('db_list_databases', lambda: db_list_databases()),
-        ('db_list_tables', lambda: db_list_tables('TEST_DB', 'sales')),
-        ('db_get_schema', lambda: db_get_schema('TEST_DB', 'Customers', 'sales')),
-        ('db_execute_query', lambda: db_execute_query('TEST_DB', 'SELECT TOP 10 * FROM sales.Customers')),
+        ('db_sql2019_list_databases', lambda: db_sql2019_list_databases()),
+        ('db_sql2019_list_tables', lambda: db_sql2019_list_tables('TEST_DB', 'sales')),
+        ('db_sql2019_get_schema', lambda: db_sql2019_get_schema('TEST_DB', 'Customers', 'sales')),
+        ('db_sql2019_execute_query', lambda: db_sql2019_execute_query('TEST_DB', 'SELECT TOP 10 * FROM sales.Customers')),
         ('db_sql2019_get_index_fragmentation', lambda: db_sql2019_get_index_fragmentation('TEST_DB', 'sales')),
         ('db_sql2019_analyze_table_health', lambda: db_sql2019_analyze_table_health('TEST_DB', 'sales')),
         ('db_sql2019_db_stats', lambda: db_sql2019_db_stats('TEST_DB')),

@@ -137,12 +137,12 @@ class TestIntegration:
         assert "version" in result
 
     def test_list_objects(self):
-        result = server.db_sql2019_list_objects.fn(object_type="table")
+        result = server.db_sql2019_list_objects(object_type="table")
         names = [obj["name"] for obj in result]
         assert "products" in names
 
     def test_describe_table(self):
-        result = server.db_sql2019_describe_table.fn(schema="dbo", table="products")
+        result = server.db_sql2019_describe_table(schema="dbo", table="products")
         assert result["table"] == "products" # Fixed key
         assert len(result["columns"]) > 0
         col_names = [c["column_name"] for c in result["columns"]] # Fixed key
@@ -150,7 +150,7 @@ class TestIntegration:
         assert "name" in col_names
 
     def test_run_query(self):
-        result = server.db_sql2019_run_query.fn(sql="SELECT * FROM products")
+        result = server.db_sql2019_run_query(sql="SELECT * FROM products")
         assert "rows" in result
         assert len(result["rows"]) == 5
         # FastMCP results are usually list of dicts if row_factory is set
@@ -158,23 +158,23 @@ class TestIntegration:
 
     def test_run_query_with_params(self):
         params = json.dumps(["Laptop"])
-        result = server.db_sql2019_run_query.fn(sql="SELECT * FROM products WHERE name = ?", params_json=params)
+        result = server.db_sql2019_run_query(sql="SELECT * FROM products WHERE name = ?", params_json=params)
         assert len(result["rows"]) == 1
         assert result["rows"][0]["price"] == 1200.00
 
     def test_explain_query(self):
-        result = server.db_sql2019_explain_query.fn(sql="SELECT * FROM products")
+        result = server.db_sql2019_explain_query(sql="SELECT * FROM products")
         assert result["format"] == "xml"
         assert "<ShowPlanXML" in result["plan"]
 
     def test_analyze_index_health(self):
-        result = server.db_sql2019_analyze_index_health.fn()
+        result = server.db_sql2019_analyze_index_health()
         assert "summary" in result
         # recommendations is inside summary
         assert "recommendations" in result["summary"]
 
     def test_db_stats(self):
-        result = server.db_sql2019_db_stats.fn()
+        result = server.db_sql2019_db_stats()
         if isinstance(result, list):
             assert len(result) > 0
             assert "database" in result[0] # Fixed key
@@ -182,7 +182,7 @@ class TestIntegration:
             assert "database" in result # Fixed key
 
     def test_analyze_sessions(self):
-        result = server.db_sql2019_analyze_sessions.fn()
+        result = server.db_sql2019_analyze_sessions()
         assert "summary" in result
         assert "active_sessions" in result # Fixed key
         assert "idle_sessions" in result # Fixed key
@@ -192,7 +192,7 @@ class TestIntegration:
         cols = [{"name": "id", "type": "int", "constraints": "PRIMARY KEY"}]
         
         try:
-            res_create = server.db_sql2019_create_object.fn(
+            res_create = server.db_sql2019_create_object(
                 object_type="table",
                 object_name=table_name,
                 schema="dbo",
@@ -200,14 +200,14 @@ class TestIntegration:
             )
             assert "created" in res_create.lower()
 
-            objs = server.db_sql2019_list_objects.fn(object_type="table", name_pattern=table_name)
+            objs = server.db_sql2019_list_objects(object_type="table", name_pattern=table_name)
             assert any(o["name"] == table_name for o in objs)
 
         finally:
             # Check if exists before dropping to avoid error noise if create failed
-            objs = server.db_sql2019_list_objects.fn(object_type="table", name_pattern=table_name)
+            objs = server.db_sql2019_list_objects(object_type="table", name_pattern=table_name)
             if any(o["name"] == table_name for o in objs):
-                res_drop = server.db_sql2019_drop_object.fn(
+                res_drop = server.db_sql2019_drop_object(
                     object_type="table",
                     object_name=table_name,
                     schema="dbo"
@@ -225,7 +225,7 @@ class TestStress:
         
         def run_one_query():
             # Use a slightly different query to avoid caching if any
-            return server.db_sql2019_run_query.fn(sql="SELECT COUNT(*) as cnt FROM products")
+            return server.db_sql2019_run_query(sql="SELECT COUNT(*) as cnt FROM products")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             futures = [executor.submit(run_one_query) for _ in range(50)]

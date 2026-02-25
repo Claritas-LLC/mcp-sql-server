@@ -75,10 +75,10 @@ try:
     # Import tools
     print("[1/11] Importing tools from server.py...")
     from server import (
-        db_list_databases,
-        db_list_tables,
-        db_get_schema,
-        db_execute_query,
+        db_sql2019_list_databases,
+        db_sql2019_list_tables,
+        db_sql2019_get_schema,
+        db_sql2019_execute_query,
         db_sql2019_get_index_fragmentation,
         db_sql2019_analyze_table_health,
         db_sql2019_db_stats,
@@ -90,46 +90,46 @@ try:
     print("✓ All tools imported successfully\n")
     
     # Tool 1: List databases
-    print("[2/11] Running db_list_databases()...")
+    print("[2/11] Running db_sql2019_list_databases()...")
     try:
-        result = db_list_databases()
-        save_result("db_list_databases", "SUCCESS", data=result)
+        result = db_sql2019_list_databases()
+        save_result("db_sql2019_list_databases", "SUCCESS", data=result)
         print(f"✓ Found {len(result)} databases")
     except Exception as e:
-        save_result("db_list_databases", "FAILED", error=str(e))
+        save_result("db_sql2019_list_databases", "FAILED", error=str(e))
         print(f"✗ Error: {str(e)[:80]}")
     
     # Tool 2: List tables
-    print("\n[3/11] Running db_list_tables(database_name='TEST_DB', schema_name='sales')...")
     try:
-        result = db_list_tables("TEST_DB", "sales")
-        save_result("db_list_tables", "SUCCESS", data=result)
+        print("\n[3/11] Running db_sql2019_list_tables(database_name='TEST_DB', schema_name='sales')...")
+        result = db_sql2019_list_tables("TEST_DB", "sales")
+        save_result("db_sql2019_list_tables", "SUCCESS", data=result)
         print(f"✓ Found {len(result)} tables in sales schema")
     except Exception as e:
-        save_result("db_list_tables", "FAILED", error=str(e))
+        save_result("db_sql2019_list_tables", "FAILED", error=str(e))
         print(f"✗ Error: {str(e)[:80]}")
     
     # Tool 3: Get schema
-    print("\n[4/11] Running db_get_schema(database_name='TEST_DB', table_name='Customers', schema_name='sales')...")
     try:
-        result = db_get_schema("TEST_DB", "Customers", "sales")
-        save_result("db_get_schema", "SUCCESS", data=result)
+        print("\n[4/11] Running db_sql2019_get_schema(database_name='TEST_DB', table_name='Customers', schema_name='sales')...")
+        result = db_sql2019_get_schema("TEST_DB", "Customers", "sales")
+        save_result("db_sql2019_get_schema", "SUCCESS", data=result)
         print(f"✓ Schema retrieved for sales.Customers")
         print(f"  - Columns: {len(result.get('columns', []))}")
         print(f"  - Primary Keys: {len(result.get('primary_key', []))}")
         print(f"  - Foreign Keys: {len(result.get('foreign_keys', []))}")
     except Exception as e:
-        save_result("db_get_schema", "FAILED", error=str(e))
+        save_result("db_sql2019_get_schema", "FAILED", error=str(e))
         print(f"✗ Error: {str(e)[:80]}")
     
     # Tool 4: Execute query
-    print("\n[5/11] Running db_execute_query(database_name='TEST_DB', sql_query='SELECT TOP 10 * FROM sales.Customers')...")
     try:
-        result = db_execute_query("TEST_DB", "SELECT TOP 10 * FROM sales.Customers")
-        save_result("db_execute_query", "SUCCESS", data=result)
+        print("\n[5/11] Running db_sql2019_execute_query(database_name='TEST_DB', sql_query='SELECT TOP 10 * FROM sales.Customers')...")
+        result = db_sql2019_execute_query("TEST_DB", "SELECT TOP 10 * FROM sales.Customers")
+        save_result("db_sql2019_execute_query", "SUCCESS", data=result)
         print(f"✓ Query executed, returned {len(result)} rows")
     except Exception as e:
-        save_result("db_execute_query", "FAILED", error=str(e))
+        save_result("db_sql2019_execute_query", "FAILED", error=str(e))
         print(f"✗ Error: {str(e)[:80]}")
     
     # Tool 5: Get index fragmentation
