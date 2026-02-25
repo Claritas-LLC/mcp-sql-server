@@ -26,29 +26,29 @@ All 11 MCP SQL Server tools were executed successfully against the TEST_DB test 
 
 ## 📋 Tool Execution Results
 
-### 1. ✅ `db_list_databases`
+### 1. ✅ `db_sql2019_list_databases`
 **Status:** SUCCESS  
 **Purpose:** List all SQL Server databases  
 **Output:** 5 databases (master, model, msdb, tempdb, TEST_DB)  
-**File:** `testing/tool_results/db_list_databases.json`
+**File:** `testing/tool_results/db_sql2019_list_databases.json`
 
-### 2. ✅ `db_list_tables`  
+### 2. ✅ `db_sql2019_list_tables`  
 **Status:** SUCCESS  
 **Purpose:** List tables in a specific schema  
 **Output:** 8 tables in the 'sales' schema  
-**File:** `testing/tool_results/db_list_tables.json`
+**File:** `testing/tool_results/db_sql2019_list_tables.json`
 
-### 3. ✅ `db_get_schema`
+### 3. ✅ `db_sql2019_get_schema`
 **Status:** SUCCESS  
 **Purpose:** Retrieve column definitions and schema for a table  
 **Output:** 10 columns with data types, nullability, and defaults  
-**File:** `testing/tool_results/db_get_schema.json`
+**File:** `testing/tool_results/db_sql2019_get_schema.json`
 
-### 4. ✅ `db_execute_query`
+### 4. ✅ `db_sql2019_execute_query`
 **Status:** SUCCESS  
 **Purpose:** Execute SELECT queries and return results  
 **Output:** 10 customer records from sales.Customers table  
-**File:** `testing/tool_results/db_execute_query.json`
+**File:** `testing/tool_results/db_sql2019_execute_query.json`
 
 ### 5. ✅ `db_sql2019_get_index_fragmentation`
 **Status:** SUCCESS  
@@ -116,10 +116,10 @@ All test results are archived in the `testing/` directory:
 testing/
 ├── tool_execution_summary.json          # Overall execution statistics
 └── tool_results/
-    ├── db_list_databases.json
-    ├── db_list_tables.json
-    ├── db_get_schema.json
-    ├── db_execute_query.json
+    ├── db_sql2019_list_databases.json
+    ├── db_sql2019_list_tables.json
+    ├── db_sql2019_get_schema.json
+    ├── db_sql2019_execute_query.json
     ├── db_sql2019_get_index_fragmentation.json
     ├── db_sql2019_analyze_table_health.json
     ├── db_sql2019_db_stats.json

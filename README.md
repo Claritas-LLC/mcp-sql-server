@@ -43,7 +43,7 @@ Spin up a complete environment with **SQL Server**, **MCP Server**, and **n8n** 
     *   Add an **MCP Tool** to the agent.
     *   Set **Source** to `Remote (SSE)`.
     *   Set **URL** to `http://mcp-sqlserver:8085/sse` (Note: use container name and port 8085).
-    *   **Execute!** You can now ask the AI agent to "count rows in tables" or "check database stats".
+    *   **Execute!** You can now ask the AI agent to use tools like `db_sql2019_list_tables`, `db_sql2019_execute_query`, or `db_sql2019_check_fragmentation`.
 
 ---
 
@@ -241,18 +241,18 @@ This project includes a comprehensive test suite covering **Unit**, **Integratio
 1.  **Prerequisites**:
     *   Docker (for provisioning the temporary SQL Server 2019 container)
     *   Python 3.10+
-    *   `pip install -r tests/requirements-test.txt`
+    *   `pip install -r testing/requirements-test.txt`
 
 2.  **Run Full Test Cycle**:
     ```bash
     # 1. Provision & Populate Test Database
-    python tests/setup_sql_server.py
+    python testing/setup_sql_server.py
     
     # 2. Run Comprehensive Test Suite
-    pytest -v tests/
+    pytest -v testing/
     
     # Or run specific tests like server info validation
-    python test_server_info_mcp.py
+    python testing/test_server_info_mcp.py
     ```
 
 3.  **Verification Coverage**:
@@ -1322,17 +1322,17 @@ The MCP server includes comprehensive test coverage:
 2. **Populate Test Data**:
    ```bash
    docker exec -i mcp_sqlserver_test /opt/mssql-tools18/bin/sqlcmd \
-     -U SA -P "McpTestPassword123!" < setup_test_simple.sql
+     -U SA -P "McpTestPassword123!" < testing/setup_test_database.sql
    ```
 
 3. **Run Unit Tests**:
    ```bash
-   python -m pytest tests/unit_test_mocked.py -v
+  python -m pytest testing/unit_test_mocked.py -v
    ```
 
 4. **Run Integration Tests**:
    ```bash
-   pytest tests/test_server.py -v
+  pytest testing/test_server.py -v
    ```
 
 5. **View Full Test Report**:

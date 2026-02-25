@@ -34,6 +34,47 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Load .env file at startup
 load_dotenv()
 
+# Helper: determine if a SQL statement is read-only
+def _strip_sql_comments_and_literals(sql: str) -> str:
+    """Remove SQL comments and string literals to make keyword detection safer."""
+    if not sql:
+        return ""
+    # Remove block comments
+    s = re.sub(r'/\*.*?\*/', ' ', sql, flags=re.S)
+    # Remove single-line comments
+    s = re.sub(r'--.*?(\r\n|\r|\n|$)', ' ', s)
+    # Remove single-quoted and double-quoted string literals
+    s = re.sub(r"'(?:''|[^'])*'", ' ', s)
+    s = re.sub(r'"(?:""|[^"])*"', ' ', s)
+    return s
+
+def _is_sql_readonly(sql: str) -> bool:
+    """Return True when SQL appears to be a read-only SELECT/CTE statement.
+
+    This function strips comments and string literals then looks for write
+    keywords (INSERT/UPDATE/DELETE/etc.). It's intentionally conservative.
+    """
+    try:
+        cleaned = _strip_sql_comments_and_literals(sql)
+    except Exception:
+        return False
+
+    if not cleaned or not isinstance(cleaned, str):
+        return True
+
+    # If any write keywords appear, consider it non-readonly
+    write_kw = re.search(r"\b(insert|update|delete|merge|drop|create|alter|truncate|exec|execute|bulk)\b", cleaned, flags=re.I)
+    if write_kw:
+        return False
+
+    # If it contains SELECT or WITH (CTE), accept as read-only
+    return bool(re.search(r"\b(select|with)\b", cleaned, flags=re.I))
+
+def _require_readonly(sql: str) -> None:
+    """Raise ValueError if SQL is not read-only."""
+    if not _is_sql_readonly(sql):
+        raise ValueError("Write operations are disabled. Query contains write statements.")
+
 # FastMCP will be initialized later with proper configuration
 
 # Startup Confirmation Dialog
@@ -717,7 +758,7 @@ def _format_results(cursor: pyodbc.Cursor) -> list[dict[str, Any]]:
     return results
 
 @mcp.tool
-def db_list_databases() -> list[str]:
+def db_sql2019_list_databases() -> list[str]:
     """
     Lists all databases on the connected SQL Server instance that are accessible by the current user.
     Excludes system databases by default.
@@ -740,7 +781,7 @@ def db_list_databases() -> list[str]:
             conn.close()
 
 @mcp.tool
-def db_list_tables(database_name: str, schema_name: str | None = None) -> list[dict[str, Any]]:
+def db_sql2019_list_tables(database_name: str, schema_name: str | None = None) -> list[dict[str, Any]]:
     """
     Lists all tables within a specific database and optionally a schema.
 
@@ -780,7 +821,7 @@ def db_list_tables(database_name: str, schema_name: str | None = None) -> list[d
             conn.close()
 
 @mcp.tool
-def db_get_schema(
+def db_sql2019_get_schema(
     database_name: str, 
     table_name: str, 
     schema_name: str | None = "dbo"
@@ -861,7 +902,7 @@ def db_get_schema(
             conn.close()
 
 @mcp.tool
-def db_execute_query(
+def db_sql2019_execute_query(
     database_name: str, 
     sql_query: str,
     parameters: list[Any] | None = None,
@@ -1035,6 +1076,42 @@ def db_sql2019_get_index_fragmentation(
     finally:
         if conn:
             conn.close()
+
+
+# Backwards-compatible aliases for older test names
+@mcp.tool
+def db_sql2019_run_query(database_name: str, sql_query: str, parameters: list[Any] | None = None, read_only: bool = True):
+    """Alias for `db_sql2019_execute_query` to preserve older API names used in tests."""
+    return db_sql2019_execute_query(database_name, sql_query, parameters, read_only)
+
+
+@mcp.tool
+def db_sql2019_list_objects(database_name: str, schema: str | None = None, object_type: str | None = 'TABLE') -> list[dict[str, Any]]:
+    """Unified alias that maps older `list_objects` calls to specific tools.
+
+    Currently supports `TABLE`, `INDEX`, and `DATABASE` object types.
+    """
+    ot = (object_type or '').upper()
+    if ot in ('TABLE', 'TABLES'):
+        return db_sql2019_list_tables(database_name, schema)
+    if ot in ('INDEX', 'INDEXES'):
+        return db_sql2019_get_index_fragmentation(database_name, schema)
+    if ot in ('DATABASE', 'DATABASES'):
+        return db_sql2019_list_databases()
+    raise ValueError(f"Unsupported object_type: {object_type}")
+
+
+@mcp.tool
+def db_sql2019_analyze_index_health(
+    database_name: str,
+    schema: str = 'dbo',
+    table_name: str | None = None,
+    min_fragmentation: float = 10.0,
+    min_page_count: int = 100,
+    limit: int = 50
+) -> list[dict[str, Any]]:
+    """Alias for index-health analysis (keeps older API name)."""
+    return db_sql2019_get_index_fragmentation(database_name, schema, table_name, min_fragmentation, min_page_count, limit)
 
 @mcp.tool
 def db_sql2019_analyze_table_health(

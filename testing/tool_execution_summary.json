@@ -4,22 +4,22 @@
     "db_server": "localhost",
     "db_name": "TEST_DB"
   },
-  "tools_executed": {
-    "db_list_databases": {
+    "tools_executed": {
+    "db_sql2019_list_databases": {
       "status": "SUCCESS",
-      "result_file": "testing\\tool_results\\db_list_databases.json"
+      "result_file": "testing\\tool_results\\db_sql2019_list_databases.json"
     },
-    "db_list_tables": {
+    "db_sql2019_list_tables": {
       "status": "SUCCESS",
-      "result_file": "testing\\tool_results\\db_list_tables.json"
+      "result_file": "testing\\tool_results\\db_sql2019_list_tables.json"
     },
-    "db_get_schema": {
+    "db_sql2019_get_schema": {
       "status": "SUCCESS",
-      "result_file": "testing\\tool_results\\db_get_schema.json"
+      "result_file": "testing\\tool_results\\db_sql2019_get_schema.json"
     },
-    "db_execute_query": {
+    "db_sql2019_execute_query": {
       "status": "SUCCESS",
-      "result_file": "testing\\tool_results\\db_execute_query.json"
+      "result_file": "testing\\tool_results\\db_sql2019_execute_query.json"
     },
     "db_sql2019_get_index_fragmentation": {
       "status": "SUCCESS",

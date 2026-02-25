@@ -70,26 +70,26 @@ class TestUnit:
     def test_list_tables(self):
         # This is effectively an integration test as it hits the DB, 
         # but verifies the tool logic
-        result = db_sql2019_list_objects.fn(object_type="table")
+        result = db_sql2019_list_objects(object_type="table")
         table_names = [t['name'] for t in result]
         assert "products" in table_names
 
     def test_describe_table(self):
         # Using sp_columns to simulate describe
-        result = db_sql2019_run_query.fn("EXEC sp_columns @table_name = 'products'")
+        result = db_sql2019_run_query("EXEC sp_columns @table_name = 'products'")
         columns = [row['COLUMN_NAME'] for row in result['rows']]
         assert "id" in columns
         assert "price" in columns
 
     def test_run_query_select(self):
-        result = db_sql2019_run_query.fn("SELECT COUNT(*) as count FROM products")
+        result = db_sql2019_run_query("SELECT COUNT(*) as count FROM products")
         # Result is a dict with 'rows' key
         assert result["rows"][0]["count"] == 5
 
     def test_run_query_parameterized(self):
         # The tool expects parameters as a JSON string of a list
         params_json = json.dumps([1])
-        result = db_sql2019_run_query.fn("SELECT name FROM products WHERE id = ?", params_json=params_json)
+        result = db_sql2019_run_query("SELECT name FROM products WHERE id = ?", params_json=params_json)
         assert result["rows"][0]["name"] == "Laptop"
 
     def test_analyze_data_model(self):
@@ -117,7 +117,7 @@ class TestIntegration:
         assert f"View '{view_name}' created" in result or "created successfully" in result
 
         # Verify
-        tables = db_sql2019_list_objects.fn(object_type="view", schema="dbo")
+        tables = db_sql2019_list_objects(object_type="view", schema="dbo")
         view_names = [t['name'] for t in tables]
         assert view_name in view_names
 
@@ -137,7 +137,7 @@ class TestStress:
         import time
         start = time.time()
         for i in range(50):
-            db_sql2019_run_query.fn("SELECT * FROM products")
+            db_sql2019_run_query("SELECT * FROM products")
         end = time.time()
         duration = end - start
         print(f"50 queries took {duration:.2f}s")
@@ -150,7 +150,7 @@ class TestBlackbox:
     # For now, we simulate the tool calls which is the core logic
     
     def test_fragmentation_check(self):
-        result = db_sql2019_check_fragmentation.fn()
+        result = db_sql2019_check_fragmentation()
         # Fresh DB shouldn't have fragmentation, but tool should return a list (possibly empty)
         assert isinstance(result, list)
         # If we had fragmentation, we'd check for specific keys
