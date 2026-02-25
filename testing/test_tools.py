@@ -3,12 +3,8 @@ import sys
 import json
 from datetime import datetime, date, timedelta
 
-print("Debugging: Starting test_tools.py script")
-
 # Add the parent directory of server.py to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
-
-print("Debugging: sys.path updated.")
 
 # Set environment variables for database connection
 os.environ['DB_SERVER'] = 'localhost'
@@ -17,16 +13,6 @@ os.environ['DB_USER'] = 'SA'
 os.environ['DB_PASSWORD'] = 'YourStrong!Password1'
 os.environ['DB_NAME'] = 'TEST_DB' # Use TEST_DB for most tests
 os.environ['DB_DRIVER'] = 'ODBC Driver 17 for SQL Server'
-
-print("Debugging: Environment variables set.")
-
-# Import the tools from server.py
-try:
-    import server
-    print("Debugging: server.py imported successfully.")
-except Exception as e:
-    print(f"Debugging: Failed to import server.py: {e}")
-    sys.exit(1)
 
 def run_test(test_name: str, func, *args, **kwargs):
     print(f"\n--- Running Test: {test_name} ---")
@@ -51,6 +37,16 @@ def run_test(test_name: str, func, *args, **kwargs):
         return False
 
 if __name__ == "__main__":
+    print("Debugging: Starting test_tools.py script")
+    
+    print("Importing the tools from server.py...")
+    try:
+        import server
+        print("Debugging: server.py imported successfully.")
+    except Exception as e:
+        print(f"Debugging: Failed to import server.py: {e}")
+        sys.exit(1)
+
     all_tests_passed = True
 
     # Test 1: db_sql2019_server_info_mcp()

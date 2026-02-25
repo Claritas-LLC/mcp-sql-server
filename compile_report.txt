@@ -1,0 +1,36 @@
+Checking 28 Python files...
+
+[PASS] server.py
+[PASS] testing\check_login_columns.py
+[PASS] testing\comprehensive_suite.py
+[PASS] testing\comprehensive_test.py
+[PASS] testing\conftest.py
+[PASS] testing\debug_connection.py
+[PASS] testing\get_server_info.py
+[PASS] testing\run_all_tools.py
+[PASS] testing\run_all_tools_http.py
+[PASS] testing\setup_sql_server.py
+[PASS] testing\test_connection.py
+[PASS] testing\test_ddl_tool.py
+[PASS] testing\test_fragmentation_check.py
+[PASS] testing\test_individual_queries.py
+[PASS] testing\test_mcp_client.py
+[PASS] testing\test_mcp_http.py
+[PASS] testing\test_mcp_sse.py
+[PASS] testing\test_readonly_queries.py
+[PASS] testing\test_runner.py
+[PASS] testing\test_sec_perf_metrics.py
+[PASS] testing\test_security_config.py
+[PASS] testing\test_server.py
+[PASS] testing\test_server_info_mcp.py
+[PASS] testing\test_table_health.py
+[PASS] testing\test_table_health_direct.py
+[PASS] testing\test_tool.py
+[PASS] testing\test_tools.py
+[PASS] testing\unit_test_mocked.py
+
+============================================================
+Results: 28 passed, 0 failed
+============================================================
+
+All files compiled successfully!

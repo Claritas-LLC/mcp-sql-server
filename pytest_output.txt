@@ -1,0 +1,152 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.2, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server
+plugins: anyio-4.12.1, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... ================================================================================
+SQL Server MCP - db_sql2019_server_info_mcp() Test
+================================================================================
+
+[1/5] Importing server module...
+      Γ£ô Server module imported
+
+[2/5] Verifying configuration...
+      ΓÇó MCP_SKIP_CONFIRMATION = true
+      ΓÇó MCP_ALLOW_WRITE = false
+      ΓÇó MCP_TRANSPORT = stdio
+      Γ£ô Configuration verified
+
+[3/5] Creating mocked SQL Server connection...
+      Γ£ô Mock connection ready
+
+[4/5] Executing db_sql2019_server_info_mcp()...
+Γ£ù Error: TypeError: 'FunctionTool' object is not callable
+
+================================================================================
+Traceback (most recent call last):
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\testing\test_server_info_mcp.py", line 77, in <module>
+    result = server.db_sql2019_server_info_mcp()
+TypeError: 'FunctionTool' object is not callable
+mainloop: caught unexpected SystemExit!
+collected 32 items
+INTERNALERROR> Traceback (most recent call last):
+INTERNALERROR>   File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\testing\test_server_info_mcp.py", line 77, in <module>
+INTERNALERROR>     result = server.db_sql2019_server_info_mcp()
+INTERNALERROR> TypeError: 'FunctionTool' object is not callable
+INTERNALERROR> 
+INTERNALERROR> During handling of the above exception, another exception occurred:
+INTERNALERROR> 
+INTERNALERROR> Traceback (most recent call last):
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\main.py", line 318, in wrap_session
+INTERNALERROR>     session.exitstatus = doit(config, session) or 0
+INTERNALERROR>                          ~~~~^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\main.py", line 371, in _main
+INTERNALERROR>     config.hook.pytest_collection(session=session)
+INTERNALERROR>     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+INTERNALERROR>     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+INTERNALERROR>            ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+INTERNALERROR>     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+INTERNALERROR>            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_callers.py", line 167, in _multicall
+INTERNALERROR>     raise exception
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+INTERNALERROR>     teardown.throw(exception)
+INTERNALERROR>     ~~~~~~~~~~~~~~^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\logging.py", line 788, in pytest_collection
+INTERNALERROR>     return (yield)
+INTERNALERROR>             ^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+INTERNALERROR>     teardown.throw(exception)
+INTERNALERROR>     ~~~~~~~~~~~~~~^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\warnings.py", line 98, in pytest_collection
+INTERNALERROR>     return (yield)
+INTERNALERROR>             ^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+INTERNALERROR>     teardown.throw(exception)
+INTERNALERROR>     ~~~~~~~~~~~~~~^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\config\__init__.py", line 1403, in pytest_collection
+INTERNALERROR>     return (yield)
+INTERNALERROR>             ^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+INTERNALERROR>     res = hook_impl.function(*args)
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\main.py", line 382, in pytest_collection
+INTERNALERROR>     session.perform_collect()
+INTERNALERROR>     ~~~~~~~~~~~~~~~~~~~~~~~^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\main.py", line 857, in perform_collect
+INTERNALERROR>     self.items.extend(self.genitems(node))
+INTERNALERROR>     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\main.py", line 1023, in genitems
+INTERNALERROR>     yield from self.genitems(subnode)
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\main.py", line 1020, in genitems
+INTERNALERROR>     rep, duplicate = self._collect_one_node(node, handle_dupes)
+INTERNALERROR>                      ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\main.py", line 883, in _collect_one_node
+INTERNALERROR>     rep = collect_one_node(node)
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\runner.py", line 576, in collect_one_node
+INTERNALERROR>     rep: CollectReport = ihook.pytest_make_collect_report(collector=collector)
+INTERNALERROR>                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+INTERNALERROR>     return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+INTERNALERROR>            ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+INTERNALERROR>     return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+INTERNALERROR>            ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_callers.py", line 167, in _multicall
+INTERNALERROR>     raise exception
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_callers.py", line 139, in _multicall
+INTERNALERROR>     teardown.throw(exception)
+INTERNALERROR>     ~~~~~~~~~~~~~~^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\capture.py", line 880, in pytest_make_collect_report
+INTERNALERROR>     rep = yield
+INTERNALERROR>           ^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+INTERNALERROR>     res = hook_impl.function(*args)
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\runner.py", line 400, in pytest_make_collect_report
+INTERNALERROR>     call = CallInfo.from_call(
+INTERNALERROR>         collect, "collect", reraise=(KeyboardInterrupt, SystemExit)
+INTERNALERROR>     )
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\runner.py", line 353, in from_call
+INTERNALERROR>     result: TResult | None = func()
+INTERNALERROR>                              ~~~~^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\runner.py", line 398, in collect
+INTERNALERROR>     return list(collector.collect())
+INTERNALERROR>                 ~~~~~~~~~~~~~~~~~^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\python.py", line 563, in collect
+INTERNALERROR>     self._register_setup_module_fixture()
+INTERNALERROR>     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\python.py", line 576, in _register_setup_module_fixture
+INTERNALERROR>     self.obj, ("setUpModule", "setup_module")
+INTERNALERROR>     ^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\python.py", line 289, in obj
+INTERNALERROR>     self._obj = obj = self._getobj()
+INTERNALERROR>                       ~~~~~~~~~~~~^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\python.py", line 560, in _getobj
+INTERNALERROR>     return importtestmodule(self.path, self.config)
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\python.py", line 507, in importtestmodule
+INTERNALERROR>     mod = import_path(
+INTERNALERROR>         path,
+INTERNALERROR>     ...<2 lines>...
+INTERNALERROR>         consider_namespace_packages=config.getini("consider_namespace_packages"),
+INTERNALERROR>     )
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\pathlib.py", line 587, in import_path
+INTERNALERROR>     importlib.import_module(module_name)
+INTERNALERROR>     ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\importlib\__init__.py", line 88, in import_module
+INTERNALERROR>     return _bootstrap._gcd_import(name[level:], package, level)
+INTERNALERROR>            ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "<frozen importlib._bootstrap>", line 1398, in _gcd_import
+INTERNALERROR>   File "<frozen importlib._bootstrap>", line 1371, in _find_and_load
+INTERNALERROR>   File "<frozen importlib._bootstrap>", line 1342, in _find_and_load_unlocked
+INTERNALERROR>   File "<frozen importlib._bootstrap>", line 938, in _load_unlocked
+INTERNALERROR>   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\_pytest\assertion\rewrite.py", line 197, in exec_module
+INTERNALERROR>     exec(co, module.__dict__)
+INTERNALERROR>     ~~~~^^^^^^^^^^^^^^^^^^^^^
+INTERNALERROR>   File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\testing\test_server_info_mcp.py", line 144, in <module>
+INTERNALERROR>     sys.exit(1)
+INTERNALERROR>     ~~~~~~~~^^^
+INTERNALERROR> SystemExit: 1
+
+============================ no tests ran in 5.94s ============================
