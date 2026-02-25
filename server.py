@@ -19,8 +19,8 @@ class DecimalEncoder(json.JSONEncoder):
             return float(o)
         return super(DecimalEncoder, self).default(o)
 
-from datetime import datetime, date
-from typing import Any
+from datetime import datetime, date, timedelta
+from typing import Any, Literal, cast
 
 from dotenv import load_dotenv
 from sshtunnel import SSHTunnelForwarder
@@ -39,37 +39,33 @@ def _strip_sql_comments_and_literals(sql: str) -> str:
     """Remove SQL comments and string literals to make keyword detection safer."""
     if not sql:
         return ""
-    # Remove block comments
-    s = re.sub(r'/\*.*?\*/', ' ', sql, flags=re.S)
-    # Remove single-line comments
-    s = re.sub(r'--.*?(\r\n|\r|\n|$)', ' ', s)
-    # Remove single-quoted and double-quoted string literals
-    s = re.sub(r"'(?:''|[^'])*'", ' ', s)
-    s = re.sub(r'"(?:""|[^"])*"', ' ', s)
+    s = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
+    s = re.sub(r"--.*?(\r\n|\r|\n|$)", " ", s)
+    s = re.sub(r"'(?:''|[^'])*'", " ", s)
+    s = re.sub(r'"(?:""|[^"])*"', " ", s)
     return s
 
-def _is_sql_readonly(sql: str) -> bool:
-    """Return True when SQL appears to be a read-only SELECT/CTE statement.
 
-    This function strips comments and string literals then looks for write
-    keywords (INSERT/UPDATE/DELETE/etc.). It's intentionally conservative.
-    """
+def _is_sql_readonly(sql: str) -> bool:
+    """Return True when SQL appears to be a read-only SELECT/CTE statement."""
     try:
         cleaned = _strip_sql_comments_and_literals(sql)
     except Exception:
         return False
 
-    # If cleaned is empty, not a string, or whitespace-only, treat as NOT readonly (reject)
     if not cleaned or not isinstance(cleaned, str) or cleaned.strip() == "":
         return False
 
-    # Expanded denylist regex: include grant, revoke, deny, sp_executesql (with optional schema)
-    write_kw = re.search(r"\b(insert|update|delete|merge|drop|create|alter|truncate|exec|execute|bulk|grant|revoke|deny|(?:\b|\w+\.)sp_executesql)\b", cleaned, flags=re.I)
+    write_kw = re.search(
+        r"\b(insert|update|delete|merge|drop|create|alter|truncate|exec|execute|bulk|grant|revoke|deny|(?:\b|\w+\.)sp_executesql)\b",
+        cleaned,
+        flags=re.I,
+    )
     if write_kw:
         return False
 
-    # If it contains SELECT or WITH (CTE), accept as read-only
     return bool(re.search(r"\b(select|with)\b", cleaned, flags=re.I))
+
 
 def _require_readonly(sql: str) -> None:
     """Raise ValueError if SQL is not read-only."""
@@ -112,12 +108,15 @@ log_level_str = os.environ.get("MCP_LOG_LEVEL", "INFO").upper()
 log_level = getattr(logging, log_level_str, logging.INFO)
 log_file = os.environ.get("MCP_LOG_FILE")
 
-logging.basicConfig(
-    level=log_level,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename=log_file,
-    filemode='a' if log_file else None
-)
+logging_config = {
+    'level': log_level,
+    'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+}
+if log_file:
+    logging_config['filename'] = log_file
+    logging_config['filemode'] = 'a'
+
+logging.basicConfig(**logging_config)
 logger = logging.getLogger("mcp-sqlserver")
 
 # Patch for Windows asyncio ProactorEventLoop "ConnectionResetError" noise on shutdown
@@ -134,7 +133,9 @@ if sys.platform == 'win32':
         try:
             from asyncio.proactor_events import _ProactorBasePipeTransport
 
-            _original_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+            _original_call_connection_lost = getattr(
+                _ProactorBasePipeTransport, "_call_connection_lost"
+            )
 
             def _silenced_call_connection_lost(self, exc):
                 try:
@@ -142,7 +143,11 @@ if sys.platform == 'win32':
                 except ConnectionResetError:
                     pass  # Benign: connection forcibly closed by remote host during shutdown
 
-            _ProactorBasePipeTransport._call_connection_lost = _silenced_call_connection_lost
+            setattr(
+                _ProactorBasePipeTransport,
+                "_call_connection_lost",
+                _silenced_call_connection_lost
+            )
             logger.debug("Applied workaround for asyncio ProactorEventLoop ConnectionResetError")
         except ImportError:
             logger.info("Could not import asyncio.proactor_events._ProactorBasePipeTransport; skipping workaround")
@@ -168,7 +173,7 @@ def _get_auth() -> Any:
 
     # Full OIDC Proxy (handles login flow)
     if auth_type_lower == "oidc":
-        from fastmcp.server.auth.providers.oidc import OIDCProxy
+        from fastmcp.server.auth.providers.oidc import OIDCProxy  # type: ignore[import-not-found]
 
         config_url = os.environ.get("FASTMCP_OIDC_CONFIG_URL")
         client_id = os.environ.get("FASTMCP_OIDC_CLIENT_ID")
@@ -180,6 +185,10 @@ def _get_auth() -> Any:
                 "OIDC authentication requires FASTMCP_OIDC_CONFIG_URL, FASTMCP_OIDC_CLIENT_ID, "
                 "FASTMCP_OIDC_CLIENT_SECRET, and FASTMCP_OIDC_BASE_URL"
             )
+
+        client_id = cast(str, client_id)
+        client_secret = cast(str, client_secret)
+        base_url = cast(str, base_url)
 
         return OIDCProxy(
             config_url=config_url,
@@ -225,7 +234,10 @@ def _get_auth() -> Any:
         config_url = f"https://login.microsoftonline.com/{tenant_id}/v2.0/.well-known/openid-configuration"
         
         if client_secret and base_url:
-            from fastmcp.server.auth.providers.oidc import OIDCProxy
+            from fastmcp.server.auth.providers.oidc import OIDCProxy  # type: ignore[import-not-found]
+            client_id = cast(str, client_id)
+            client_secret = cast(str, client_secret)
+            base_url = cast(str, base_url)
             return OIDCProxy(
                 config_url=config_url,
                 client_id=client_id,
@@ -234,7 +246,7 @@ def _get_auth() -> Any:
                 audience=os.environ.get("FASTMCP_AZURE_AD_AUDIENCE", client_id),
             )
         else:
-            from .auth.providers.jwt import JWTVerifier
+            from fastmcp.server.auth.providers.jwt import JWTVerifier
             jwks_uri = f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
             issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
             return JWTVerifier(
@@ -257,6 +269,9 @@ def _get_auth() -> Any:
         # Default to public GitHub URL if the env var is not set
         base_url = os.environ.get("FASTMCP_GITHUB_BASE_URL", "https://github.com")
 
+        client_id = cast(str, client_id)
+        client_secret = cast(str, client_secret)
+
         return GitHubProvider(
             client_id=client_id,
             client_secret=client_secret,
@@ -277,6 +292,10 @@ def _get_auth() -> Any:
                 "FASTMCP_GOOGLE_CLIENT_SECRET, and FASTMCP_GOOGLE_BASE_URL"
             )
             
+        client_id = cast(str, client_id)
+        client_secret = cast(str, client_secret)
+        base_url = cast(str, base_url)
+
         return GoogleProvider(
             client_id=client_id,
             client_secret=client_secret,
@@ -304,6 +323,12 @@ def _get_auth() -> Any:
                 "FASTMCP_OAUTH_JWKS_URI, and FASTMCP_OAUTH_ISSUER"
             )
             
+        client_id = cast(str, client_id)
+        client_secret = cast(str, client_secret)
+        base_url = cast(str, base_url)
+        auth_url = cast(str, auth_url)
+        token_url = cast(str, token_url)
+
         token_verifier = JWTVerifier(
             jwks_uri=jwks_uri,
             issuer=issuer,
@@ -628,6 +653,8 @@ def get_connection(
     db_port = int(os.environ.get("DB_PORT") or os.environ.get("SQL_PORT", "1433"))
 
     if ssh_host and ssh_user:
+        if not db_server:
+            raise ValueError("DB_SERVER is required when using SSH tunneling.")
         tunnel = get_ssh_tunnel(
             ssh_host=ssh_host,
             ssh_port=ssh_port,
@@ -726,14 +753,19 @@ def _execute_safe(cursor: pyodbc.Cursor, sql: str, params: list[Any] | None = No
         # Re-raise as a more generic exception to avoid leaking too much detail
         raise RuntimeError(f"Database query failed: {e}") from e
 
+
 def _execute_in_database(cur, database_name: str, sql: str, params=None):
     """Switch to the given database and execute the provided SQL safely."""
     if not is_valid_sql_identifier(database_name):
         raise ValueError(f"Invalid database name: {database_name}")
     db_quoted = f"[{database_name}]"
-    # Use the centralized safe executor to ensure errors are logged and wrapped
     _execute_safe(cur, f"USE {db_quoted}")
     _execute_safe(cur, sql, params)
+
+
+def _tool_fn(tool):
+    fn = getattr(tool, "fn", None)
+    return fn if callable(fn) else tool
 
 def _format_results(cursor: pyodbc.Cursor) -> list[dict[str, Any]]:
     """
@@ -768,7 +800,7 @@ def _format_results(cursor: pyodbc.Cursor) -> list[dict[str, Any]]:
     return results
 
 @mcp.tool
-def db_sql2019_list_databases() -> list[str]:
+def db_list_databases() -> list[str]:
     """
     Lists all databases on the connected SQL Server instance that are accessible by the current user.
     Excludes system databases by default.
@@ -791,7 +823,86 @@ def db_sql2019_list_databases() -> list[str]:
             conn.close()
 
 @mcp.tool
+def db_sql2019_list_databases() -> list[str]:
+    """Alias for `db_list_databases` to match README tool names."""
+    return _tool_fn(db_list_databases)()
+
+@mcp.tool
 def db_sql2019_list_tables(database_name: str, schema_name: str | None = None) -> list[dict[str, Any]]:
+    """Alias for `db_list_tables` to match README tool names."""
+    return _tool_fn(db_list_tables)(database_name, schema_name)
+
+@mcp.tool
+def db_sql2019_get_schema(
+    database_name: str,
+    table_name: str,
+    schema_name: str | None = "dbo"
+) -> dict[str, Any]:
+    """Alias for `db_get_schema` to match README tool names."""
+    return _tool_fn(db_get_schema)(database_name, table_name, schema_name)
+
+@mcp.tool
+def db_sql2019_execute_query(
+    database_name: str,
+    sql_query: str,
+    parameters: list[Any] | None = None,
+    read_only: bool = True
+) -> list[dict[str, Any]] | str:
+    """Alias for `db_execute_query` to match README tool names."""
+    return _tool_fn(db_execute_query)(database_name, sql_query, parameters, read_only)
+
+@mcp.tool
+def db_sql2019_run_query(
+    database_name: str,
+    sql_query: str,
+    parameters: list[Any] | None = None,
+    read_only: bool = True
+) -> list[dict[str, Any]] | str:
+    """Alias for `db_execute_query` to preserve older API names used in tests."""
+    return _tool_fn(db_execute_query)(database_name, sql_query, parameters, read_only)
+
+@mcp.tool
+def db_sql2019_list_objects(database_name: str, schema: str | None = None, object_type: str | None = 'TABLE') -> list[dict[str, Any]] | list[str]:
+    """Unified alias that maps older `list_objects` calls to specific tools.
+
+    Currently supports `TABLE`, `INDEX`, and `DATABASE` object types.
+    """
+    ot = (object_type or '').upper()
+    if ot in ('TABLE', 'TABLES'):
+        return _tool_fn(db_sql2019_list_tables)(database_name, schema)
+    if ot in ('INDEX', 'INDEXES'):
+        return _tool_fn(db_sql2019_get_index_fragmentation)(database_name, schema or 'dbo')
+    if ot in ('DATABASE', 'DATABASES'):
+        return _tool_fn(db_sql2019_list_databases)()
+    raise ValueError(f"Unsupported object_type: {object_type}")
+
+@mcp.tool
+def db_sql2019_analyze_index_health(
+    database_name: str,
+    schema: str = 'dbo',
+    table_name: str | None = None,
+    min_fragmentation: float = 10.0,
+    min_page_count: int = 100,
+    limit: int = 50
+) -> list[dict[str, Any]]:
+    """Alias for index-health analysis (keeps older API name)."""
+    return db_sql2019_get_index_fragmentation(database_name, schema, table_name, min_fragmentation, min_page_count, limit)
+
+@mcp.tool
+def db_sql2019_ping() -> dict[str, Any]:
+    """Lightweight connectivity check for the MCP server and database."""
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        _execute_safe(cur, "SELECT 1")
+        return {"status": "ok"}
+    finally:
+        if conn:
+            conn.close()
+
+@mcp.tool
+def db_list_tables(database_name: str, schema_name: str | None = None) -> list[dict[str, Any]]:
     """
     Lists all tables within a specific database and optionally a schema.
 
@@ -813,7 +924,7 @@ def db_sql2019_list_tables(database_name: str, schema_name: str | None = None) -
         cur = conn.cursor()
 
         # Ensure the connection is using the correct database context
-        _execute_safe(cur, "USE [?]")
+        _execute_safe(cur, f"USE [{database_name}]")
 
         sql = "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES"
         params = []
@@ -831,7 +942,7 @@ def db_sql2019_list_tables(database_name: str, schema_name: str | None = None) -
             conn.close()
 
 @mcp.tool
-def db_sql2019_get_schema(
+def db_get_schema(
     database_name: str, 
     table_name: str, 
     schema_name: str | None = "dbo"
@@ -912,7 +1023,7 @@ def db_sql2019_get_schema(
             conn.close()
 
 @mcp.tool
-def db_sql2019_execute_query(
+def db_execute_query(
     database_name: str, 
     sql_query: str,
     parameters: list[Any] | None = None,
@@ -1086,37 +1197,6 @@ def db_sql2019_get_index_fragmentation(
     finally:
         if conn:
             conn.close()
-
-
-# Backwards-compatible aliases for older test names
-def db_sql2019_run_query(database_name: str, sql_query: str, parameters: list[Any] | None = None, read_only: bool = True):
-    """Alias for `db_sql2019_execute_query` to preserve older API names used in tests."""
-    return db_sql2019_execute_query(database_name, sql_query, parameters, read_only)
-
-def db_sql2019_list_objects(database_name: str, schema: str | None = None, object_type: str | None = 'TABLE') -> list[dict[str, Any]]:
-    """Unified alias that maps older `list_objects` calls to specific tools.
-
-    Currently supports `TABLE`, `INDEX`, and `DATABASE` object types.
-    """
-    ot = (object_type or '').upper()
-    if ot in ('TABLE', 'TABLES'):
-        return db_sql2019_list_tables(database_name, schema)
-    if ot in ('INDEX', 'INDEXES'):
-        return db_sql2019_get_index_fragmentation(database_name, schema)
-    if ot in ('DATABASE', 'DATABASES'):
-        return db_sql2019_list_databases()
-    raise ValueError(f"Unsupported object_type: {object_type}")
-
-def db_sql2019_analyze_index_health(
-    database_name: str,
-    schema: str = 'dbo',
-    table_name: str | None = None,
-    min_fragmentation: float = 10.0,
-    min_page_count: int = 100,
-    limit: int = 50
-) -> list[dict[str, Any]]:
-    """Alias for index-health analysis (keeps older API name)."""
-    return db_sql2019_get_index_fragmentation(database_name, schema, table_name, min_fragmentation, min_page_count, limit)
 
 @mcp.tool
 def db_sql2019_analyze_table_health(
@@ -1525,33 +1605,36 @@ def db_sql2019_server_info_mcp() -> dict[str, Any]:
         conn = get_connection()
         cur = conn.cursor()
         
+        def _fetch_single_value(default: Any = None) -> Any:
+            row = cur.fetchone()
+            return row[0] if row else default
+
         # Get server properties using individual queries to avoid ODBC type issues
         cur.execute('SELECT @@VERSION')
-        server_version = cur.fetchone()[0]
+        server_version = _fetch_single_value("unknown")
         
         cur.execute('SELECT @@SERVERNAME')
-        server_name = cur.fetchone()[0]
+        server_name = _fetch_single_value("unknown")
         
         cur.execute('SELECT DB_NAME()')
-        database = cur.fetchone()[0]
+        database = _fetch_single_value("unknown")
         
         cur.execute('SELECT SYSTEM_USER')
-        user = cur.fetchone()[0]
+        user = _fetch_single_value("unknown")
         
         cur.execute("SELECT SERVERPROPERTY('ProductVersion')")
-        server_version_short = cur.fetchone()[0]
+        server_version_short = _fetch_single_value("unknown")
         
         cur.execute("SELECT SERVERPROPERTY('Edition')")
-        server_edition = cur.fetchone()[0]
+        server_edition = _fetch_single_value("unknown")
         
         # Get connection info
         cur.execute("SELECT CAST(CONNECTIONPROPERTY('local_net_address') AS VARCHAR(50))")
-        server_addr = cur.fetchone()[0] or '127.0.0.1'
+        server_addr = _fetch_single_value('127.0.0.1')
         
         cur.execute("SELECT CAST(CONNECTIONPROPERTY('local_tcp_port') AS INT)")
-        server_port = cur.fetchone()[0] or 1433
+        server_port = _fetch_single_value(1433)
         
-        # Add extra fields for test compatibility
         return {
             'server_version': server_version,
             'server_name': server_name,
@@ -1560,13 +1643,7 @@ def db_sql2019_server_info_mcp() -> dict[str, Any]:
             'server_version_short': server_version_short,
             'server_edition': server_edition,
             'server_addr': server_addr,
-            'server_port': server_port,
-            # Extra fields for test compatibility
-            'status': 'success',
-            'transport': os.environ.get('MCP_TRANSPORT', 'stdio'),
-            'allow_write': os.environ.get('MCP_ALLOW_WRITE', 'false').lower() in {'1','true','yes','on'},
-            'name': os.environ.get('MCP_SERVER_NAME', 'SQL Server MCP Server'),
-            'version': os.environ.get('MCP_SERVER_VERSION', '1.0.0'),
+            'server_port': server_port
         }
             
     except Exception as e:
@@ -1611,9 +1688,9 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
     try:
         conn = get_connection()
         cur = conn.cursor()
-
+        
         # Check if Query Store is enabled
-        _execute_in_database(cur, database_name, """
+        _execute_safe(cur, f"""
             SELECT 
                 actual_state_desc,
                 current_storage_size_mb,
@@ -1621,10 +1698,10 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 stale_query_threshold_days,
                 desired_state_desc,
                 query_capture_mode_desc
-            FROM sys.database_query_store_options
+            FROM [{database_name}].sys.database_query_store_options
         """)
         qs_config = cur.fetchone()
-
+        
         if not qs_config or qs_config[0] == 'OFF':
             return {
                 'database': database_name,
@@ -1642,7 +1719,7 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                     ]
                 }]
             }
-
+        
         # Get Query Store configuration
         query_store_config = {
             'state': qs_config[0],
@@ -1651,23 +1728,23 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
             'stale_threshold_days': qs_config[3],
             'capture_mode': qs_config[5]
         }
-
+        
         # Get analysis period
-        _execute_in_database(cur, database_name, """
+        _execute_safe(cur, f"""
             SELECT 
                 CONVERT(VARCHAR(50), MIN(rs.last_execution_time), 120),
                 CONVERT(VARCHAR(50), MAX(rs.last_execution_time), 120),
                 COUNT(DISTINCT q.query_id)
-            FROM sys.query_store_query q
-            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(day, -30, GETDATE())
         """)
-        analysis_period = cur.fetchone()
-
+        analysis_period = cur.fetchone() or (None, None, 0)
+        
         # Get long-running queries (top 10)
-        _execute_in_database(cur, database_name, """
+        _execute_safe(cur, f"""
             SELECT TOP 10
                 q.query_id,
                 qt.query_sql_text,
@@ -1676,11 +1753,11 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms,
                 AVG(rs.avg_logical_io_reads) as avg_logical_io_reads,
                 MAX(o.name) as object_name
-            FROM sys.query_store_query q
-            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-            LEFT JOIN sys.objects o ON q.object_id = o.object_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            LEFT JOIN [{database_name}].sys.objects o ON q.object_id = o.object_id
             WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
                 AND rs.avg_duration > 1000000  -- > 1 second
             GROUP BY q.query_id, qt.query_sql_text
@@ -1697,9 +1774,9 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 'avg_logical_io_reads': int(row[5]) if row[5] is not None else 0,
                 'object_name': row[6] or 'Ad-hoc Query'
             })
-
+        
         # Get regressed queries (top 5)
-        _execute_in_database(cur, database_name, """
+        _execute_safe(cur, f"""
             SELECT TOP 5
                 q.query_id,
                 qt.query_sql_text,
@@ -1707,10 +1784,10 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) as recent_avg_duration_ms,
                 AVG(CASE WHEN rs.last_execution_time BETWEEN DATEADD(day, -14, GETDATE()) AND DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) as older_avg_duration_ms,
                 AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_cpu_time/1000.0 END) as recent_avg_cpu_ms
-            FROM sys.query_store_query q
-            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(day, -14, GETDATE())
                 AND rs.count_executions > 10
             GROUP BY q.query_id, qt.query_sql_text
@@ -1731,9 +1808,9 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                     'regression_percent': regression_percent,
                     'recent_avg_cpu_ms': round(row[5], 1) if row[5] is not None else 0.0
                 })
-
+        
         # Get high CPU queries (top 5)
-        _execute_in_database(cur, database_name, """
+        _execute_safe(cur, f"""
             SELECT TOP 5
                 q.query_id,
                 qt.query_sql_text,
@@ -1742,10 +1819,10 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 MAX(rs.max_cpu_time/1000.0) as max_cpu_ms,
                 AVG(rs.avg_duration/1000.0) as avg_duration_ms,
                 AVG(rs.avg_logical_io_reads) as avg_logical_io_reads
-            FROM sys.query_store_query q
-            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
                 AND rs.avg_cpu_time > 500000  -- > 0.5 seconds CPU time
             GROUP BY q.query_id, qt.query_sql_text
@@ -1762,9 +1839,9 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 'avg_duration_ms': round(row[5], 1) if row[5] is not None else 0.0,
                 'avg_logical_io_reads': int(row[6]) if row[6] is not None else 0
             })
-
+        
         # Get high I/O queries (top 5)
-        _execute_in_database(cur, database_name, """
+        _execute_safe(cur, f"""
             SELECT TOP 5
                 q.query_id,
                 qt.query_sql_text,
@@ -1774,10 +1851,10 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 AVG(rs.avg_physical_io_reads) as avg_physical_io_reads,
                 AVG(rs.avg_duration/1000.0) as avg_duration_ms,
                 AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms
-            FROM sys.query_store_query q
-            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
                 AND (rs.avg_logical_io_reads + rs.avg_logical_io_writes) > 100000  -- > 100k logical I/O
             GROUP BY q.query_id, qt.query_sql_text
@@ -1795,9 +1872,9 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 'avg_duration_ms': round(row[6], 1) if row[6] is not None else 0.0,
                 'avg_cpu_ms': round(row[7], 1) if row[7] is not None else 0.0
             })
-
+        
         # Get high execution count queries (top 5)
-        _execute_in_database(cur, database_name, """
+        _execute_safe(cur, f"""
             SELECT TOP 5
                 q.query_id,
                 qt.query_sql_text,
@@ -1805,10 +1882,10 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                 AVG(rs.avg_duration/1000.0) as avg_duration_ms,
                 AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms,
                 AVG(rs.avg_logical_io_reads) as avg_logical_io_reads
-            FROM sys.query_store_query q
-            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM [{database_name}].sys.query_store_query q
+            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
             GROUP BY q.query_id, qt.query_sql_text
             HAVING SUM(rs.count_executions) > 1000  -- > 1000 executions
@@ -2200,7 +2277,8 @@ def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
         dict: Security and performance metrics analysis results
     """
     logger.info(f"Analyzing security and performance metrics for profile: {profile}")
-    
+
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -2325,7 +2403,7 @@ def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
                 cursor.execute(query)
                 columns = [desc[0] for desc in cursor.description]
                 results['security_assessment'][query_name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            except pyodbc.OperationalError as e:
+            except pyodbc.Error as e:
                 logger.warning(f"Could not execute security query '{query_name}': {e}")
                 results['security_assessment'][query_name] = {"error": f"Could not execute query: {e}"}
         
@@ -2335,7 +2413,7 @@ def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
                 cursor.execute(query)
                 columns = [desc[0] for desc in cursor.description]
                 results['performance_metrics'][query_name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            except pyodbc.OperationalError as e:
+            except pyodbc.Error as e:
                 logger.warning(f"Could not execute performance query '{query_name}': {e}")
                 results['performance_metrics'][query_name] = {"error": f"Could not execute query: {e}"}
         
@@ -2344,10 +2422,12 @@ def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
         risk_factors = []
         
         # Security risk assessment
-        active_logins = len([login for login in results['security_assessment']['login_audit'] if login.get('is_disabled') == False])
+        login_audit_data = results['security_assessment'].get('login_audit')
+        login_audit = login_audit_data if isinstance(login_audit_data, list) else []
+        active_logins = len([login for login in login_audit if login.get('is_disabled') == False])
         
         # Check for SQL logins (type = 'S') which might have weaker security
-        sql_logins = [login for login in results['security_assessment']['login_audit'] if login.get('type') == 'S' and login.get('is_disabled') == False]
+        sql_logins = [login for login in login_audit if login.get('type') == 'S' and login.get('is_disabled') == False]
         if sql_logins:
             risk_score += 10
             risk_factors.append(f"{len(sql_logins)} SQL logins active (consider Windows authentication)")
@@ -2356,7 +2436,7 @@ def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
         from datetime import timedelta
         one_year_ago = datetime.now() - timedelta(days=365)
         old_logins = []
-        for login in results['security_assessment']['login_audit']:
+        for login in login_audit:
             try:
                 create_date = datetime.fromisoformat(login['create_date'].replace('Z', '+00:00'))
                 if create_date < one_year_ago and login.get('is_disabled') == False:
@@ -2563,9 +2643,11 @@ def main():
         mcp.http_app().add_middleware(APIKeyMiddleware)
         mcp.http_app().add_middleware(BrowserFriendlyMiddleware)
 
+
+
     # Define run kwargs, excluding those not applicable for stdio
-    run_kwargs = {
-        "transport": transport,
+    run_kwargs: dict[str, Any] = {
+        "transport": cast(Literal["http", "stdio", "sse", "streamable-http"], transport),
     }
     if transport == "http":
         run_kwargs["host"] = host
@@ -2573,7 +2655,7 @@ def main():
     
     # Run the MCP server
     try:
-        asyncio.run(mcp.run(**run_kwargs))
+        asyncio.run(cast(Any, mcp.run(**run_kwargs)))
     except Exception as e:
         logger.critical(f"Failed to run MCP server: {e}", exc_info=True)
         sys.exit(1)
