@@ -433,39 +433,41 @@ This server implements strict security practices for logging:
 ## 🛠️ Tools Reference
 
 ### 🏥 Health & Info (Always Available)
-- `db_sql2019_server_info_mcp()`: Get comprehensive MCP server and database connection information (server details, database version, user, connection details, and MCP configuration).
+- `db_sql2019_ping()`: Basic connectivity probe with server/database metadata.
+- `db_sql2019_server_info_mcp()`: SQL Server version/edition + MCP runtime settings.
+- `db_sql2019_db_stats(database: str | None = None)`: Core object counts for a database.
 
-### 🔍 Schema Discovery (Always Available)
-- `db_sql2019_list_objects(database_name: str, object_type: str, object_name: str = None, schema: str = None, order_by: str = None, limit: int = 50)`: **(Enhanced Consolidated Tool)** Unified tool to list database objects with advanced filtering and sorting options.
-    - **Database-specific**: Now accepts `database_name` to target specific databases
-    - **Object filtering**: New `object_name` parameter for specific object name filtering (supports LIKE patterns)
-    - **Supported object_type values**: 'database', 'schema', 'table', 'view', 'index', 'function', 'procedure', 'trigger'
-    - **Common Use Cases**:
-        - **Find specific table**: `object_type='table', object_name='Account'`
-        - **List all tables in schema**: `object_type='table', schema='dbo'`
-        - **Table Sizes**: `object_type='table', order_by='size'`
-        - **Row Counts**: `object_type='table', order_by='rows'`
-        - **Find Objects**: `object_type='procedure', object_name='%my_proc%'`
-- `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int = None, include_attributes: bool = True)`: **(Data Model Analysis)** Generates a comprehensive logical data model analysis for a database schema. Returns entities, relationships, naming convention issues, normalization problems, and actionable recommendations. No web UI is generated.
+### 🔍 Discovery & Query (Always Available)
+- `db_sql2019_list_databases()`: List online databases visible to the current login.
+- `db_sql2019_list_tables(database_name: str, schema_name: str | None = None)`: List base tables.
+- `db_sql2019_get_schema(database_name: str, table_name: str, schema_name: str = "dbo")`: Column metadata.
+- `db_sql2019_list_objects(database_name: str, object_type: str = "TABLE", object_name: str | None = None, schema: str | None = None, order_by: str | None = None, limit: int = 50)`: Unified object listing for database/schema/table/view/index/function/procedure/trigger.
+- `db_sql2019_execute_query(database_name: str, sql: str, params_json: str | None = None, max_rows: int | None = None)`: Legacy-compatible read/query tool.
+- `db_sql2019_run_query(...)`: Supports both signatures:
+  - `db_sql2019_run_query(database_name, sql, params_json=None, max_rows=None)`
+  - `db_sql2019_run_query(sql, params_json=None, max_rows=None)` (uses default `DB_NAME`)
 
-### ⚡ Performance & Tuning (Always Available)
-- `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str)`: **(Enhanced Power Tool)** Comprehensive health check for a specific table, including size analysis, index fragmentation, foreign key dependencies, statistics health, **missing constraint analysis** (foreign keys, check constraints, defaults, primary keys), and **enhanced index recommendations** (missing FK indexes, disabled indexes, unused large indexes, redundant indexes). Returns actionable tuning recommendations with severity levels.
-- `db_sql2019_show_top_queries(database_name: str)`: **(Query Store Analysis)** Analyzes Query Store data to identify top problematic queries including long-running queries, regressed queries (performance degradation), high CPU consumption, high I/O queries, and frequently executed poor-performing queries. Provides specific recommendations for each issue with actionable steps. **Prerequisite**: Query Store must be enabled on the target database (not enabled by default in SQL Server 2019). If disabled, the tool will return empty results or errors. To enable: `ALTER DATABASE [database_name] SET QUERY_STORE = ON;`
-- `db_sql2019_open_logical_model(database_name: str)`: **(Interactive ERD Webpage)** Generates an interactive Entity-Relationship Diagram (ERD) webpage depicting all entities (tables), their columns, data types, constraints, and relationships. Returns a URL to view the interactive ERD with pan/zoom controls, detailed entity analysis, and design recommendations. Click on any entity to view comprehensive details including indexes, relationships to other entities, and column specifications.
-- `db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: str)`: **(DDL Generation)** Generate complete DDL (CREATE/ALTER) statements to recreate database objects. Supports tables, views, indexes, functions, procedures, and triggers. Returns object metadata, dependencies, and production-ready DDL with proper constraints and indexes.
-- `db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: Get the XML execution plan for a query.
+### ⚡ Analysis & Performance (Always Available)
+- `db_sql2019_get_index_fragmentation(database_name: str, schema: str | None = None, min_fragmentation: float = 10.0, min_page_count: int = 100, limit: int = 50)`: Raw fragmentation rows.
+- `db_sql2019_analyze_index_health(...)`: Severity summary over fragmented indexes.
+- `db_sql2019_check_fragmentation(database_name: str, min_fragmentation: float = 10.0, min_page_count: int = 100, include_recommendations: bool = True)`: Maintenance-focused fragmentation report.
+- `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str)`: Table size, indexes, FKs, stats, and recommendations.
+- `db_sql2019_show_top_queries(database_name: str)`: Query Store top-query analysis (requires Query Store enabled).
+- `db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: XML execution plan.
+- `db_sql2019_db_sec_perf_metrics(profile: str = "oltp")`: Security + performance audit snapshot.
 
-### 🕵️ Session & Security (Always Available)
-- `db_sql2019_db_sec_perf_metrics(profile: str = "oltp")`: Comprehensive security and performance audit with tuning recommendations (Orphaned Users, PLE, Buffer Cache Hit Ratio, authentication mode, sysadmin privileges, memory configuration, parallelism settings).
+### 🧠 Data Model (Always Available)
+- `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int | None = None, include_attributes: bool = True)`: Entity/relationship model analysis.
+- `db_sql2019_open_logical_model(database_name: str)`: Generates a shareable data model report URL.
+- `db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: str)`: DDL extraction/generation for supported objects.
 
-### 🔧 Maintenance (Requires `MCP_ALLOW_WRITE=true`)
-- `db_sql2019_run_query(sql: str, params_json: str = None, max_rows: int = None)`: Execute ad-hoc SQL queries. **Read-Only Mode**: Enforces read-only SQL (blocks INSERT/UPDATE/DELETE). **Write Mode**: Allows all SQL operations. `max_rows` defaults to 500 (configurable via `MCP_MAX_ROWS`). Returns up to `max_rows` rows; if truncated, `truncated: true` is set.
-- `db_sql2019_create_db_user(username: str, password: str, privileges: str = "read", database: str = None)`: Create a new SQL Login and User with specified privileges.
-- `db_sql2019_drop_db_user(username: str)`: Drop a SQL Login and User.
-- `db_sql2019_kill_session(session_id: int)`: Terminate a specific database session by SPID.
-- `db_sql2019_create_object(object_type: str, object_name: str, schema: str = None, parameters: dict = None)`: Create database objects (table, view, index, function, procedure, trigger).
-- `db_sql2019_alter_object(object_type: str, object_name: str, operation: str, schema: str = None, parameters: dict = None)`: Modify database objects.
-- `db_sql2019_drop_object(object_type: str, object_name: str, schema: str = None, parameters: dict = None)`: Drop database objects.
+### 🔧 Write/Admin (Requires `MCP_ALLOW_WRITE=true` and `MCP_CONFIRM_WRITE=true`)
+- `db_sql2019_create_db_user(username: str, password: str, privileges: str = "read", database: str | None = None)`
+- `db_sql2019_drop_db_user(username: str, database: str | None = None)`
+- `db_sql2019_kill_session(session_id: int)`
+- `db_sql2019_create_object(object_type: str, object_name: str, schema: str | None = None, parameters: dict | None = None)`
+- `db_sql2019_alter_object(object_type: str, object_name: str, operation: str, schema: str | None = None, parameters: dict | None = None)`
+- `db_sql2019_drop_object(object_type: str, object_name: str, schema: str | None = None, parameters: dict | None = None)`
 
 ---
 

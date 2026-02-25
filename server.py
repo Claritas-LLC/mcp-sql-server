@@ -1,42 +1,167 @@
-import asyncio
-import json
-import hashlib
-import logging
+from __future__ import annotations
 
-logger = logging.getLogger(__name__)
+import json
+import logging
 import os
 import re
-import sys
 import uuid
-import threading
-import atexit
-import signal
-import decimal
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Literal, Sequence
 
-class DecimalEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, decimal.Decimal):
-            return float(o)
-        return super(DecimalEncoder, self).default(o)
-
-from datetime import datetime, date, timedelta
-from typing import Any, Literal, cast
-
-from dotenv import load_dotenv
-from sshtunnel import SSHTunnelForwarder
-from fastmcp import FastMCP
-from fastmcp.server.auth import OAuthProxy
 import pyodbc
-from starlette.requests import Request
-from starlette.responses import JSONResponse, HTMLResponse, RedirectResponse
+from dotenv import load_dotenv
+from fastmcp import FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-# Load .env file at startup
 load_dotenv()
 
-# Helper: determine if a SQL statement is read-only
+logger = logging.getLogger("mcp-sqlserver")
+logging.basicConfig(
+    level=getattr(logging, os.getenv("MCP_LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+
+def _now_utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(slots=True)
+class Settings:
+    db_server: str
+    db_port: int
+    db_user: str
+    db_password: str
+    db_name: str
+    db_driver: str
+    db_encrypt: str
+    db_trust_cert: str
+    statement_timeout_ms: int
+    max_rows: int
+    allow_write: bool
+    confirm_write: bool
+    transport: str
+    host: str
+    port: int
+    auth_type: str
+    api_key: str
+
+
+def _env(name: str, default: str = "") -> str:
+    return os.getenv(name, default)
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if not value:
+        return default
+    return int(value)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on", "y"}
+
+
+def _load_settings() -> Settings:
+    db_server = _env("DB_SERVER") or _env("SQL_SERVER")
+    db_port = _env_int("DB_PORT", _env_int("SQL_PORT", 1433))
+    db_user = _env("DB_USER") or _env("SQL_USER")
+    db_password = _env("DB_PASSWORD") or _env("SQL_PASSWORD")
+    db_name = _env("DB_NAME") or _env("SQL_DATABASE") or "master"
+    db_driver = _env("DB_DRIVER") or _env("SQL_DRIVER") or "ODBC Driver 17 for SQL Server"
+
+    return Settings(
+        db_server=db_server,
+        db_port=db_port,
+        db_user=db_user,
+        db_password=db_password,
+        db_name=db_name,
+        db_driver=db_driver,
+        db_encrypt=_env("DB_ENCRYPT", "no"),
+        db_trust_cert=_env("DB_TRUST_CERT", "yes"),
+        statement_timeout_ms=_env_int("MCP_STATEMENT_TIMEOUT_MS", 120000),
+        max_rows=_env_int("MCP_MAX_ROWS", 500),
+        allow_write=_env_bool("MCP_ALLOW_WRITE", False),
+        confirm_write=_env_bool("MCP_CONFIRM_WRITE", False),
+        transport=_env("MCP_TRANSPORT", "http").lower(),
+        host=_env("MCP_HOST", "0.0.0.0"),
+        port=_env_int("MCP_PORT", 8000),
+        auth_type=_env("FASTMCP_AUTH_TYPE", "").lower(),
+        api_key=_env("FASTMCP_API_KEY", ""),
+    )
+
+
+SETTINGS = _load_settings()
+
+
+def _validate_runtime_guards() -> None:
+    if SETTINGS.allow_write and not SETTINGS.confirm_write:
+        raise RuntimeError("Write mode requires MCP_CONFIRM_WRITE=true.")
+    if SETTINGS.allow_write and SETTINGS.transport in {"http", "sse"} and SETTINGS.auth_type in {"", "none"}:
+        raise RuntimeError("Write mode over HTTP requires FASTMCP_AUTH_TYPE.")
+
+
+_validate_runtime_guards()
+
+
+def _connection_string(database: str | None = None) -> str:
+    db_name = database or SETTINGS.db_name
+    return (
+        f"DRIVER={{{SETTINGS.db_driver}}};"
+        f"SERVER={SETTINGS.db_server},{SETTINGS.db_port};"
+        f"DATABASE={db_name};"
+        f"UID={SETTINGS.db_user};"
+        f"PWD={SETTINGS.db_password};"
+        f"Encrypt={SETTINGS.db_encrypt};"
+        f"TrustServerCertificate={SETTINGS.db_trust_cert};"
+    )
+
+
+def get_connection(database: str | None = None) -> pyodbc.Connection:
+    if not SETTINGS.db_server or not SETTINGS.db_user or not SETTINGS.db_password:
+        raise RuntimeError("Database credentials are not configured. Set DB_SERVER, DB_USER, DB_PASSWORD.")
+
+    conn = pyodbc.connect(_connection_string(database), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+    conn.autocommit = True
+    return conn
+
+
+def _execute_safe(cur: pyodbc.Cursor, sql: str, params: list[Any] | tuple[Any, ...] | None = None) -> None:
+    if params is None:
+        cur.execute(sql)
+    else:
+        cur.execute(sql, params)
+
+
+def _fetch_limited(cur: pyodbc.Cursor, max_rows: int) -> list[Any]:
+    if max_rows <= 0:
+        return []
+    return cur.fetchmany(max_rows)
+
+
+def _rows_to_dicts(cur: pyodbc.Cursor, rows: Sequence[Any]) -> list[dict[str, Any]]:
+    if not rows or not cur.description:
+        return []
+    columns = [col[0] for col in cur.description]
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        item: dict[str, Any] = {}
+        for index, value in enumerate(row):
+            if isinstance(value, (datetime,)):
+                item[columns[index]] = value.isoformat()
+            else:
+                item[columns[index]] = value
+        out.append(item)
+    return out
+
+
 def _strip_sql_comments_and_literals(sql: str) -> str:
-    """Remove SQL comments and string literals to make keyword detection safer."""
     if not sql:
         return ""
     s = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
@@ -47,2623 +172,1653 @@ def _strip_sql_comments_and_literals(sql: str) -> str:
 
 
 def _is_sql_readonly(sql: str) -> bool:
-    """Return True when SQL appears to be a read-only SELECT/CTE statement."""
-    try:
-        cleaned = _strip_sql_comments_and_literals(sql)
-    except Exception:
+    cleaned = _strip_sql_comments_and_literals(sql)
+    if not cleaned.strip():
         return False
-
-    if not cleaned or not isinstance(cleaned, str) or cleaned.strip() == "":
-        return False
-
-    write_kw = re.search(
-        r"\b(insert|update|delete|merge|drop|create|alter|truncate|exec|execute|bulk|grant|revoke|deny|(?:\b|\w+\.)sp_executesql)\b",
+    if re.search(
+        r"\b(insert|update|delete|merge|drop|create|alter|truncate|grant|revoke|deny|exec|execute|backup|restore|dbcc)\b",
         cleaned,
         flags=re.I,
-    )
-    if write_kw:
+    ):
         return False
-
     return bool(re.search(r"\b(select|with)\b", cleaned, flags=re.I))
 
 
 def _require_readonly(sql: str) -> None:
-    """Raise ValueError if SQL is not read-only."""
     if not _is_sql_readonly(sql):
         raise ValueError("Write operations are disabled. Query contains write statements.")
 
-# FastMCP will be initialized later with proper configuration
 
-# Startup Confirmation Dialog
-# As requested: "once this MCP is loaded, it will load a dialog box asking the user's confirmation"
-if sys.platform == 'win32':
-    try:
-        import ctypes
-        def show_startup_confirmation():
-            # MessageBox constants
-            MB_YESNO = 0x04
-            MB_ICONQUESTION = 0x20
-            MB_TOPMOST = 0x40000
-            MB_SETFOREGROUND = 0x10000
-            IDYES = 6
-
-            result = ctypes.windll.user32.MessageBoxW(
-                0, 
-                "This MCP server is in Beta version.  Review all commands before running.  Do you want to proceed?", 
-                "MCP Server Confirmation", 
-                MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND
-            )
-            
-            if result != IDYES:
-                sys.exit(0)
-
-        if os.environ.get("MCP_SKIP_CONFIRMATION", "").lower() != "true":
-            show_startup_confirmation()
-    except (ImportError, AttributeError, OSError) as e:
-        # If dialog fails, log it but proceed (or exit? safe to proceed if UI fails, but maybe log to stderr)
-        sys.stderr.write(f"Warning: Could not show startup confirmation dialog: {e}\n")
-
-# Configure structured logging
-log_level_str = os.environ.get("MCP_LOG_LEVEL", "INFO").upper()
-log_level = getattr(logging, log_level_str, logging.INFO)
-log_file = os.environ.get("MCP_LOG_FILE")
-
-logging_config = {
-    'level': log_level,
-    'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-}
-if log_file:
-    logging_config['filename'] = log_file
-    logging_config['filemode'] = 'a'
-
-logging.basicConfig(**logging_config)
-logger = logging.getLogger("mcp-sqlserver")
-
-# Patch for Windows asyncio ProactorEventLoop "ConnectionResetError" noise on shutdown
-# References:
-# - https://bugs.python.org/issue39232 (bpo-39232)
-# - https://github.com/python/cpython/issues/83413
-# Rationale:
-# On Windows, when the ProactorEventLoop is closing, if a connection is forcibly closed
-# by the remote (or the process is terminating), _call_connection_lost can raise
-# ConnectionResetError (WinError 10054). This is harmless but noisy in logs.
-if sys.platform == 'win32':
-    # This issue primarily affects Python 3.8+, where Proactor is the default.
-    if sys.version_info >= (3, 8):
-        try:
-            from asyncio.proactor_events import _ProactorBasePipeTransport
-
-            _original_call_connection_lost = getattr(
-                _ProactorBasePipeTransport, "_call_connection_lost"
-            )
-
-            def _silenced_call_connection_lost(self, exc):
-                try:
-                    _original_call_connection_lost(self, exc)
-                except ConnectionResetError:
-                    pass  # Benign: connection forcibly closed by remote host during shutdown
-
-            setattr(
-                _ProactorBasePipeTransport,
-                "_call_connection_lost",
-                _silenced_call_connection_lost
-            )
-            logger.debug("Applied workaround for asyncio ProactorEventLoop ConnectionResetError")
-        except ImportError:
-            logger.info("Could not import asyncio.proactor_events._ProactorBasePipeTransport; skipping workaround")
-    else:
-        logger.debug("Skipping asyncio ProactorEventLoop workaround (Python version < 3.8)")
-
-def _get_auth() -> Any:
-    auth_type = os.environ.get("FASTMCP_AUTH_TYPE")
-    if not auth_type:
-        return None
-
-    auth_type_lower = auth_type.lower()
-    allowed_auth_types = {"oidc", "jwt", "azure-ad", "github", "google", "oauth2", "none"}
-    
-    if auth_type_lower not in allowed_auth_types:
-        raise ValueError(
-            f"Invalid FASTMCP_AUTH_TYPE: '{auth_type}'. "
-            f"Accepted values are: {', '.join(sorted(allowed_auth_types))}"
-        )
-
-    if auth_type_lower == "none":
-        return None
-
-    # Full OIDC Proxy (handles login flow)
-    if auth_type_lower == "oidc":
-        from fastmcp.server.auth.providers.oidc import OIDCProxy  # type: ignore[import-not-found]
-
-        config_url = os.environ.get("FASTMCP_OIDC_CONFIG_URL")
-        client_id = os.environ.get("FASTMCP_OIDC_CLIENT_ID")
-        client_secret = os.environ.get("FASTMCP_OIDC_CLIENT_SECRET")
-        base_url = os.environ.get("FASTMCP_OIDC_BASE_URL")
-
-        if not all([config_url, client_id, client_secret, base_url]):
-            raise RuntimeError(
-                "OIDC authentication requires FASTMCP_OIDC_CONFIG_URL, FASTMCP_OIDC_CLIENT_ID, "
-                "FASTMCP_OIDC_CLIENT_SECRET, and FASTMCP_OIDC_BASE_URL"
-            )
-
-        client_id = cast(str, client_id)
-        client_secret = cast(str, client_secret)
-        base_url = cast(str, base_url)
-
-        return OIDCProxy(
-            config_url=config_url,
-            client_id=client_id,
-            client_secret=client_secret,
-            base_url=base_url,
-            audience=os.environ.get("FASTMCP_OIDC_AUDIENCE"),
-        )
-
-    # Pure JWT Verification (resource server mode)
-    if auth_type_lower == "jwt":
-        from fastmcp.server.auth.providers.jwt import JWTVerifier
-
-        jwks_uri = os.environ.get("FASTMCP_JWT_JWKS_URI")
-        issuer = os.environ.get("FASTMCP_JWT_ISSUER")
-
-        if not all([jwks_uri, issuer]):
-            raise RuntimeError(
-                "JWT verification requires FASTMCP_JWT_JWKS_URI and FASTMCP_JWT_ISSUER"
-            )
-
-        return JWTVerifier(
-            jwks_uri=jwks_uri,
-            issuer=issuer,
-            audience=os.environ.get("FASTMCP_JWT_AUDIENCE"),
-        )
-
-    # Azure AD (Microsoft Entra ID) simplified configuration
-    if auth_type_lower == "azure-ad":
-        tenant_id = os.environ.get("FASTMCP_AZURE_AD_TENANT_ID")
-        client_id = os.environ.get("FASTMCP_AZURE_AD_CLIENT_ID")
-        
-        if not all([tenant_id, client_id]):
-            raise RuntimeError(
-                "Azure AD authentication requires FASTMCP_AZURE_AD_TENANT_ID and FASTMCP_AZURE_AD_CLIENT_ID"
-            )
-            
-        # Determine if we should use full OIDC flow or just JWT verification
-        # If client_secret and base_url are provided, we use OIDC Proxy
-        client_secret = os.environ.get("FASTMCP_AZURE_AD_CLIENT_SECRET")
-        base_url = os.environ.get("FASTMCP_AZURE_AD_BASE_URL")
-        
-        config_url = f"https://login.microsoftonline.com/{tenant_id}/v2.0/.well-known/openid-configuration"
-        
-        if client_secret and base_url:
-            from fastmcp.server.auth.providers.oidc import OIDCProxy  # type: ignore[import-not-found]
-            client_id = cast(str, client_id)
-            client_secret = cast(str, client_secret)
-            base_url = cast(str, base_url)
-            return OIDCProxy(
-                config_url=config_url,
-                client_id=client_id,
-                client_secret=client_secret,
-                base_url=base_url,
-                audience=os.environ.get("FASTMCP_AZURE_AD_AUDIENCE", client_id),
-            )
-        else:
-            from fastmcp.server.auth.providers.jwt import JWTVerifier
-            jwks_uri = f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
-            issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
-            return JWTVerifier(
-                jwks_uri=jwks_uri,
-                issuer=issuer,
-                audience=os.environ.get("FASTMCP_AZURE_AD_AUDIENCE", client_id),
-            )
-            
-    # GitHub OAuth2
-    if auth_type_lower == "github":
-        from fastmcp.server.auth.providers.github import GitHubProvider
-        
-        client_id = os.environ.get("FASTMCP_GITHUB_CLIENT_ID")
-        client_secret = os.environ.get("FASTMCP_GITHUB_CLIENT_SECRET")
-        if not all([client_id, client_secret]):
-            raise RuntimeError(
-                "GitHub authentication requires FASTMCP_GITHUB_CLIENT_ID and FASTMCP_GITHUB_CLIENT_SECRET"
-            )
-
-        # Default to public GitHub URL if the env var is not set
-        base_url = os.environ.get("FASTMCP_GITHUB_BASE_URL", "https://github.com")
-
-        client_id = cast(str, client_id)
-        client_secret = cast(str, client_secret)
-
-        return GitHubProvider(
-            client_id=client_id,
-            client_secret=client_secret,
-            base_url=base_url
-        )
-
-    # Google OAuth2
-    if auth_type_lower == "google":
-        from fastmcp.server.auth.providers.google import GoogleProvider
-        
-        client_id = os.environ.get("FASTMCP_GOOGLE_CLIENT_ID")
-        client_secret = os.environ.get("FASTMCP_GOOGLE_CLIENT_SECRET")
-        base_url = os.environ.get("FASTMCP_GOOGLE_BASE_URL")
-        
-        if not all([client_id, client_secret, base_url]):
-            raise RuntimeError(
-                "Google authentication requires FASTMCP_GOOGLE_CLIENT_ID, "
-                "FASTMCP_GOOGLE_CLIENT_SECRET, and FASTMCP_GOOGLE_BASE_URL"
-            )
-            
-        client_id = cast(str, client_id)
-        client_secret = cast(str, client_secret)
-        base_url = cast(str, base_url)
-
-        return GoogleProvider(
-            client_id=client_id,
-            client_secret=client_secret,
-            base_url=base_url
-        )
-
-    # Generic OAuth2 Proxy
-    if auth_type_lower == "oauth2":
-        from fastmcp.server.auth.providers.jwt import JWTVerifier
-        
-        auth_url = os.environ.get("FASTMCP_OAUTH_AUTHORIZE_URL")
-        token_url = os.environ.get("FASTMCP_OAUTH_TOKEN_URL")
-        client_id = os.environ.get("FASTMCP_OAUTH_CLIENT_ID")
-        client_secret = os.environ.get("FASTMCP_OAUTH_CLIENT_SECRET")
-        base_url = os.environ.get("FASTMCP_OAUTH_BASE_URL")
-        
-        # Token verifier details
-        jwks_uri = os.environ.get("FASTMCP_OAUTH_JWKS_URI")
-        issuer = os.environ.get("FASTMCP_OAUTH_ISSUER")
-        
-        if not all([auth_url, token_url, client_id, client_secret, base_url, jwks_uri, issuer]):
-            raise RuntimeError(
-                "Generic OAuth2 requires FASTMCP_OAUTH_AUTHORIZE_URL, FASTMCP_OAUTH_TOKEN_URL, "
-                "FASTMCP_OAUTH_CLIENT_ID, FASTMCP_OAUTH_CLIENT_SECRET, FASTMCP_OAUTH_BASE_URL, "
-                "FASTMCP_OAUTH_JWKS_URI, and FASTMCP_OAUTH_ISSUER"
-            )
-            
-        client_id = cast(str, client_id)
-        client_secret = cast(str, client_secret)
-        base_url = cast(str, base_url)
-        auth_url = cast(str, auth_url)
-        token_url = cast(str, token_url)
-
-        token_verifier = JWTVerifier(
-            jwks_uri=jwks_uri,
-            issuer=issuer,
-            audience=os.environ.get("FASTMCP_OAUTH_AUDIENCE")
-        )
-        
-        return OAuthProxy(
-            upstream_authorization_endpoint=auth_url,
-            upstream_token_endpoint=token_url,
-            upstream_client_id=client_id,
-            upstream_client_secret=client_secret,
-            token_verifier=token_verifier,
-            base_url=base_url
-        )
-            
-def _env_int(name: str, default: int) -> int:
-    value = os.environ.get(name)
-    if value is None or value == "":
-        return default
-    return int(value)
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.environ.get(name)
-    if value is None or value == "":
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-# Initialize FastMCP
-auth_type = os.environ.get("FASTMCP_AUTH_TYPE", "").lower()
-mcp = FastMCP(
-    name=os.environ.get("MCP_SERVER_NAME", "SQL Server MCP Server"),
-    auth=_get_auth() if auth_type != "apikey" else None
-)
-
-# Create app alias for the properly initialized mcp instance
-app = mcp
-
-# API Key Middleware for simple static token auth
-class APIKeyMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        path = request.url.path
-        
-        # DEBUG LOG
-        # logger.info(f"APIKeyMiddleware checking path: {path}")
-
-        # 1. Compatibility Redirect: Redirect /mcp to /sse
-        # Many users might try /mcp based on old docs or assumptions
-        # Only redirect GET requests; POST requests might be for stateless JSON-RPC
-        if path == "/mcp" and request.method == "GET":
-            return RedirectResponse(url="/sse")
-
-        # 2. Enforce API Key on SSE and Message endpoints
-        # FastMCP mounts SSE at /sse and messages at /messages
-        # We must protect both to prevent unauthorized access
-        if path.startswith("/sse") or path.startswith("/messages"):
-            auth_type = os.environ.get("FASTMCP_AUTH_TYPE", "").lower()
-            logger.info(f"APIKeyMiddleware match. Auth type: {auth_type}")
-            if auth_type == "apikey":
-                auth_header = request.headers.get("Authorization")
-                expected_key = os.environ.get("FASTMCP_API_KEY")
-                
-                if not expected_key:
-                    logger.error("FASTMCP_API_KEY not configured but auth type is apikey")
-                    return JSONResponse({"detail": "Server configuration error"}, status_code=500)
-                
-                # Check query param for SSE as fallback (standard for EventSource in some clients)
-                token = None
-                if auth_header and auth_header.startswith("Bearer "):
-                    token = auth_header.split(" ")[1]
-                elif "token" in request.query_params:
-                    token = request.query_params["token"]
-                elif "api_key" in request.query_params:
-                    token = request.query_params["api_key"]
-                
-                if not token:
-                    return JSONResponse({"detail": "Missing Authorization header or token"}, status_code=401)
-                
-                if token != expected_key:
-                    return JSONResponse({"detail": "Invalid API Key"}, status_code=403)
-        
-        return await call_next(request)
-
-# Browser-friendly middleware to handle direct visits to the SSE endpoint
-class BrowserFriendlyMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        # If visiting the MCP endpoint with a browser (Accept: text/html)
-        # and NOT providing the required text/event-stream header
-        if request.url.path == "/mcp":
-            accept = request.headers.get("accept", "")
-            if "text/html" in accept and "text/event-stream" not in accept:
-                logger.info(f"Interposing browser-friendly response for {request.url.path}")
-                return HTMLResponse('''
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <title>SQL Server MCP Server</title>
-                        <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-                        <style>
-                            .bg-gradient { background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); }
-                        </style>
-                    </head>
-                    <body class="bg-gray-50 min-h-screen flex items-center justify-center p-4">
-                        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden">
-                            <div class="bg-gradient p-8 text-white">
-                                <h1 class="text-4xl font-extrabold mb-2">SQL Server MCP Server</h1>
-                                <p class="text-blue-100 text-lg opacity-90">Protocol Endpoint Detected</p>
-                            </div>
-                            
-                            <div class="p-8">
-                                <div class="flex items-start mb-6 bg-blue-50 p-4 rounded-xl border border-blue-100">
-                                    <div class="bg-blue-500 text-white rounded-full p-2 mr-4 mt-1">
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="id-circle" />
-                                            <circle cx="12" cy="12" r="9" />
-                                            <line x1="12" y1="8" x2="12" y2="12" />
-                                            <line x1="12" y1="16" x2="12.01" y2="16" />
-                                        </svg>
-                                    </div>
-                                    <div>
-                                        <h3 class="text-blue-800 font-bold text-lg mb-1">MCP Protocol Active</h3>
-                                        <p class="text-blue-700">
-                                            This endpoint (<code class="bg-blue-100 px-1 rounded">/mcp</code>) is reserved for <strong>Model Context Protocol</strong> clients.
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <p class="text-gray-600 mb-8 leading-relaxed">
-                                    You are seeing this page because your browser cannot speak the <code>text/event-stream</code> protocol required for MCP. 
-                                    To use this server, add this URL to your MCP client configuration (e.g., Claude Desktop).
-                                </p>
-
-                                <div class="space-y-4">
-                                    <h4 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">Available Dashboards</h4>
-                                    
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <a href="/data-model-analysis" class="group flex flex-col p-5 border border-gray-100 rounded-xl hover:border-blue-300 hover:shadow-md transition-all bg-white">
-                                            <span class="text-blue-600 font-bold mb-1 group-hover:text-blue-700">Data Model Analysis</span>
-                                            <span class="text-sm text-gray-500">View interactive ERD and schema health score.</span>
-                                        </a>
-                                        
-                                        <a href="/sessions-monitor" class="group flex flex-col p-5 border border-gray-100 rounded-xl hover:border-blue-300 hover:shadow-md transition-all bg-white">
-                                            <span class="text-blue-600 font-bold mb-1 group-hover:text-blue-700">Sessions Monitor</span>
-                                            <span class="text-sm text-gray-500">Track real-time database connections and queries.</span>
-                                        </a>
-                                    </div>
-                                </div>
-
-                                <div class="mt-10 pt-6 border-t border-gray-100 flex justify-between items-center">
-                                    <a href="/health" class="text-sm text-gray-400 hover:text-gray-600 transition-colors italic">Server Status: Healthy</a>
-                                    <a href="/" class="bg-gray-900 text-white px-6 py-2 rounded-lg font-medium hover:bg-black transition-colors shadow-sm">
-                                        View Server Info
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                    </body>
-                    </html>
-                ''')
-        return await call_next(request)
-
-# Add the middleware to the FastMCP app
-# MOVED to main() to ensure transport-specific app is configured correctly
-# mcp.http_app().add_middleware(APIKeyMiddleware)
-# mcp.http_app().add_middleware(BrowserFriendlyMiddleware)
+def _validate_identifier(value: str, label: str = "identifier") -> str:
+    if not value or not _IDENTIFIER_RE.fullmatch(value):
+        raise ValueError(f"Invalid {label}: {value!r}")
+    return value
 
 
-def _build_connection_string_from_env() -> str | None:
-    # Try DB_* convention first (DOCKER.md), then SQL_* fallback
-    server = os.environ.get("DB_SERVER") or os.environ.get("SQL_SERVER")
-    port = os.environ.get("DB_PORT") or os.environ.get("SQL_PORT", "1433")
-    user = os.environ.get("DB_USER") or os.environ.get("SQL_USER")
-    password = os.environ.get("DB_PASSWORD") or os.environ.get("SQL_PASSWORD")
-    database = os.environ.get("DB_NAME") or os.environ.get("SQL_DATABASE")
-    driver = os.environ.get("DB_DRIVER") or os.environ.get("SQL_DRIVER", "ODBC Driver 18 for SQL Server")
-    encrypt = os.environ.get("DB_ENCRYPT", "yes")
-    trust_cert = os.environ.get("DB_TRUST_CERT", "no")
-    
-    if not server or not user or not database:
-        return None
-        
-    # Escape password to handle braces properly
-    password_safe = password or ''
-    escaped_password = password_safe.replace('{', '{{').replace('}', '}}')
-    
-    conn_str = f'''DRIVER={{{driver}}};
-SERVER={server},{port};
-DATABASE={database};
-UID={user};
-PWD={{{escaped_password}}};
-Encrypt={encrypt};
-TrustServerCertificate={trust_cert};'''
-    return conn_str.strip()
-
-# SSH Tunnel Management
-# A global dictionary to hold active SSH tunnels, keyed by a unique identifier
-active_tunnels: dict[str, SSHTunnelForwarder] = {}
-tunnel_lock = threading.Lock()
-
-def get_ssh_tunnel(
-    ssh_host: str, 
-    ssh_port: int, 
-    ssh_user: str, 
-    remote_bind_host: str,
-    remote_bind_port: int,
-    ssh_pass: str | None = None,
-    ssh_key: str | None = None
-) -> SSHTunnelForwarder:
-    
-    tunnel_key = f"{ssh_user}@{ssh_host}:{ssh_port}-{remote_bind_host}:{remote_bind_port}"
-    
-    with tunnel_lock:
-        if tunnel_key in active_tunnels and active_tunnels[tunnel_key].is_active:
-            logger.info(f"Reusing existing SSH tunnel: {tunnel_key}")
-            return active_tunnels[tunnel_key]
-
-        logger.info(f"Creating new SSH tunnel: {tunnel_key}")
-        
-        # Validate SSH credentials
-        if not ssh_pass and not ssh_key:
-            raise ValueError("SSH connection requires either a password (ssh_pass) or a private key (ssh_key).")
-            
-        # If ssh_key is provided, it must be a valid file path
-        if ssh_key and not os.path.isfile(ssh_key):
-            raise FileNotFoundError(f"SSH private key file not found at path: {ssh_key}")
-            
-        server = SSHTunnelForwarder(
-            (ssh_host, ssh_port),
-            ssh_username=ssh_user,
-            ssh_password=ssh_pass,
-            ssh_pkey=ssh_key,
-            remote_bind_address=(remote_bind_host, remote_bind_port)
-        )
-        
-        try:
-            server.start()
-            logger.info(f"SSH tunnel started successfully. Local bind: {server.local_bind_host}:{server.local_bind_port}")
-            active_tunnels[tunnel_key] = server
-            return server
-        except (ImportError, AttributeError, OSError) as e:
-            logger.error(f"Failed to start SSH tunnel: {e}")
-            # Ensure cleanup if start fails
-            if server.is_active:
-                server.stop()
-            raise
-
-def stop_all_tunnels():
-    with tunnel_lock:
-        logger.info("Stopping all active SSH tunnels...")
-        for tunnel_key, server in active_tunnels.items():
-            if server.is_active:
-                try:
-                    server.stop()
-                    logger.info(f"Stopped tunnel: {tunnel_key}")
-                except Exception as e:
-                    logger.error(f"Error stopping tunnel {tunnel_key}: {e}")
-        active_tunnels.clear()
-
-# Register the cleanup function to be called on exit
-atexit.register(stop_all_tunnels)
-
-# Async-aware signal handlers
-async def shutdown():
-    """Perform async cleanup and shutdown."""
-    logger.info("Shutting down server...")
-    stop_all_tunnels()
-    # Cancel any pending tasks if needed
-    tasks = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    # Let the loop exit naturally instead of forcing sys.exit
-    loop = asyncio.get_running_loop()
-    loop.stop()
-
-def setup_signal_handlers():
-    """Set up async-aware signal handlers."""
-    try:
-        loop = asyncio.get_running_loop()
-        
-        def signal_handler(signum):
-            logger.info(f"Received signal {signum}, shutting down...")
-            # Schedule the async shutdown coroutine
-            asyncio.create_task(shutdown())
-        
-        # Register signal handlers
-        loop.add_signal_handler(signal.SIGINT, signal_handler, signal.SIGINT)
-        loop.add_signal_handler(signal.SIGTERM, signal_handler, signal.SIGTERM)
-        
-    except (RuntimeError, NotImplementedError):
-        # Fallback for Windows or when add_signal_handler is not available
-        logger.warning("Async signal handlers not available, using fallback handlers")
-        
-        def fallback_handler(signum, frame):
-            logger.info(f"Received signal {signum}, shutting down...")
-            stop_all_tunnels()
-            sys.exit(0)
-        
-        signal.signal(signal.SIGINT, fallback_handler)
-        signal.signal(signal.SIGTERM, fallback_handler)
-
-# Set up signal handlers when the module is imported
-# This will be called in the main() function when the event loop is running
-
-def get_connection(
-    ssh_host: str | None = None, 
-    ssh_port: int = 22, 
-    ssh_user: str | None = None, 
-    ssh_pass: str | None = None,
-    ssh_key: str | None = None
-) -> pyodbc.Connection:
-    
-    conn_str_from_env = _build_connection_string_from_env()
-    
-    if not conn_str_from_env:
-        raise ValueError(
-            "Database connection details not found in environment variables. "
-            "Please set DB_SERVER, DB_USER, DB_PASSWORD, and DB_NAME."
-        )
-        
-    db_server = os.environ.get("DB_SERVER") or os.environ.get("SQL_SERVER")
-    db_port = int(os.environ.get("DB_PORT") or os.environ.get("SQL_PORT", "1433"))
-
-    if ssh_host and ssh_user:
-        if not db_server:
-            raise ValueError("DB_SERVER is required when using SSH tunneling.")
-        tunnel = get_ssh_tunnel(
-            ssh_host=ssh_host,
-            ssh_port=ssh_port,
-            ssh_user=ssh_user,
-            ssh_pass=ssh_pass,
-            ssh_key=ssh_key,
-            remote_bind_host=db_server,
-            remote_bind_port=db_port
-        )
-        
-        # Modify the connection string to use the tunnel's local bind port
-        local_bind_host = tunnel.local_bind_host
-        local_bind_port = tunnel.local_bind_port
-        
-        # Replace server and port in the original connection string
-        conn_str = re.sub("SERVER=.*?;", f"SERVER={local_bind_host},{local_bind_port};", conn_str_from_env)
-        
-    else:
-        conn_str = conn_str_from_env
-
-    try:
-        conn = pyodbc.connect(conn_str)
-        return conn
-    except pyodbc.Error as ex:
-        sqlstate = ex.args[0]
-        logger.error(f"Database connection failed. SQLSTATE: {sqlstate}. Error: {ex}")
-        # Provide more user-friendly error messages for common issues
-        if "08001" in sqlstate: # Client unable to establish connection
-            raise ConnectionError(
-                "Could not connect to the SQL Server. Please check the following:\n"
-                "1. The server address and port are correct.\n"
-                "2. The server is running and accessible from your network.\n"
-                "3. Any firewalls (local or network) are not blocking the connection.\n"
-                "4. If using an SSH tunnel, ensure SSH credentials and host are correct."
-            ) from ex
-        elif "28000" in sqlstate: # Invalid authorization specification
-            raise PermissionError(
-                "Authentication failed. Please check your database username and password."
-            ) from ex
-        elif "42000" in sqlstate: # Syntax error or access violation (often for database not found)
-            raise ValueError(
-                "Connection failed, possibly due to an incorrect database name. "
-                "Please verify the DB_NAME/SQL_DATABASE environment variable."
-            ) from ex
-        else:
-            raise  # Re-raise other pyodbc errors
-
-def is_valid_sql_identifier(identifier: str) -> bool:
-    """
-    Checks if a string is a valid SQL identifier.
-    This is a simple check and might not cover all edge cases, but it's a good first step.
-    """
-    if not identifier:
-        return False
-    # SQL identifiers should not contain characters that can be used for injection
-    # This is a restrictive but safe set of characters.
-    return re.match(r"^[a-zA-Z0-9_]+$", identifier) is not None
-
-def _execute_safe(cursor: pyodbc.Cursor, sql: str, params: list[Any] | None = None):
-    """
-    Executes a SQL query with parameters safely, logging the query and handling potential errors.
-    This function is a security-sensitive area.
-    """
-    params = params or []
-    
-    # Enhanced Logging: Log the query but mask or hash sensitive data for security.
-    # This is important for debugging without exposing credentials or PII.
-    if logger.isEnabledFor(logging.DEBUG):
-        # Create a copy of params for logging to avoid altering the original list
-        log_params = list(params)
-        
-        # Hashing function for sensitive parameters
-        def _hash_param(p):
-            if isinstance(p, str) and len(p) > 4:  # Hash longer strings
-                return hashlib.sha256(p.encode()).hexdigest()[:8] + "..."
-            return p
-
-        # Example heuristic: hash parameters that might be sensitive.
-        # This should be adapted based on knowledge of the tool's parameters.
-        # For a generic function, we might look for keywords in the SQL.
-        sensitive_keywords = ["password", "secret", "token", "apikey", "privatekey"]
-        sql_lower = sql.lower()
-        
-        # Check if the query itself contains sensitive keywords (less common for params)
-        if any(keyword in sql_lower for keyword in sensitive_keywords):
-            # In this case, we might hash all parameters as a precaution
-            log_params = [_hash_param(p) for p in log_params]
-
-        logger.debug(f"Executing SQL: {sql.strip()} with params: {log_params}")
-
-    try:
-        cursor.execute(sql, *params)
-    except pyodbc.Error as e:
-        # Log sanitized error without exposing sensitive query details
-        logger.error(f"Database query failed: {e}")
-        # Re-raise as a more generic exception to avoid leaking too much detail
-        raise RuntimeError(f"Database query failed: {e}") from e
+def _quoted_ident(value: str) -> str:
+    return f"[{value.replace(']', ']]')}]"
 
 
-def _execute_in_database(cur, database_name: str, sql: str, params=None):
-    """Switch to the given database and execute the provided SQL safely."""
-    if not is_valid_sql_identifier(database_name):
-        raise ValueError(f"Invalid database name: {database_name}")
-    db_quoted = f"[{database_name}]"
-    _execute_safe(cur, f"USE {db_quoted}")
+def _execute_in_database(
+    cur: pyodbc.Cursor,
+    database_name: str,
+    sql: str,
+    params: list[Any] | tuple[Any, ...] | None = None,
+) -> None:
+    _validate_identifier(database_name, "database")
+    _execute_safe(cur, f"USE {_quoted_ident(database_name)}")
     _execute_safe(cur, sql, params)
 
 
-def _tool_fn(tool):
-    fn = getattr(tool, "fn", None)
-    return fn if callable(fn) else tool
+def _ensure_write_enabled() -> None:
+    if not SETTINGS.allow_write:
+        raise ValueError("Write operations are disabled. Set MCP_ALLOW_WRITE=true and MCP_CONFIRM_WRITE=true.")
 
-def _format_results(cursor: pyodbc.Cursor) -> list[dict[str, Any]]:
-    """
-    Fetches all rows from a cursor and formats them as a list of dictionaries.
-    Handles data type conversions for JSON serialization.
-    """
-    columns = [column[0] for column in cursor.description]
-    results = []
-    
-    # Custom JSON encoder for data types not handled by default
-    def json_converter(o):
-        if isinstance(o, (datetime, date)):
-            return o.isoformat()
-        if isinstance(o, decimal.Decimal):
-            return float(o)
-        if isinstance(o, uuid.UUID):
-            return str(o)
-        # For other un-serializable types, convert to string as a fallback
+
+# FastMCP app initialization
+mcp = FastMCP(name=os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server"))
+app = mcp
+
+
+class APIKeyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+
+        if path == "/mcp" and request.method == "GET":
+            return RedirectResponse(url="/sse")
+
+        if path.startswith("/sse") or path.startswith("/messages") or path.startswith("/mcp"):
+            if SETTINGS.auth_type == "apikey":
+                token = None
+                auth_header = request.headers.get("Authorization", "")
+                if auth_header.startswith("Bearer "):
+                    token = auth_header.split(" ", 1)[1].strip()
+                if token is None:
+                    token = request.query_params.get("token") or request.query_params.get("api_key")
+
+                if not SETTINGS.api_key:
+                    return JSONResponse({"detail": "Server API key is not configured."}, status_code=500)
+                if not token:
+                    return JSONResponse({"detail": "Missing Authorization token."}, status_code=401)
+                if token != SETTINGS.api_key:
+                    return JSONResponse({"detail": "Invalid API key."}, status_code=403)
+
+        return await call_next(request)
+
+
+class BrowserFriendlyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/mcp" and "text/html" in request.headers.get("accept", ""):
+            return HTMLResponse(
+                "<html><body><h2>SQL Server MCP Server</h2>"
+                "<p>This endpoint is for MCP clients. Use /sse for stream transport.</p></body></html>"
+            )
+        return await call_next(request)
+
+
+def _resolve_http_app() -> Any | None:
+    candidate = getattr(mcp, "http_app", None)
+    if candidate is None:
+        return None
+    if callable(candidate):
         try:
-            json.dumps(o)
-            return o
+            candidate = candidate()
         except TypeError:
-            return str(o)
+            return None
+    if hasattr(candidate, "add_middleware"):
+        return candidate
+    return None
 
-    for row in cursor.fetchall():
-        row_dict = dict(zip(columns, row))
-        # Apply the converter to each value in the dictionary
-        for key, value in row_dict.items():
-            row_dict[key] = json_converter(value)
-        results.append(row_dict)
-        
-    return results
+
+HTTP_APP = _resolve_http_app()
+if HTTP_APP is not None:
+    HTTP_APP.add_middleware(APIKeyMiddleware)
+    HTTP_APP.add_middleware(BrowserFriendlyMiddleware)
+
 
 @mcp.tool
-def db_list_databases() -> list[str]:
-    """
-    Lists all databases on the connected SQL Server instance that are accessible by the current user.
-    Excludes system databases by default.
-
-    Returns:
-        A list of database names.
-    """
-    conn = None
+def db_sql2019_ping() -> dict[str, Any]:
+    """Basic connectivity probe."""
+    conn = get_connection()
     try:
-        conn = get_connection()
         cur = conn.cursor()
-        
-        sql = "SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name"
-        _execute_safe(cur, sql)
-        
-        databases = [row[0] for row in cur.fetchall()]
-        return databases
+        _execute_safe(cur, "SELECT 1 AS ok")
+        row = cur.fetchone()
+        return {
+            "status": "ok",
+            "database": SETTINGS.db_name,
+            "server": SETTINGS.db_server,
+            "result": int(row[0]) if row else 1,
+            "timestamp": _now_utc_iso(),
+        }
     finally:
-        if conn:
-            conn.close()
+        conn.close()
+
 
 @mcp.tool
 def db_sql2019_list_databases() -> list[str]:
-    """Alias for `db_list_databases` to match README tool names."""
-    return _tool_fn(db_list_databases)()
+    """List online databases visible to the current login."""
+    conn = get_connection("master")
+    try:
+        cur = conn.cursor()
+        _execute_safe(
+            cur,
+            """
+            SELECT name
+            FROM sys.databases
+            WHERE state_desc = 'ONLINE'
+            ORDER BY name
+            """,
+        )
+        return [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
 
 @mcp.tool
 def db_sql2019_list_tables(database_name: str, schema_name: str | None = None) -> list[dict[str, Any]]:
-    """Alias for `db_list_tables` to match README tool names."""
-    return _tool_fn(db_list_tables)(database_name, schema_name)
+    """List tables for a database/schema."""
+    conn = get_connection(database_name)
+    try:
+        cur = conn.cursor()
+        if schema_name:
+            _execute_safe(
+                cur,
+                """
+                SELECT TABLE_SCHEMA, TABLE_NAME
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA = ?
+                ORDER BY TABLE_SCHEMA, TABLE_NAME
+                """,
+                [schema_name],
+            )
+        else:
+            _execute_safe(
+                cur,
+                """
+                SELECT TABLE_SCHEMA, TABLE_NAME
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_TYPE = 'BASE TABLE'
+                ORDER BY TABLE_SCHEMA, TABLE_NAME
+                """,
+            )
+        rows = cur.fetchall()
+        return [{"TABLE_SCHEMA": row[0], "TABLE_NAME": row[1]} for row in rows]
+    finally:
+        conn.close()
+
 
 @mcp.tool
-def db_sql2019_get_schema(
+def db_sql2019_get_schema(database_name: str, table_name: str, schema_name: str = "dbo") -> dict[str, Any]:
+    """Get column metadata for a table."""
+    conn = get_connection(database_name)
+    try:
+        cur = conn.cursor()
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                c.COLUMN_NAME,
+                c.ORDINAL_POSITION,
+                c.DATA_TYPE,
+                c.IS_NULLABLE,
+                c.CHARACTER_MAXIMUM_LENGTH,
+                c.NUMERIC_PRECISION,
+                c.NUMERIC_SCALE,
+                c.COLUMN_DEFAULT
+            FROM INFORMATION_SCHEMA.COLUMNS c
+            WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
+            ORDER BY c.ORDINAL_POSITION
+            """,
+            [schema_name, table_name],
+        )
+        rows = cur.fetchall()
+        columns = [
+            {
+                "COLUMN_NAME": row[0],
+                "ORDINAL_POSITION": row[1],
+                "DATA_TYPE": row[2],
+                "IS_NULLABLE": row[3],
+                "CHARACTER_MAXIMUM_LENGTH": row[4],
+                "NUMERIC_PRECISION": row[5],
+                "NUMERIC_SCALE": row[6],
+                "COLUMN_DEFAULT": row[7],
+            }
+            for row in rows
+        ]
+        return {
+            "database": database_name,
+            "schema": schema_name,
+            "table": table_name,
+            "columns": columns,
+        }
+    finally:
+        conn.close()
+
+
+def _parse_params_json(params_json: str | None) -> list[Any] | None:
+    if not params_json:
+        return None
+    decoded = json.loads(params_json)
+    if isinstance(decoded, list):
+        return decoded
+    if isinstance(decoded, dict):
+        return [decoded]
+    raise ValueError("params_json must decode to a list or object")
+
+
+def _run_query_internal(
     database_name: str,
-    table_name: str,
-    schema_name: str | None = "dbo"
-) -> dict[str, Any]:
-    """Alias for `db_get_schema` to match README tool names."""
-    return _tool_fn(db_get_schema)(database_name, table_name, schema_name)
+    sql: str,
+    params_json: str | None = None,
+    max_rows: int | None = None,
+    enforce_readonly: bool = True,
+) -> list[dict[str, Any]]:
+    if enforce_readonly and not SETTINGS.allow_write:
+        _require_readonly(sql)
+
+    params = _parse_params_json(params_json)
+    row_cap = max_rows if isinstance(max_rows, int) and max_rows > 0 else SETTINGS.max_rows
+
+    conn = get_connection(database_name)
+    try:
+        cur = conn.cursor()
+        _execute_safe(cur, sql, params)
+        rows = _fetch_limited(cur, row_cap)
+        return _rows_to_dicts(cur, rows)
+    finally:
+        conn.close()
+
 
 @mcp.tool
 def db_sql2019_execute_query(
     database_name: str,
-    sql_query: str,
-    parameters: list[Any] | None = None,
-    read_only: bool = True
-) -> list[dict[str, Any]] | str:
-    """Alias for `db_execute_query` to match README tool names."""
-    return _tool_fn(db_execute_query)(database_name, sql_query, parameters, read_only)
+    sql: str,
+    params_json: str | None = None,
+    max_rows: int | None = None,
+) -> list[dict[str, Any]]:
+    """Legacy-compatible query executor (read-only unless write mode is enabled)."""
+    return _run_query_internal(
+        database_name=database_name,
+        sql=sql,
+        params_json=params_json,
+        max_rows=max_rows,
+        enforce_readonly=True,
+    )
+
 
 @mcp.tool
 def db_sql2019_run_query(
-    database_name: str,
-    sql_query: str,
-    parameters: list[Any] | None = None,
-    read_only: bool = True
-) -> list[dict[str, Any]] | str:
-    """Alias for `db_execute_query` to preserve older API names used in tests."""
-    return _tool_fn(db_execute_query)(database_name, sql_query, parameters, read_only)
+    arg1: str,
+    arg2: str | None = None,
+    params_json: str | None = None,
+    max_rows: int | None = None,
+) -> list[dict[str, Any]]:
+    """Execute SQL; supports both legacy (db, sql) and new (sql only) signatures."""
+    if arg2 is None:
+        database_name = SETTINGS.db_name
+        sql = arg1
+    else:
+        database_name = arg1
+        sql = arg2
+
+    return _run_query_internal(
+        database_name=database_name,
+        sql=sql,
+        params_json=params_json,
+        max_rows=max_rows,
+        enforce_readonly=True,
+    )
+
 
 @mcp.tool
-def db_sql2019_list_objects(database_name: str, schema: str | None = None, object_type: str | None = 'TABLE') -> list[dict[str, Any]] | list[str]:
-    """Unified alias that maps older `list_objects` calls to specific tools.
-
-    Currently supports `TABLE`, `INDEX`, and `DATABASE` object types.
-    """
-    ot = (object_type or '').upper()
-    if ot in ('TABLE', 'TABLES'):
-        return _tool_fn(db_sql2019_list_tables)(database_name, schema)
-    if ot in ('INDEX', 'INDEXES'):
-        return _tool_fn(db_sql2019_get_index_fragmentation)(database_name, schema or 'dbo')
-    if ot in ('DATABASE', 'DATABASES'):
-        return _tool_fn(db_sql2019_list_databases)()
-    raise ValueError(f"Unsupported object_type: {object_type}")
-
-@mcp.tool
-def db_sql2019_analyze_index_health(
+def db_sql2019_list_objects(
     database_name: str,
-    schema: str = 'dbo',
-    table_name: str | None = None,
+    object_type: str = "TABLE",
+    object_name: str | None = None,
+    schema: str | None = None,
+    order_by: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]] | list[str]:
+    """Unified object listing for database/schema/table/view/index/function/procedure/trigger."""
+    conn = get_connection(database_name)
+    try:
+        cur = conn.cursor()
+        object_type_norm = object_type.strip().upper()
+
+        if object_type_norm in {"DATABASE", "DATABASES"}:
+            return db_sql2019_list_databases()
+
+        if object_type_norm in {"SCHEMA", "SCHEMAS"}:
+            _execute_safe(cur, "SELECT name FROM sys.schemas ORDER BY name")
+            return [row[0] for row in cur.fetchall()]
+
+        if object_type_norm in {"TABLE", "VIEW"}:
+            table_type = "BASE TABLE" if object_type_norm == "TABLE" else "VIEW"
+            sql = (
+                "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE "
+                "FROM INFORMATION_SCHEMA.TABLES "
+                "WHERE TABLE_TYPE = ?"
+            )
+            params: list[Any] = [table_type]
+            if schema:
+                sql += " AND TABLE_SCHEMA = ?"
+                params.append(schema)
+            if object_name:
+                sql += " AND TABLE_NAME LIKE ?"
+                params.append(object_name)
+            sql += " ORDER BY TABLE_SCHEMA, TABLE_NAME"
+            _execute_safe(cur, sql, params)
+            rows = _fetch_limited(cur, max(1, limit))
+            return _rows_to_dicts(cur, rows)
+
+        if object_type_norm == "INDEX":
+            sql = """
+            SELECT
+                s.name AS schema_name,
+                t.name AS table_name,
+                i.name AS index_name,
+                i.type_desc AS index_type,
+                i.is_disabled
+            FROM sys.indexes i
+            JOIN sys.tables t ON i.object_id = t.object_id
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            WHERE i.name IS NOT NULL
+            """
+            params = []
+            if schema:
+                sql += " AND s.name = ?"
+                params.append(schema)
+            if object_name:
+                sql += " AND i.name LIKE ?"
+                params.append(object_name)
+            sql += " ORDER BY s.name, t.name, i.name"
+            _execute_safe(cur, sql, params)
+            return _rows_to_dicts(cur, _fetch_limited(cur, max(1, limit)))
+
+        if object_type_norm in {"FUNCTION", "PROCEDURE", "TRIGGER"}:
+            code = {"FUNCTION": "FN", "PROCEDURE": "P", "TRIGGER": "TR"}[object_type_norm]
+            sql = """
+            SELECT s.name AS schema_name, o.name AS object_name, o.type_desc
+            FROM sys.objects o
+            JOIN sys.schemas s ON o.schema_id = s.schema_id
+            WHERE o.type = ?
+            """
+            params = [code]
+            if schema:
+                sql += " AND s.name = ?"
+                params.append(schema)
+            if object_name:
+                sql += " AND o.name LIKE ?"
+                params.append(object_name)
+            sql += " ORDER BY s.name, o.name"
+            _execute_safe(cur, sql, params)
+            return _rows_to_dicts(cur, _fetch_limited(cur, max(1, limit)))
+
+        raise ValueError(f"Unsupported object_type: {object_type}")
+    finally:
+        conn.close()
+
+
+def _get_index_fragmentation_data(
+    database_name: str,
+    schema: str | None = None,
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
-    limit: int = 50
+    limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """Alias for index-health analysis (keeps older API name)."""
-    return db_sql2019_get_index_fragmentation(database_name, schema, table_name, min_fragmentation, min_page_count, limit)
-
-@mcp.tool
-def db_sql2019_ping() -> dict[str, Any]:
-    """Lightweight connectivity check for the MCP server and database."""
-    conn = None
+    conn = get_connection(database_name)
     try:
-        conn = get_connection()
         cur = conn.cursor()
-        _execute_safe(cur, "SELECT 1")
-        return {"status": "ok"}
-    finally:
-        if conn:
-            conn.close()
+        sql = """
+        SELECT TOP (?)
+            s.name AS schema_name,
+            t.name AS table_name,
+            i.name AS index_name,
+            ips.avg_fragmentation_in_percent,
+            ips.page_count,
+            i.type_desc AS index_type
+        FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'SAMPLED') ips
+        JOIN sys.indexes i
+            ON ips.object_id = i.object_id AND ips.index_id = i.index_id
+        JOIN sys.tables t ON i.object_id = t.object_id
+        JOIN sys.schemas s ON t.schema_id = s.schema_id
+        WHERE i.name IS NOT NULL
+          AND ips.page_count >= ?
+          AND ips.avg_fragmentation_in_percent >= ?
+        """
+        params: list[Any] = [max(1, limit), min_page_count, min_fragmentation]
+        if schema:
+            sql += " AND s.name = ?"
+            params.append(schema)
+        sql += " ORDER BY ips.avg_fragmentation_in_percent DESC"
 
-@mcp.tool
-def db_list_tables(database_name: str, schema_name: str | None = None) -> list[dict[str, Any]]:
-    """
-    Lists all tables within a specific database and optionally a schema.
-
-    Args:
-        database_name: The name of the database to query.
-        schema_name: (Optional) The name of the schema to filter by. If not provided, tables from all schemas are listed.
-
-    Returns:
-        A list of dictionaries, where each dictionary contains details about a table (schema, name, type).
-    """
-    if not is_valid_sql_identifier(database_name):
-        raise ValueError(f"Invalid database name: {database_name}")
-    if schema_name and not is_valid_sql_identifier(schema_name):
-        raise ValueError(f"Invalid schema name: {schema_name}")
-
-    conn = None
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-
-        # Ensure the connection is using the correct database context
-        _execute_safe(cur, f"USE [{database_name}]")
-
-        sql = "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES"
-        params = []
-        if schema_name:
-            sql += " WHERE TABLE_SCHEMA = ?"
-            params.append(schema_name)
-        
-        sql += " ORDER BY TABLE_SCHEMA, TABLE_NAME"
-        
         _execute_safe(cur, sql, params)
-        
-        return _format_results(cur)
+        return _rows_to_dicts(cur, cur.fetchall())
     finally:
-        if conn:
-            conn.close()
+        conn.close()
 
-@mcp.tool
-def db_get_schema(
-    database_name: str, 
-    table_name: str, 
-    schema_name: str | None = "dbo"
-) -> dict[str, Any]:
-    """
-    Retrieves the schema for a specific table, including columns, data types, and constraints.
-
-    Args:
-        database_name: The name of the database.
-        table_name: The name of the table.
-        schema_name: The schema of the table (defaults to 'dbo').
-
-    Returns:
-        A dictionary containing the table schema details.
-    """
-    if not is_valid_sql_identifier(database_name):
-        raise ValueError(f"Invalid database name: {database_name}")
-    if not is_valid_sql_identifier(table_name):
-        raise ValueError(f"Invalid table name: {table_name}")
-    if schema_name and not is_valid_sql_identifier(schema_name):
-        raise ValueError(f"Invalid schema name: {schema_name}")
-
-    conn = None
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        _execute_safe(cur, f"USE [{database_name}]")
-
-        # Get column information
-        column_sql = """
-            SELECT 
-                COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-            ORDER BY ORDINAL_POSITION;
-        """
-        _execute_safe(cur, column_sql, [schema_name, table_name])
-        columns = _format_results(cur)
-
-        # Get primary key information
-        pk_sql = """
-            SELECT c.name AS COLUMN_NAME
-            FROM sys.indexes AS i
-            INNER JOIN sys.index_columns AS ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-            INNER JOIN sys.columns AS c ON ic.object_id = c.object_id AND c.column_id = ic.column_id
-            WHERE i.is_primary_key = 1 AND i.object_id = OBJECT_ID(CONCAT(?, '.', ?));
-        """
-        _execute_safe(cur, pk_sql, [schema_name, table_name])
-        pk_columns = [row['COLUMN_NAME'] for row in _format_results(cur)]
-
-        # Get foreign key information
-        fk_sql = """
-            SELECT 
-                fk.name AS FK_NAME,
-                tp.name AS PARENT_TABLE,
-                cp.name AS PARENT_COLUMN,
-                tr.name AS REFERENCED_TABLE,
-                cr.name AS REFERENCED_COLUMN
-            FROM sys.foreign_keys AS fk
-            INNER JOIN sys.foreign_key_columns AS fkc ON fk.object_id = fkc.constraint_object_id
-            INNER JOIN sys.tables AS tp ON fkc.parent_object_id = tp.object_id
-            INNER JOIN sys.columns AS cp ON fkc.parent_object_id = cp.object_id AND fkc.parent_column_id = cp.column_id
-            INNER JOIN sys.tables AS tr ON fkc.referenced_object_id = tr.object_id
-            INNER JOIN sys.columns AS cr ON fkc.referenced_object_id = cr.object_id AND fkc.referenced_column_id = cr.column_id
-            WHERE tp.object_id = OBJECT_ID(CONCAT(?, '.', ?));
-        """
-        _execute_safe(cur, fk_sql, [schema_name, table_name])
-        foreign_keys = _format_results(cur)
-
-        return {
-            "table": f"{schema_name}.{table_name}",
-            "columns": columns,
-            "primary_key": pk_columns,
-            "foreign_keys": foreign_keys
-        }
-    finally:
-        if conn:
-            conn.close()
-
-@mcp.tool
-def db_execute_query(
-    database_name: str, 
-    sql_query: str,
-    parameters: list[Any] | None = None,
-    read_only: bool = True
-) -> list[dict[str, Any]] | str:
-    """
-    Executes a SQL query against the specified database and returns the results.
-    For security, this tool defaults to read-only mode.
-    
-    WARNING: Disabling read-only mode can expose the database to data modification or deletion.
-    Only disable read_only for trusted, validated queries.
-
-    Args:
-        database_name: The name of the database to execute the query against.
-        sql_query: The SQL query to execute. Use parameter markers (?) for variables.
-        parameters: A list of parameters to substitute into the query.
-        read_only: If True, enforces that the query is a SELECT statement.
-
-    Returns:
-        A list of dictionaries representing the query results, or a confirmation message for non-SELECT queries.
-    """
-    if not is_valid_sql_identifier(database_name):
-        raise ValueError(f"Invalid database name: {database_name}")
-
-    if read_only:
-        # Robust validation for read-only queries
-        
-        # Remove comments and string literals for safer parsing
-        def remove_sql_literals_and_comments(sql):
-            # Remove single-line comments
-            sql = re.sub(r'--.*$', '', sql, flags=re.MULTILINE)
-            # Remove multi-line comments
-            sql = re.sub(r'/\*.*?\*/', '', sql, flags=re.DOTALL)
-            # Remove string literals (both single and double quotes), handling escaped quotes
-            # Single quotes: match '...' allowing '' as escaped quote
-            sql = re.sub(r"'([^']|'')*'", "''", sql)
-            # Double quotes: match "..." allowing "" as escaped quote
-            sql = re.sub(r'"([^"]|"")*"', '""', sql)
-            return sql
-        
-        cleaned_sql = remove_sql_literals_and_comments(sql_query)
-        
-        # Check for only one statement (no semicolons except at the end)
-        statements = [s.strip() for s in cleaned_sql.split(';') if s.strip()]
-        if len(statements) != 1:
-            raise PermissionError("Only single SELECT statements are allowed in read-only mode.")
-        
-        # Check that the statement starts with SELECT (case insensitive, allowing whitespace)
-        if not re.match(r'^\s*SELECT\s+', statements[0], re.IGNORECASE):
-            raise PermissionError("Only SELECT statements are allowed in read-only mode.")
-        
-        # Additional safety: check for common dangerous keywords
-        dangerous_keywords = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'CREATE', 'ALTER', 'EXEC', 'EXECUTE']
-        for keyword in dangerous_keywords:
-            if re.search(rf'\b{keyword}\b', statements[0], re.IGNORECASE):
-                raise PermissionError(f"Statement contains dangerous keyword '{keyword}' in read-only mode.")
-    
-    else:
-        # For non-read-only mode, still prevent multiple statements for safety
-        cleaned_sql = re.sub(r'--.*$', '', sql_query, flags=re.MULTILINE)
-        cleaned_sql = re.sub(r'/\*.*?\*/', '', cleaned_sql, flags=re.DOTALL)
-        statements = [s.strip() for s in cleaned_sql.split(';') if s.strip()]
-        if len(statements) > 1:
-            raise PermissionError("Multiple SQL statements are not allowed.")
-
-    conn = None
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        _execute_safe(cur, f"USE [{database_name}]")
-        
-        _execute_safe(cur, sql_query, parameters)
-        
-        # For SELECT queries, fetch and return results
-        if cur.description:
-            results = _format_results(cur)
-            
-            # Limit the number of rows returned to prevent DoS
-            MAX_ROWS = 10000
-            if len(results) > MAX_ROWS:
-                logger.warning(f"Query returned {len(results)} rows, limiting to {MAX_ROWS}")
-                results = results[:MAX_ROWS]
-                results.append({"WARNING": f"Results limited to {MAX_ROWS} rows for performance and safety."})
-            
-            conn.commit() # Not strictly necessary for SELECT, but good practice
-            return results
-        else:
-            # For non-SELECT queries (e.g., INSERT, UPDATE, DELETE)
-            conn.commit()
-            return f"Query executed successfully. {cur.rowcount} rows affected."
-    except (pyodbc.Error, ValueError) as e:
-        if conn:
-            conn.rollback() # Rollback any transaction on error
-        logger.error(f"Error executing query: {e}")
-        raise
-    finally:
-        if conn:
-            conn.close()
 
 @mcp.tool
 def db_sql2019_get_index_fragmentation(
     database_name: str,
-    schema: str = "dbo",
-    table_name: str | None = None,
+    schema: str | None = None,
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
-    limit: int = 50
+    limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """
-    Analyzes index fragmentation for a specific table or the entire database in SQL Server 2019+.
-    
-    This tool is designed to identify indexes that may need reorganization or rebuilding
-    to improve query performance. High fragmentation can lead to slower data retrieval.
+    """Return index fragmentation rows from dm_db_index_physical_stats."""
+    return _get_index_fragmentation_data(
+        database_name=database_name,
+        schema=schema,
+        min_fragmentation=min_fragmentation,
+        min_page_count=min_page_count,
+        limit=limit,
+    )
 
-    Args:
-        database_name: The database to analyze.
-        schema: The schema of the table (defaults to 'dbo').
-        table_name: (Optional) The specific table to analyze. If not provided, analyzes all tables in the database.
-        min_fragmentation: The minimum fragmentation percentage to report (default: 10.0).
-        min_page_count: The minimum number of pages an index must have to be included (default: 100).
-        limit: The maximum number of fragmented indexes to return (default: 50).
-
-    Returns:
-        A list of dictionaries, each detailing a fragmented index.
-    """
-    if not is_valid_sql_identifier(database_name):
-        raise ValueError(f"Invalid database name: {database_name}")
-    if not is_valid_sql_identifier(schema):
-        raise ValueError(f"Invalid schema name: {schema}")
-    if table_name and not is_valid_sql_identifier(table_name):
-        raise ValueError(f"Invalid table name: {table_name}")
-
-    conn = None
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        _execute_safe(cur, f"USE [{database_name}]")
-
-        fragmentation_query = '''
-            SELECT TOP (?)
-                o.name AS TableName,
-                i.name AS IndexName,
-                ips.index_type_desc,
-                ips.avg_fragmentation_in_percent,
-                ips.page_count
-            FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') AS ips
-            INNER JOIN sys.objects o ON ips.object_id = o.object_id
-            INNER JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
-            WHERE o.is_ms_shipped = 0
-            AND i.name IS NOT NULL
-            AND ips.page_count >= ?
-            AND ips.avg_fragmentation_in_percent >= ?
-        '''
-        
-        params = [limit, min_page_count, min_fragmentation]
-        
-        if table_name:
-            fragmentation_query += " AND o.name = ? AND SCHEMA_NAME(o.schema_id) = ?"
-            params.extend([table_name, schema])
-        
-        if schema and not table_name:
-            fragmentation_query += " AND SCHEMA_NAME(o.schema_id) = ?"
-            params.append(schema)
-
-        fragmentation_query += " ORDER BY ips.avg_fragmentation_in_percent DESC"
-        
-        _execute_safe(cur, fragmentation_query, params)
-        results = _format_results(cur)
-        
-        return results
-    finally:
-        if conn:
-            conn.close()
 
 @mcp.tool
-def db_sql2019_analyze_table_health(
+def db_sql2019_analyze_index_health(
     database_name: str,
-    schema: str,
-    table_name: str
+    schema: str | None = None,
+    min_fragmentation: float = 10.0,
+    min_page_count: int = 100,
+    limit: int = 50,
 ) -> dict[str, Any]:
-    """
-    Provides a comprehensive health analysis for a specific SQL Server table.
+    """High-level index health summary."""
+    items = _get_index_fragmentation_data(
+        database_name=database_name,
+        schema=schema,
+        min_fragmentation=min_fragmentation,
+        min_page_count=min_page_count,
+        limit=limit,
+    )
 
-    This tool performs a deep analysis of a table's structure and usage, including:
-    - Table and index sizes
-    - Foreign key integrity and indexing
-    - Column statistics and data distribution
-    - Identification of potential design issues like:
-        - Missing primary keys
-        - Unused or redundant indexes
-        - Inefficient data types
-    - Actionable recommendations for optimization.
+    severe = [r for r in items if (r.get("avg_fragmentation_in_percent") or 0) >= 30]
+    medium = [r for r in items if 10 <= (r.get("avg_fragmentation_in_percent") or 0) < 30]
 
-    This is a powerful diagnostic tool for database administrators and developers
-    to pinpoint performance bottlenecks and design flaws at the table level.
+    return {
+        "database": database_name,
+        "schema": schema,
+        "fragmented_indexes": items,
+        "summary": {
+            "severe": len(severe),
+            "medium": len(medium),
+            "total": len(items),
+        },
+    }
 
-    The analysis covers several key areas:
-    - **Constraint Analysis**: Checks for missing primary keys and un-indexed foreign keys.
-    - **Index Analysis**: Looks for:
-        - Missing indexes on foreign key columns
-        - Disabled or highly fragmented indexes
-        - Unused large indexes
-        - Redundant/overlapping indexes
-
-    Args:
-        database_name: The database name containing the table.
-        schema: The schema name containing the table.
-        table_name: The name of the table to analyze.
-
-    Returns:
-        Dictionary containing table size, indexes with sizes/types, foreign key dependencies, 
-        statistics, missing constraints analysis, enhanced index analysis, and tuning recommendations.
-    """
-    try:
-        # Validate parameters
-        if not is_valid_sql_identifier(database_name):
-            raise ValueError(f"Invalid database name: {database_name}")
-        if not is_valid_sql_identifier(schema):
-            raise ValueError(f"Invalid schema name: {schema}")
-        if not is_valid_sql_identifier(table_name):
-            raise ValueError(f"Invalid table name: {table_name}")
-
-        logger.info(f"Starting table health analysis for {database_name}.{schema}.{table_name}")
-        
-        conn = None
-        try:
-            conn = get_connection()
-            cur = conn.cursor()
-            logger.info("Successfully connected to database")
-            
-            # Use the specified database
-            logger.info(f"Attempting to use database: {database_name}")
-            try:
-                _execute_safe(cur, f"USE [{database_name}]")
-                logger.info("Successfully connected to database")
-            except Exception as e:
-                logger.error(f"Failed to connect to database {database_name}: {e}")
-                raise
-            
-            # Check if table exists
-            logger.info(f"Checking if table {schema}.{table_name} exists")
-            table_exists_sql = "SELECT OBJECT_ID(CONCAT(?, '.', ?))"
-            try:
-                _execute_safe(cur, table_exists_sql, [schema, table_name])
-                table_exists = cur.fetchone()
-                logger.info(f"Table exists check result: {table_exists}")
-                if not table_exists or table_exists[0] is None:
-                    logger.warning(f"Table {schema}.{table_name} not found in database {database_name}")
-                    return {
-                        "table_info": {},
-                        "indexes": [],
-                        "foreign_keys": [],
-                        "statistics_sample": [],
-                        "health_analysis": {
-                            "constraint_issues": [{"type": "Table Not Found", "message": f"Table '{schema}.{table_name}' does not exist in database '{database_name}'."}],
-                            "index_issues": [],
-                        },
-                        "recommendations": [{"severity": "High", "recommendation": f"Verify that the table '{schema}.{table_name}' exists in the '{database_name}' database."}]
-                    }
-            except Exception as e:
-                logger.error(f"Error checking table existence: {e}")
-                raise
-            
-            # Initialize lists for recommendations and data
-            recommendations = []
-            constraint_issues = []
-            index_issues = []
-            table_size_info_data = {}
-            indexes_info = []
-            fk_info = []
-            stats_info = []
-            
-            # 1. Table Size and Row Count
-            logger.info("Executing table size query")
-            size_sql = '''
-                SELECT 
-                    t.name AS TableName,
-                    s.name AS SchemaName,
-                    p.rows AS RowCounts,
-                    SUM(a.total_pages) * 8 AS TotalSpaceKB,
-                    SUM(a.used_pages) * 8 AS UsedSpaceKB,
-                    (SUM(a.total_pages) - SUM(a.used_pages)) * 8 AS UnusedSpaceKB
-                FROM 
-                    sys.tables t
-                INNER JOIN      
-                    sys.indexes i ON t.object_id = i.object_id
-                INNER JOIN 
-                    sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-                INNER JOIN 
-                    sys.allocation_units a ON p.partition_id = a.container_id
-                LEFT OUTER JOIN 
-                    sys.schemas s ON t.schema_id = s.schema_id
-                WHERE 
-                    t.name = ? AND s.name = ?
-                GROUP BY 
-                    t.name, s.name, p.rows
-            '''
-            try:
-                _execute_safe(cur, size_sql, [table_name, schema])
-                table_size_info = _format_results(cur)
-                logger.info(f"Table size query returned: {table_size_info}")
-                table_size_info_data = table_size_info[0] if table_size_info else {}
-                logger.info(f"Table size info data: {table_size_info_data}")
-            except Exception as e:
-                logger.error(f"Error in table size query: {e}")
-                table_size_info_data = {}
-            
-            # 2. Index Analysis (including size and type)
-            logger.info("Executing index analysis query")
-            index_sql = '''
-                SELECT 
-                    i.name as IndexName,
-                    i.type_desc as IndexType,
-                    SUM(s.used_page_count) * 8.0 / 1024 AS IndexSizeMB
-                FROM sys.dm_db_partition_stats s
-                JOIN sys.indexes i ON s.object_id = i.object_id AND s.index_id = i.index_id
-                WHERE s.object_id = OBJECT_ID(CONCAT(?, '.', ?))
-                GROUP BY i.name, i.type_desc
-                ORDER BY IndexSizeMB DESC;
-            '''
-            try:
-                _execute_safe(cur, index_sql, [schema, table_name])
-                indexes_info = _format_results(cur)
-                logger.info(f"Index analysis query returned: {indexes_info}")
-            except Exception as e:
-                logger.error(f"Error in index analysis query: {e}")
-                indexes_info = []
-            
-            # 3. Foreign Key Dependencies
-            logger.info("Executing foreign key dependencies query")
-            fk_sql = '''
-                SELECT 
-                    fk.name AS FK_Name,
-                    OBJECT_NAME(fk.parent_object_id) AS ParentTable,
-                    cpa.name AS ParentColumn,
-                    OBJECT_NAME(fk.referenced_object_id) AS ReferencedTable,
-                    cre.name AS ReferencedColumn
-                FROM sys.foreign_keys fk
-                JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-                JOIN sys.columns cpa ON fkc.parent_object_id = cpa.object_id AND fkc.parent_column_id = cpa.column_id
-                JOIN sys.columns cre ON fkc.referenced_object_id = cre.object_id AND fkc.referenced_column_id = cre.column_id
-                WHERE fk.parent_object_id = OBJECT_ID(CONCAT(?, '.', ?)) OR fk.referenced_object_id = OBJECT_ID(CONCAT(?, '.', ?));
-            '''
-            try:
-                _execute_safe(cur, fk_sql, [schema, table_name, schema, table_name])
-                fk_info = _format_results(cur)
-                logger.info(f"Foreign key query returned: {fk_info}")
-            except Exception as e:
-                logger.error(f"Error in foreign key query: {e}")
-                fk_info = []
-            
-            # 4. Column Statistics (for a few key columns, as an example)
-            logger.info("Executing column statistics query")
-            stats_sql = '''
-                SELECT TOP 5
-                    c.name AS ColumnName,
-                    st.name AS StatsName,
-                    sp.last_updated,
-                    sp.rows,
-                    sp.rows_sampled,
-                    sp.modification_counter
-                FROM sys.stats st
-                JOIN sys.stats_columns sc ON st.object_id = sc.object_id AND st.stats_id = sc.stats_id
-                JOIN sys.columns c ON sc.object_id = c.object_id AND sc.column_id = c.column_id
-                CROSS APPLY sys.dm_db_stats_properties(st.object_id, st.stats_id) AS sp
-                WHERE st.object_id = OBJECT_ID(CONCAT(?, '.', ?));
-            '''
-            try:
-                _execute_safe(cur, stats_sql, [schema, table_name])
-                stats_info = _format_results(cur)
-                logger.info(f"Column statistics query returned: {stats_info}")
-            except Exception as e:
-                logger.error(f"Error in column statistics query: {e}")
-                stats_info = []
-            
-            # 5. Health Analysis: Missing Primary Key
-            logger.info("Checking for missing primary key")
-            pk_check_sql = "SELECT i.name FROM sys.indexes i WHERE i.is_primary_key = 1 AND i.object_id = OBJECT_ID(CONCAT(?, '.', ?));"
-            try:
-                _execute_safe(cur, pk_check_sql, [schema, table_name])
-                pk_result = cur.fetchone()
-                logger.info(f"Primary key check result: {pk_result}")
-                if not pk_result:
-                    msg = "Critical: Table is missing a primary key. This can lead to duplicate data and performance issues."
-                    constraint_issues.append({"type": "Missing Primary Key", "message": msg})
-                    recommendations.append({"severity": "High", "recommendation": "Define a primary key for this table."})
-            except Exception as e:
-                logger.error(f"Error checking primary key: {e}")
-                # Continue execution even if primary key check fails
-            
-            # 6. Health Analysis: Un-indexed Foreign Keys
-            logger.info("Checking for un-indexed foreign keys")
-            unindexed_fk_sql = '''
-                SELECT fk.name AS ForeignKeyName, cl.name AS ColumnName
-                FROM sys.foreign_keys AS fk
-                INNER JOIN sys.foreign_key_columns AS fkc ON fk.object_id = fkc.constraint_object_id
-                INNER JOIN sys.columns AS cl ON fkc.parent_object_id = cl.object_id AND fkc.parent_column_id = cl.column_id
-                WHERE fkc.parent_object_id = OBJECT_ID(CONCAT(?, '.', ?))
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM sys.index_columns AS ic
-                    WHERE ic.object_id = fkc.parent_object_id AND ic.column_id = fkc.parent_column_id AND ic.index_column_id = 1
-                );
-            '''
-            try:
-                _execute_safe(cur, unindexed_fk_sql, [schema, table_name])
-                unindexed_fks = _format_results(cur)
-                logger.info(f"Un-indexed foreign keys query returned: {unindexed_fks}")
-                for fk in unindexed_fks:
-                    msg = f"Warning: Foreign key '{fk['ForeignKeyName']}' on column '{fk['ColumnName']}' is not indexed. This can cause performance problems during joins and cascading operations."
-                    constraint_issues.append({"type": "Unindexed Foreign Key", "message": msg})
-                    recommendations.append({
-                        "severity": "Medium",
-                        "recommendation": f"Create an index on column '{fk['ColumnName']}' to support the foreign key '{fk['ForeignKeyName']}'."
-                    })
-            except Exception as e:
-                logger.error(f"Error checking for un-indexed foreign keys: {e}")
-            
-            # 7. Health Analysis: Unused Indexes
-            logger.info("Checking for unused indexes")
-            unused_index_sql = '''
-                SELECT i.name AS IndexName,
-                       (SUM(s.user_seeks) + SUM(s.user_scans) + SUM(s.user_lookups)) AS TotalReads,
-                       SUM(s.user_updates) AS TotalWrites,
-                       (SUM(ps.used_page_count) * 8.0 / 1024) as IndexSizeMB
-                FROM sys.dm_db_index_usage_stats s
-                JOIN sys.indexes i ON s.object_id = i.object_id AND s.index_id = i.index_id
-                JOIN sys.dm_db_partition_stats ps ON i.object_id = ps.object_id AND i.index_id = ps.index_id
-                WHERE s.database_id = DB_ID()
-                  AND s.object_id = OBJECT_ID(CONCAT(?, '.', ?))
-                  AND i.is_primary_key = 0
-                GROUP BY i.name
-                HAVING (SUM(s.user_seeks) + SUM(s.user_scans) + SUM(s.user_lookups)) = 0;
-            '''
-            try:
-                _execute_safe(cur, unused_index_sql, [schema, table_name])
-                unused_indexes = _format_results(cur)
-                logger.info(f"Unused indexes query returned: {unused_indexes}")
-                for idx in unused_indexes:
-                    if idx.get('IndexSizeMB') is not None and idx['IndexSizeMB'] > 10: # Only flag large, unused indexes
-                        msg = f"Info: Index '{idx['IndexName']}' appears to be unused and consumes {idx['IndexSizeMB']:.2f} MB. It has high write overhead ({idx['TotalWrites']} writes) with no reads."
-                        index_issues.append({"type": "Unused Index", "message": msg})
-                        recommendations.append({
-                            "severity": "Low",
-                            "recommendation": f"Consider dropping unused index '{idx['IndexName']}' to reduce storage and maintenance overhead, after confirming it's not needed for specific infrequent queries."
-                        })
-            except Exception as e:
-                logger.error(f"Error checking for unused indexes: {e}")
-            
-            # Prepare final result
-            logger.info("Preparing final result")
-            
-            result = {
-                "table_info": table_size_info_data,
-                "indexes": indexes_info,
-                "foreign_keys": fk_info,
-                "statistics_sample": stats_info,
-                "health_analysis": {
-                    "constraint_issues": constraint_issues,
-                    "index_issues": index_issues
-                },
-                "recommendations": recommendations
-            }
-            logger.info(f"Final result prepared successfully: {len(result['table_info'])} table info fields, {len(result['indexes'])} indexes, {len(result['foreign_keys'])} foreign keys")
-            return result
-
-        except Exception as e:
-            logger.error(f"Error in database operations: {e}")
-            raise
-        finally:
-            if conn:
-                conn.close()
-                logger.info("Database connection closed")
-
-    except Exception as e:
-        logger.error(f"Critical error in table health analysis: {e}")
-        return {
-            "table_info": {},
-            "indexes": [],
-            "foreign_keys": [],
-            "statistics_sample": [],
-            "health_analysis": {
-                "constraint_issues": [{"type": "Analysis Error", "message": f"Critical error during table analysis: {str(e)}"}],
-                "index_issues": []
-            },
-            "recommendations": [{"severity": "High", "recommendation": f"Analysis failed due to error: {str(e)}. Check server logs for details."}]
-        }
 
 @mcp.tool
-def db_sql2019_db_stats(database: str | None = None) -> list[dict[str, Any]] | dict[str, Any]:
-    """
-    Retrieves high-level statistics for a specific database or all databases.
-    
-    Provides key metrics like database size, log size, and space usage percentage.
-    This tool is useful for a quick overview of database health and capacity planning.
-
-    Args:
-        database: (Optional) The name of the database to get stats for. If not provided, returns stats for all non-system databases.
-
-    Returns:
-        A list of dictionaries with stats for each database, or a single dictionary if a database is specified.
-    """
-    if database and not is_valid_sql_identifier(database):
-        raise ValueError(f"Invalid database name: {database}")
-
-    conn = None
+def db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str) -> dict[str, Any]:
+    """Table-level storage/index/stats/constraint analysis."""
+    conn = get_connection(database_name)
     try:
-        conn = get_connection()
         cur = conn.cursor()
-        
-        sql = '''
-            SELECT 
-                d.name AS DatabaseName,
-                mf_data.size * 8 / 1024 AS DataSizeMB,
-                mf_log.size * 8 / 1024 AS LogSizeMB,
-                CAST(FILEPROPERTY(mf_data.name, 'SpaceUsed') AS INT) * 8 / 1024 AS DataSpaceUsedMB,
-                CAST(FILEPROPERTY(mf_log.name, 'SpaceUsed') AS INT) * 8 / 1024 AS LogSpaceUsedMB
-            FROM sys.databases d
-            JOIN sys.master_files mf_data ON d.database_id = mf_data.database_id AND mf_data.type = 0 -- 0 = data
-            JOIN sys.master_files mf_log ON d.database_id = mf_log.database_id AND mf_log.type = 1 -- 1 = log
-        '''
-        params = []
-        if database:
-            sql += " WHERE d.name = ?"
-            params.append(database)
-        else:
-            sql += " WHERE d.database_id > 4" # Exclude system databases
-            
-        sql += " ORDER BY d.name"
-        
-        _execute_safe(cur, sql, params)
-        results = _format_results(cur)
-        
-        # Calculate percentages - handle NULL values by coalescing to 0
-        for row in results:
-            # Coalesce NULL values to 0 for safe calculations
-            data_space_used = row['DataSpaceUsedMB'] if row['DataSpaceUsedMB'] is not None else 0
-            log_space_used = row['LogSpaceUsedMB'] if row['LogSpaceUsedMB'] is not None else 0
-            data_size = row['DataSizeMB'] if row['DataSizeMB'] is not None else 0
-            log_size = row['LogSizeMB'] if row['LogSizeMB'] is not None else 0
-            
-            if data_size > 0:
-                row['DataSpaceUsedPercentage'] = (data_space_used / data_size) * 100
-            else:
-                row['DataSpaceUsedPercentage'] = 0
-            if log_size > 0:
-                row['LogSpaceUsedPercentage'] = (log_space_used / log_size) * 100
-            else:
-                row['LogSpaceUsedPercentage'] = 0
-                
-        return results[0] if database and results else results
+
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                t.name AS TableName,
+                s.name AS SchemaName,
+                SUM(p.rows) AS RowCounts,
+                SUM(a.total_pages) * 8 AS TotalSpaceKB,
+                SUM(a.used_pages) * 8 AS UsedSpaceKB,
+                (SUM(a.total_pages) - SUM(a.used_pages)) * 8 AS UnusedSpaceKB
+            FROM sys.tables t
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            JOIN sys.indexes i ON t.object_id = i.object_id
+            JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+            JOIN sys.allocation_units a ON p.partition_id = a.container_id
+            WHERE s.name = ? AND t.name = ?
+            GROUP BY t.name, s.name
+            """,
+            [schema, table_name],
+        )
+        table_info_rows = _rows_to_dicts(cur, cur.fetchall())
+        table_info = table_info_rows[0] if table_info_rows else {}
+
+        _execute_safe(
+            cur,
+            """
+            SELECT i.name AS IndexName, i.type_desc AS IndexType,
+                   CAST(SUM(a.used_pages) * 8.0 / 1024 AS DECIMAL(18, 4)) AS IndexSizeMB,
+                   i.is_disabled
+            FROM sys.indexes i
+            JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+            JOIN sys.allocation_units a ON p.partition_id = a.container_id
+            JOIN sys.tables t ON i.object_id = t.object_id
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            WHERE s.name = ? AND t.name = ? AND i.name IS NOT NULL
+            GROUP BY i.name, i.type_desc, i.is_disabled
+            ORDER BY IndexSizeMB DESC
+            """,
+            [schema, table_name],
+        )
+        indexes = _rows_to_dicts(cur, cur.fetchall())
+
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                fk.name AS FK_Name,
+                OBJECT_NAME(fk.parent_object_id) AS ParentTable,
+                pc.name AS ParentColumn,
+                OBJECT_NAME(fk.referenced_object_id) AS ReferencedTable,
+                rc.name AS ReferencedColumn
+            FROM sys.foreign_keys fk
+            JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+            JOIN sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
+            JOIN sys.columns rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
+            WHERE OBJECT_SCHEMA_NAME(fk.parent_object_id) = ?
+              AND OBJECT_NAME(fk.parent_object_id) = ?
+            ORDER BY fk.name
+            """,
+            [schema, table_name],
+        )
+        foreign_keys = _rows_to_dicts(cur, cur.fetchall())
+
+        _execute_safe(
+            cur,
+            """
+            SELECT TOP 25
+                c.name AS ColumnName,
+                st.name AS StatsName,
+                sp.last_updated,
+                sp.rows,
+                sp.rows_sampled,
+                sp.modification_counter
+            FROM sys.stats st
+            JOIN sys.stats_columns sc ON st.object_id = sc.object_id AND st.stats_id = sc.stats_id
+            JOIN sys.columns c ON sc.object_id = c.object_id AND sc.column_id = c.column_id
+            OUTER APPLY sys.dm_db_stats_properties(st.object_id, st.stats_id) sp
+            JOIN sys.tables t ON st.object_id = t.object_id
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            WHERE s.name = ? AND t.name = ?
+            ORDER BY st.name
+            """,
+            [schema, table_name],
+        )
+        statistics_sample = _rows_to_dicts(cur, cur.fetchall())
+
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                fk.name AS fk_name,
+                pc.name AS column_name,
+                CASE WHEN ix.index_id IS NULL THEN 1 ELSE 0 END AS missing_index
+            FROM sys.foreign_keys fk
+            JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+            JOIN sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
+            LEFT JOIN sys.index_columns ic
+              ON ic.object_id = fkc.parent_object_id AND ic.column_id = fkc.parent_column_id AND ic.key_ordinal = 1
+            LEFT JOIN sys.indexes ix
+              ON ix.object_id = ic.object_id AND ix.index_id = ic.index_id
+            WHERE OBJECT_SCHEMA_NAME(fk.parent_object_id) = ?
+              AND OBJECT_NAME(fk.parent_object_id) = ?
+            """,
+            [schema, table_name],
+        )
+        fk_index_checks = _rows_to_dicts(cur, cur.fetchall())
+
+        constraint_issues: list[dict[str, Any]] = []
+        recommendations: list[dict[str, Any]] = []
+        for fk in fk_index_checks:
+            if fk.get("missing_index") == 1:
+                fk_name = fk.get("fk_name")
+                column_name = fk.get("column_name")
+                constraint_issues.append(
+                    {
+                        "type": "Unindexed Foreign Key",
+                        "message": (
+                            f"Warning: Foreign key '{fk_name}' on column '{column_name}' "
+                            "is not indexed. This can impact joins and cascading operations."
+                        ),
+                    }
+                )
+                recommendations.append(
+                    {
+                        "severity": "Medium",
+                        "recommendation": f"Create index on '{column_name}' to support foreign key '{fk_name}'.",
+                    }
+                )
+
+        return {
+            "table_info": table_info,
+            "indexes": indexes,
+            "foreign_keys": foreign_keys,
+            "statistics_sample": statistics_sample,
+            "health_analysis": {
+                "constraint_issues": constraint_issues,
+                "index_issues": [],
+            },
+            "recommendations": recommendations,
+        }
     finally:
-        if conn:
-            conn.close()
+        conn.close()
+
+
+@mcp.tool
+def db_sql2019_db_stats(database: str | None = None) -> dict[str, Any]:
+    """Database object counts."""
+    db_name = database or SETTINGS.db_name
+    conn = get_connection(db_name)
+    try:
+        cur = conn.cursor()
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                DB_NAME() AS DatabaseName,
+                (SELECT COUNT(*) FROM sys.tables) AS TableCount,
+                (SELECT COUNT(*) FROM sys.views) AS ViewCount,
+                (SELECT COUNT(*) FROM sys.procedures) AS ProcedureCount,
+                (SELECT COUNT(*) FROM sys.indexes WHERE name IS NOT NULL) AS IndexCount,
+                (SELECT COUNT(*) FROM sys.schemas) AS SchemaCount
+            """,
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"DatabaseName": db_name}
+        return {
+            "DatabaseName": row[0],
+            "TableCount": row[1],
+            "ViewCount": row[2],
+            "ProcedureCount": row[3],
+            "IndexCount": row[4],
+            "SchemaCount": row[5],
+        }
+    finally:
+        conn.close()
+
 
 @mcp.tool
 def db_sql2019_server_info_mcp() -> dict[str, Any]:
-    """
-    Retrieves SQL Server instance information including server name, version, edition, and connection details.
-    
-    Returns comprehensive server information including:
-    - Server version and edition
-    - Server name and current database
-    - Current user and connection details
-    
-    Returns:
-        Dictionary containing server information with keys:
-            server_version: Full SQL Server version string
-            server_name: Server name
-            database: Current database name
-            user: Current user
-            server_version_short: Short version number
-            server_edition: Server edition (Enterprise, Standard, etc.)
-            server_addr: Server IP address
-            server_port: Server port number
-    """
-    conn = None
+    """Get SQL Server and MCP runtime information."""
+    conn = get_connection("master")
     try:
-        conn = get_connection()
         cur = conn.cursor()
-        
-        def _fetch_single_value(default: Any = None) -> Any:
-            row = cur.fetchone()
-            return row[0] if row else default
-
-        # Get server properties using individual queries to avoid ODBC type issues
-        cur.execute('SELECT @@VERSION')
-        server_version = _fetch_single_value("unknown")
-        
-        cur.execute('SELECT @@SERVERNAME')
-        server_name = _fetch_single_value("unknown")
-        
-        cur.execute('SELECT DB_NAME()')
-        database = _fetch_single_value("unknown")
-        
-        cur.execute('SELECT SYSTEM_USER')
-        user = _fetch_single_value("unknown")
-        
-        cur.execute("SELECT SERVERPROPERTY('ProductVersion')")
-        server_version_short = _fetch_single_value("unknown")
-        
-        cur.execute("SELECT SERVERPROPERTY('Edition')")
-        server_edition = _fetch_single_value("unknown")
-        
-        # Get connection info
-        cur.execute("SELECT CAST(CONNECTIONPROPERTY('local_net_address') AS VARCHAR(50))")
-        server_addr = _fetch_single_value('127.0.0.1')
-        
-        cur.execute("SELECT CAST(CONNECTIONPROPERTY('local_tcp_port') AS INT)")
-        server_port = _fetch_single_value(1433)
-        
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                @@VERSION AS server_version,
+                @@SERVERNAME AS server_name,
+                DB_NAME() AS database_name,
+                SUSER_SNAME() AS login_name,
+                CONVERT(varchar(128), SERVERPROPERTY('ProductVersion')) AS server_version_short,
+                CONVERT(varchar(128), SERVERPROPERTY('Edition')) AS server_edition
+            """,
+        )
+        row = cur.fetchone()
+        if not row:
+            raise RuntimeError("Could not retrieve server information")
         return {
-            'server_version': server_version,
-            'server_name': server_name,
-            'database': database,
-            'user': user,
-            'server_version_short': server_version_short,
-            'server_edition': server_edition,
-            'server_addr': server_addr,
-            'server_port': server_port
+            "server_version": row[0],
+            "server_name": row[1],
+            "database": row[2],
+            "user": row[3],
+            "server_version_short": row[4],
+            "server_edition": row[5],
+            "server_addr": SETTINGS.db_server,
+            "server_port": SETTINGS.db_port,
+            "mcp_transport": SETTINGS.transport,
+            "mcp_max_rows": SETTINGS.max_rows,
+            "mcp_allow_write": SETTINGS.allow_write,
         }
-            
-    except Exception as e:
-        logger.error(f"Error retrieving server info: {e}")
-        raise
     finally:
-        if conn:
-            conn.close()
+        conn.close()
+
 
 @mcp.tool
 def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
-    if not is_valid_sql_identifier(database_name):
-        raise ValueError(f"Invalid database name: {database_name}")
-    """
-    Analyzes Query Store data to identify top problematic queries and provide recommendations.
-    
-    Retrieves and analyzes Query Store data to find:
-    - Long-running queries (high average duration)
-    - Regressed queries (performance degradation over time)
-    - High CPU consumption queries
-    - High I/O queries
-    - Queries with high execution count and poor performance
-    
-    Provides specific recommendations for each identified issue based on execution patterns,
-    plan changes, and performance metrics.
-    
-    **Prerequisite**: Query Store must be enabled on the target database (not enabled by default 
-    in SQL Server 2019). If disabled, the tool will return empty results or errors. 
-    To enable: ALTER DATABASE [database_name] SET QUERY_STORE = ON;
-    
-    Args:
-        database_name: The database name to analyze Query Store data for.
-    
-    Returns:
-        Dictionary containing Query Store analysis, identified issues with recommendations,
-        and summary statistics.
-    """
-    if not is_valid_sql_identifier(database_name):
-        raise ValueError(f"Invalid database name: {database_name}")
-    
-    conn = None
+    """Query Store summary for high-cost queries."""
+    conn = get_connection(database_name)
     try:
-        conn = get_connection()
         cur = conn.cursor()
-        
-        # Check if Query Store is enabled
-        _execute_safe(cur, f"""
-            SELECT 
-                actual_state_desc,
-                current_storage_size_mb,
-                max_storage_size_mb,
-                stale_query_threshold_days,
-                desired_state_desc,
-                query_capture_mode_desc
-            FROM [{database_name}].sys.database_query_store_options
-        """)
-        qs_config = cur.fetchone()
-        
-        if not qs_config or qs_config[0] == 'OFF':
-            return {
-                'database': database_name,
-                'query_store_enabled': False,
-                'error': 'Query Store is not enabled for this database. To enable: ALTER DATABASE [{}] SET QUERY_STORE = ON;'.format(database_name),
-                'recommendations': [{
-                    'type': 'configuration',
-                    'priority': 'high',
-                    'issue': 'Query Store is disabled',
-                    'recommendation': 'Enable Query Store to collect query performance data',
-                    'potential_actions': [
-                        f'ALTER DATABASE [{database_name}] SET QUERY_STORE = ON;',
-                        'Consider setting appropriate storage limits',
-                        'Configure data retention settings'
-                    ]
-                }]
-            }
-        
-        # Get Query Store configuration
-        query_store_config = {
-            'state': qs_config[0],
-            'current_storage_mb': qs_config[1],
-            'max_storage_mb': qs_config[2],
-            'stale_threshold_days': qs_config[3],
-            'capture_mode': qs_config[5]
+
+        _execute_safe(
+            cur,
+            """
+            SELECT actual_state_desc, desired_state_desc, current_storage_size_mb, max_storage_size_mb
+            FROM sys.database_query_store_options
+            """,
+        )
+        qs = cur.fetchone()
+        query_store_enabled = bool(qs and str(qs[0]).upper() not in {"OFF", "ERROR"})
+
+        output: dict[str, Any] = {
+            "database": database_name,
+            "query_store_enabled": query_store_enabled,
+            "query_store_config": {
+                "state": qs[0] if qs else None,
+                "desired_state": qs[1] if qs else None,
+                "current_storage_mb": qs[2] if qs else None,
+                "max_storage_mb": qs[3] if qs else None,
+            },
+            "long_running_queries": [],
+            "regressed_queries": [],
+            "high_cpu_queries": [],
+            "high_io_queries": [],
+            "high_execution_queries": [],
+            "recommendations": [],
+            "summary": {},
         }
-        
-        # Get analysis period
-        _execute_safe(cur, f"""
-            SELECT 
-                CONVERT(VARCHAR(50), MIN(rs.last_execution_time), 120),
-                CONVERT(VARCHAR(50), MAX(rs.last_execution_time), 120),
-                COUNT(DISTINCT q.query_id)
-            FROM [{database_name}].sys.query_store_query q
-            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-            WHERE rs.last_execution_time >= DATEADD(day, -30, GETDATE())
-        """)
-        analysis_period = cur.fetchone() or (None, None, 0)
-        
-        # Get long-running queries (top 10)
-        _execute_safe(cur, f"""
+
+        if not query_store_enabled:
+            output["summary"] = {
+                "long_running_queries_count": 0,
+                "regressed_queries_count": 0,
+                "high_cpu_queries_count": 0,
+                "high_io_queries_count": 0,
+                "high_execution_queries_count": 0,
+                "total_recommendations": 1,
+                "high_priority_recommendations": 1,
+                "analysis_timestamp": _now_utc_iso(),
+            }
+            output["recommendations"].append(
+                {
+                    "type": "query_store",
+                    "priority": "high",
+                    "issue": "Query Store is disabled",
+                    "recommendation": f"Enable Query Store: ALTER DATABASE [{database_name}] SET QUERY_STORE = ON;",
+                }
+            )
+            return output
+
+        _execute_safe(
+            cur,
+            """
             SELECT TOP 10
                 q.query_id,
                 qt.query_sql_text,
-                SUM(rs.count_executions) as total_executions,
-                AVG(rs.avg_duration/1000.0) as avg_duration_ms,
-                AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms,
-                AVG(rs.avg_logical_io_reads) as avg_logical_io_reads,
-                MAX(o.name) as object_name
-            FROM [{database_name}].sys.query_store_query q
-            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-            LEFT JOIN [{database_name}].sys.objects o ON q.object_id = o.object_id
-            WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
-                AND rs.avg_duration > 1000000  -- > 1 second
+                SUM(rs.count_executions) AS executions,
+                CAST(AVG(rs.avg_duration) / 1000.0 AS DECIMAL(18,2)) AS avg_duration_ms,
+                CAST(AVG(rs.avg_cpu_time) / 1000.0 AS DECIMAL(18,2)) AS avg_cpu_ms,
+                CAST(AVG(rs.avg_logical_io_reads) AS DECIMAL(18,2)) AS avg_logical_io_reads
+            FROM sys.query_store_query q
+            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             GROUP BY q.query_id, qt.query_sql_text
-            ORDER BY avg_duration_ms DESC
-        """)
-        long_running_queries = []
-        for row in cur.fetchall():
-            long_running_queries.append({
-                'query_id': row[0],
-                'query_text': row[1],
-                'executions': row[2] if row[2] is not None else 0,
-                'avg_duration_ms': round(row[3], 1) if row[3] is not None else 0.0,
-                'avg_cpu_ms': round(row[4], 1) if row[4] is not None else 0.0,
-                'avg_logical_io_reads': int(row[5]) if row[5] is not None else 0,
-                'object_name': row[6] or 'Ad-hoc Query'
-            })
-        
-        # Get regressed queries (top 5)
-        _execute_safe(cur, f"""
-            SELECT TOP 5
-                q.query_id,
-                qt.query_sql_text,
-                SUM(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.count_executions ELSE 0 END) as recent_executions,
-                AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) as recent_avg_duration_ms,
-                AVG(CASE WHEN rs.last_execution_time BETWEEN DATEADD(day, -14, GETDATE()) AND DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) as older_avg_duration_ms,
-                AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_cpu_time/1000.0 END) as recent_avg_cpu_ms
-            FROM [{database_name}].sys.query_store_query q
-            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-            WHERE rs.last_execution_time >= DATEADD(day, -14, GETDATE())
-                AND rs.count_executions > 10
-            GROUP BY q.query_id, qt.query_sql_text
-            HAVING AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) > 
-                    AVG(CASE WHEN rs.last_execution_time BETWEEN DATEADD(day, -14, GETDATE()) AND DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) * 1.5
-            ORDER BY (AVG(CASE WHEN rs.last_execution_time >= DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END) - AVG(CASE WHEN rs.last_execution_time BETWEEN DATEADD(day, -14, GETDATE()) AND DATEADD(day, -7, GETDATE()) THEN rs.avg_duration/1000.0 END)) DESC
-        """)
-        regressed_queries = []
-        for row in cur.fetchall():
-            if row[3] is not None and row[4] is not None and row[4] > 0:
-                regression_percent = round(((row[3] - row[4]) / row[4]) * 100, 1)
-                regressed_queries.append({
-                    'query_id': row[0],
-                    'query_text': row[1],
-                    'recent_executions': int(row[2]) if row[2] is not None else 0,
-                    'recent_avg_duration_ms': round(row[3], 1) if row[3] is not None else 0.0,
-                    'older_avg_duration_ms': round(row[4], 1) if row[4] is not None else 0.0,
-                    'regression_percent': regression_percent,
-                    'recent_avg_cpu_ms': round(row[5], 1) if row[5] is not None else 0.0
-                })
-        
-        # Get high CPU queries (top 5)
-        _execute_safe(cur, f"""
-            SELECT TOP 5
-                q.query_id,
-                qt.query_sql_text,
-                SUM(rs.count_executions) as executions,
-                AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms,
-                MAX(rs.max_cpu_time/1000.0) as max_cpu_ms,
-                AVG(rs.avg_duration/1000.0) as avg_duration_ms,
-                AVG(rs.avg_logical_io_reads) as avg_logical_io_reads
-            FROM [{database_name}].sys.query_store_query q
-            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-            WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
-                AND rs.avg_cpu_time > 500000  -- > 0.5 seconds CPU time
-            GROUP BY q.query_id, qt.query_sql_text
-            ORDER BY avg_cpu_ms DESC
-        """)
-        high_cpu_queries = []
-        for row in cur.fetchall():
-            high_cpu_queries.append({
-                'query_id': row[0],
-                'query_text': row[1],
-                'executions': int(row[2]) if row[2] is not None else 0,
-                'avg_cpu_ms': round(row[3], 1) if row[3] is not None else 0.0,
-                'max_cpu_ms': round(row[4], 1) if row[4] is not None else 0.0,
-                'avg_duration_ms': round(row[5], 1) if row[5] is not None else 0.0,
-                'avg_logical_io_reads': int(row[6]) if row[6] is not None else 0
-            })
-        
-        # Get high I/O queries (top 5)
-        _execute_safe(cur, f"""
-            SELECT TOP 5
-                q.query_id,
-                qt.query_sql_text,
-                SUM(rs.count_executions) as executions,
-                AVG(rs.avg_logical_io_reads) as avg_logical_io_reads,
-                AVG(rs.avg_logical_io_writes) as avg_logical_io_writes,
-                AVG(rs.avg_physical_io_reads) as avg_physical_io_reads,
-                AVG(rs.avg_duration/1000.0) as avg_duration_ms,
-                AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms
-            FROM [{database_name}].sys.query_store_query q
-            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-            WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
-                AND (rs.avg_logical_io_reads + rs.avg_logical_io_writes) > 100000  -- > 100k logical I/O
-            GROUP BY q.query_id, qt.query_sql_text
-            ORDER BY (AVG(rs.avg_logical_io_reads) + AVG(rs.avg_logical_io_writes)) DESC
-        """)
-        high_io_queries = []
-        for row in cur.fetchall():
-            high_io_queries.append({
-                'query_id': row[0],
-                'query_text': row[1],
-                'executions': int(row[2]) if row[2] is not None else 0,
-                'avg_logical_io_reads': int(row[3]) if row[3] is not None else 0,
-                'avg_logical_io_writes': int(row[4]) if row[4] is not None else 0,
-                'avg_physical_io_reads': int(row[5]) if row[5] is not None else 0,
-                'avg_duration_ms': round(row[6], 1) if row[6] is not None else 0.0,
-                'avg_cpu_ms': round(row[7], 1) if row[7] is not None else 0.0
-            })
-        
-        # Get high execution count queries (top 5)
-        _execute_safe(cur, f"""
-            SELECT TOP 5
-                q.query_id,
-                qt.query_sql_text,
-                SUM(rs.count_executions) as executions,
-                AVG(rs.avg_duration/1000.0) as avg_duration_ms,
-                AVG(rs.avg_cpu_time/1000.0) as avg_cpu_ms,
-                AVG(rs.avg_logical_io_reads) as avg_logical_io_reads
-            FROM [{database_name}].sys.query_store_query q
-            JOIN [{database_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN [{database_name}].sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN [{database_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-            WHERE rs.last_execution_time >= DATEADD(day, -7, GETDATE())
-            GROUP BY q.query_id, qt.query_sql_text
-            HAVING SUM(rs.count_executions) > 1000  -- > 1000 executions
-            ORDER BY executions DESC
-        """)
-        high_execution_queries = []
-        for row in cur.fetchall():
-            high_execution_queries.append({
-                'query_id': row[0],
-                'query_text': row[1],
-                'executions': int(row[2]) if row[2] is not None else 0,
-                'avg_duration_ms': round(row[3], 1) if row[3] is not None else 0.0,
-                'avg_cpu_ms': round(row[4], 1) if row[4] is not None else 0.0,
-                'avg_logical_io_reads': int(row[5]) if row[5] is not None else 0
-            })
-        
-        # Generate recommendations based on findings
-        recommendations = []
-        
-        # Recommendations for long-running queries
-        for query in long_running_queries[:3]:  # Top 3 long-running queries
-            if query['avg_duration_ms'] > 2000:  # > 2 seconds
-                recommendations.append({
-                    'type': 'long_running_query',
-                    'priority': 'high',
-                    'query_id': query['query_id'],
-                    'issue': f"Query with {query['avg_duration_ms']}ms average duration executed {query['executions']} times",
-                    'recommendation': "Analyze execution plan for missing indexes, table scans, or inefficient joins. Consider query optimization or index creation.",
-                    'potential_actions': [
-                        'Review execution plan for optimization opportunities',
-                        'Check for missing indexes on join/filter columns',
-                        'Consider query parameterization if using literals',
-                        'Evaluate if query can be rewritten for better performance'
-                    ]
-                })
-        
-        # Recommendations for regressed queries
-        for query in regressed_queries[:2]:  # Top 2 regressed queries
-            if query['regression_percent'] > 50:  # > 50% regression
-                recommendations.append({
-                    'type': 'regressed_query',
-                    'priority': 'high',
-                    'query_id': query['query_id'],
-                    'issue': f"Query performance regressed by {query['regression_percent']}% (from {query['older_avg_duration_ms']}ms to {query['recent_avg_duration_ms']}ms)",
-                    'recommendation': "Check for plan changes, statistics updates, or data distribution changes. Consider plan forcing or statistics updates.",
-                    'potential_actions': [
-                        'Check query plan history for plan changes',
-                        'Update statistics on related tables',
-                        'Consider forcing a previous good plan',
-                        'Analyze data distribution changes'
-                    ]
-                })
-        
-        # General recommendations
-        if len(long_running_queries) > 5:
-            recommendations.append({
-                'type': 'general',
-                'priority': 'medium',
-                'issue': f"Found {len(long_running_queries)} long-running queries",
-                'recommendation': 'Consider implementing query performance monitoring and regular optimization reviews.',
-                'potential_actions': [
-                    'Set up query performance monitoring',
-                    'Schedule regular query optimization reviews',
-                    'Consider implementing query governor for resource limits',
-                    'Monitor Query Store storage usage'
-                ]
-            })
-        
-        return {
-            'database': database_name,
-            'query_store_enabled': True,
-            'query_store_config': query_store_config,
-            'analysis_period': {
-                'earliest_data': analysis_period[0] if analysis_period[0] else None,
-                        'latest_data': analysis_period[1] if analysis_period[1] else None,
-                        'days_covered': 0, # Cannot calculate days from string dates easily
-                'total_queries': analysis_period[2] if analysis_period[2] else 0
-            },
-            'long_running_queries': long_running_queries,
-            'regressed_queries': regressed_queries,
-            'high_cpu_queries': high_cpu_queries,
-            'high_io_queries': high_io_queries,
-            'high_execution_queries': high_execution_queries,
-            'recommendations': recommendations
+            ORDER BY AVG(rs.avg_duration) DESC
+            """,
+        )
+        long_running = _rows_to_dicts(cur, cur.fetchall())
+        output["long_running_queries"] = long_running[:3]
+        output["high_cpu_queries"] = sorted(long_running, key=lambda x: x.get("avg_cpu_ms") or 0, reverse=True)[:3]
+        output["high_io_queries"] = sorted(
+            long_running,
+            key=lambda x: x.get("avg_logical_io_reads") or 0,
+            reverse=True,
+        )[:5]
+        output["high_execution_queries"] = sorted(
+            long_running,
+            key=lambda x: x.get("executions") or 0,
+            reverse=True,
+        )[:5]
+
+        recommendations: list[dict[str, Any]] = []
+        for query_row in output["long_running_queries"]:
+            recommendations.append(
+                {
+                    "type": "long_running_query",
+                    "priority": "high",
+                    "query_id": query_row.get("query_id"),
+                    "issue": f"Query average duration {query_row.get('avg_duration_ms')}ms",
+                    "recommendation": "Inspect execution plan and add/adjust indexes for join/filter columns.",
+                }
+            )
+
+        output["recommendations"] = recommendations
+        output["summary"] = {
+            "long_running_queries_count": len(output["long_running_queries"]),
+            "regressed_queries_count": len(output["regressed_queries"]),
+            "high_cpu_queries_count": len(output["high_cpu_queries"]),
+            "high_io_queries_count": len(output["high_io_queries"]),
+            "high_execution_queries_count": len(output["high_execution_queries"]),
+            "total_recommendations": len(recommendations),
+            "high_priority_recommendations": len([r for r in recommendations if r.get("priority") == "high"]),
+            "analysis_timestamp": _now_utc_iso(),
         }
-        
-    except Exception as e:
-        logger.exception(f"Error analyzing Query Store data: {e}")
-        return {
-            'database': database_name,
-            'query_store_enabled': False,
-            'error': 'Error analyzing Query Store data',
-            'recommendations': [{
-                'type': 'error',
-                'priority': 'high',
-                'issue': 'Failed to analyze Query Store',
-                'recommendation': 'Check database permissions and Query Store configuration.',
-                'potential_actions': [
-                    'Verify database permissions for Query Store views',
-                    'Check if Query Store is enabled',
-                    'Verify SQL Server version compatibility'
-                ]
-            }]
-        }
+        return output
     finally:
-        if conn:
-            conn.close()
+        conn.close()
+
 
 @mcp.tool
 def db_sql2019_check_fragmentation(
     database_name: str,
-    min_fragmentation: float = 15.0,
+    min_fragmentation: float = 10.0,
     min_page_count: int = 100,
-    include_recommendations: bool = True
+    include_recommendations: bool = True,
 ) -> dict[str, Any]:
-    """
-    Comprehensive index fragmentation analysis with actionable recommendations.
-    
-    This tool provides a complete fragmentation assessment of your SQL Server database,
-    including detailed analysis of problematic indexes and specific SQL commands to fix them.
-    
-    Features:
-    - Identifies fragmented indexes across the entire database
-    - Categorizes fragmentation levels (Low, Medium, High, Severe)
-    - Provides specific SQL commands for REORGANIZE vs REBUILD decisions
-    - Includes maintenance window recommendations
-    - Estimates time and resource requirements
-    
-    Fragmentation Guidelines:
-    - 5-30%: REORGANIZE (online operation, quick)
-    - >30%: REBUILD (can be offline/online depending on edition)
-    - >70%: Severe fragmentation requiring immediate attention
-    
-    Args:
-        database_name: The database to analyze for fragmentation.
-        min_fragmentation: Minimum fragmentation percentage to include (default: 10.0).
-        min_page_count: Minimum page count for indexes to analyze (default: 50).
-        include_recommendations: Whether to include fix recommendations (default: true).
-    
-    Returns:
-        Dictionary containing fragmentation analysis, categorized issues, and fix commands.
-    """
-    if not is_valid_sql_identifier(database_name):
-        raise ValueError(f"Invalid database name: {database_name}")
-    
-    conn = None
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        _execute_safe(cur, f"USE [{database_name}]")
-        
-        # Get comprehensive fragmentation data (using LIMITED mode for performance)
-        fragmentation_query = '''
-            SELECT 
-                s.name as SchemaName,
-                t.name as TableName,
-                i.name as IndexName,
-                ips.index_type_desc,
-                ips.avg_fragmentation_in_percent,
-                ips.page_count,
-                ips.record_count,
-                ips.avg_page_space_used_in_percent,
-                i.fill_factor,
-                i.is_disabled,
-                i.is_padded,
-                CASE 
-                    WHEN ips.avg_fragmentation_in_percent >= 70 THEN 'SEVERE'
-                    WHEN ips.avg_fragmentation_in_percent >= 30 THEN 'HIGH' 
-                    WHEN ips.avg_fragmentation_in_percent >= 15 THEN 'MEDIUM'
-                    WHEN ips.avg_fragmentation_in_percent >= 5 THEN 'LOW'
-                    ELSE 'MINIMAL'
-                END as Severity,
-                CASE
-                    WHEN ips.avg_fragmentation_in_percent >= 30 AND ips.page_count >= 1000 THEN 'REBUILD'
-                    WHEN ips.avg_fragmentation_in_percent >= 15 THEN 'REORGANIZE'
-                    WHEN ips.avg_fragmentation_in_percent >= 5 THEN 'REORGANIZE'
-                    ELSE 'MONITOR'
-                END as RecommendedAction
-            FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ips
-            INNER JOIN sys.objects o ON ips.object_id = o.object_id
-            INNER JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
-            INNER JOIN sys.tables t ON o.object_id = t.object_id
-            INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
-            WHERE o.is_ms_shipped = 0
-            AND i.name IS NOT NULL
-            AND ips.page_count >= ?
-            AND ips.avg_fragmentation_in_percent >= ?
-            AND ips.index_level = 0  -- Leaf level only
-            ORDER BY ips.avg_fragmentation_in_percent DESC
-        '''
-        
-        _execute_safe(cur, fragmentation_query, [min_page_count, min_fragmentation])
-        fragmented_indexes = []
-        
-        for row in cur.fetchall():
-            fragmented_indexes.append({
-                'SchemaName': row[0],
-                'TableName': row[1], 
-                'IndexName': row[2],
-                'IndexType': row[3],
-                'FragmentationPercent': round(row[4], 2),
-                'PageCount': row[5],
-                'RecordCount': row[6],
-                'AvgPageSpaceUsed': round(row[7], 2) if row[7] else 0,
-                'FillFactor': row[8],
-                'IsDisabled': row[9],
-                'IsPadded': row[10],
-                'Severity': row[11],
-                'RecommendedAction': row[12]
-            })
-        
-        # Categorize by severity
-        severe_indexes = [idx for idx in fragmented_indexes if idx['Severity'] == 'SEVERE']
-        high_indexes = [idx for idx in fragmented_indexes if idx['Severity'] == 'HIGH']
-        medium_indexes = [idx for idx in fragmented_indexes if idx['Severity'] == 'MEDIUM']
-        low_indexes = [idx for idx in fragmented_indexes if idx['Severity'] == 'LOW']
-        
-        # Generate fix commands
-        fix_commands = []
-        maintenance_plan = []
-        
-        if include_recommendations:
-            for idx in fragmented_indexes[:20]:  # Limit to top 20 for practical use
-                schema_table = f"[{idx['SchemaName']}].[{idx['TableName']}]"
-                index_name = idx['IndexName']
-                
-                if idx['RecommendedAction'] == 'REBUILD':
-                    # Check if Enterprise Edition for online rebuild
-                    fix_commands.append({
-                        'TableName': schema_table,
-                        'IndexName': index_name,
-                        'Fragmentation': idx['FragmentationPercent'],
-                        'Severity': idx['Severity'],
-                        'Command': f"ALTER INDEX [{index_name}] ON {schema_table} REBUILD WITH (FILLFACTOR = 90, ONLINE = ON, MAXDOP = 2);",
-                        'CommandOffline': f"ALTER INDEX [{index_name}] ON {schema_table} REBUILD WITH (FILLFACTOR = 90);",
-                        'EstimatedTime': f"{max(1, idx['PageCount'] // 1000)}-{(idx['PageCount'] // 500) + 1} minutes",
-                        'Impact': 'HIGH - Requires maintenance window'
-                    })
-                    
-                elif idx['RecommendedAction'] == 'REORGANIZE':
-                    fix_commands.append({
-                        'TableName': schema_table,
-                        'IndexName': index_name,
-                        'Fragmentation': idx['FragmentationPercent'],
-                        'Severity': idx['Severity'],
-                        'Command': f"ALTER INDEX [{index_name}] ON {schema_table} REORGANIZE;",
-                        'EstimatedTime': f"{max(1, idx['PageCount'] // 2000)}-{(idx['PageCount'] // 1000) + 1} minutes",
-                        'Impact': 'LOW - Can run during business hours'
-                    })
-        
-        # Generate maintenance plan
-        if fragmented_indexes:
-            maintenance_plan.append({
-                'Phase': 'IMMEDIATE (Severe)',
-                'Indexes': len(severe_indexes),
-                'Action': 'Schedule maintenance window for REBUILD operations',
-                'Priority': 'CRITICAL'
-            })
-            
-            maintenance_plan.append({
-                'Phase': 'THIS WEEK (High)',
-                'Indexes': len(high_indexes),
-                'Action': 'Plan REBUILD operations during low-usage periods',
-                'Priority': 'HIGH'
-            })
-            
-            maintenance_plan.append({
-                'Phase': 'THIS MONTH (Medium)',
-                'Indexes': len(medium_indexes),
-                'Action': 'Run REORGANIZE during maintenance window',
-                'Priority': 'MEDIUM'
-            })
-            
-            maintenance_plan.append({
-                'Phase': 'MONITORING (Low)',
-                'Indexes': len(low_indexes),
-                'Action': 'Monitor and consider REORGANIZE if trend continues',
-                'Priority': 'LOW'
-            })
-        
-        return {
-            'database': database_name,
-            'analysis_timestamp': datetime.now().isoformat(),
-            'total_fragmented_indexes': len(fragmented_indexes),
-            'fragmentation_summary': {
-                'severe_fragmentation': len(severe_indexes),
-                'high_fragmentation': len(high_indexes),
-                'medium_fragmentation': len(medium_indexes),
-                'low_fragmentation': len(low_indexes)
-            },
-            'top_fragmented_indexes': fragmented_indexes[:15],  # Top 15 for display
-            'fix_commands': fix_commands,
-            'maintenance_plan': maintenance_plan,
-            'recommendations': [
+    """Fragmentation summary with maintenance recommendations."""
+    fragmented_indexes = _get_index_fragmentation_data(
+        database_name=database_name,
+        schema=None,
+        min_fragmentation=min_fragmentation,
+        min_page_count=min_page_count,
+        limit=200,
+    )
+
+    summary = {"severe": 0, "high": 0, "medium": 0, "low": 0}
+    top_items: list[dict[str, Any]] = []
+    fix_commands: list[str] = []
+
+    for row in fragmented_indexes:
+        frag = float(row.get("avg_fragmentation_in_percent") or 0)
+        category = "LOW"
+        action = "MONITOR"
+        key = "low"
+
+        if frag >= 40:
+            category = "SEVERE"
+            action = "REBUILD"
+            key = "severe"
+        elif frag >= 30:
+            category = "HIGH"
+            action = "REBUILD"
+            key = "high"
+        elif frag >= 10:
+            category = "MEDIUM"
+            action = "REORGANIZE"
+            key = "medium"
+
+        summary[key] += 1
+
+        enriched = {
+            "schema": row.get("schema_name"),
+            "table_name": row.get("table_name"),
+            "index_name": row.get("index_name"),
+            "fragmentation_percent": frag,
+            "category": category,
+            "page_count": row.get("page_count"),
+            "recommended_action": action,
+        }
+        top_items.append(enriched)
+
+        if action in {"REBUILD", "REORGANIZE"} and row.get("index_name"):
+            fix_commands.append(
+                f"ALTER INDEX [{row['index_name']}] ON [{row['schema_name']}].[{row['table_name']}] {action};"
+            )
+
+    output = {
+        "database": database_name,
+        "analysis_timestamp": _now_utc_iso(),
+        "total_fragmented_indexes": len(fragmented_indexes),
+        "fragmentation_summary": summary,
+        "top_fragmented_indexes": top_items[:10],
+        "fix_commands": fix_commands[:20],
+        "maintenance_plan": {
+            "immediate": summary["severe"] + summary["high"],
+            "this_week": summary["medium"],
+            "this_month": summary["low"],
+            "monitoring": 0,
+        },
+        "recommendations": [],
+    }
+
+    if include_recommendations:
+        recs: list[dict[str, Any]] = []
+        if summary["severe"] + summary["high"] > 0:
+            recs.append(
                 {
-                    'category': 'CRITICAL',
-                    'message': f"Found {len(severe_indexes)} indexes with severe fragmentation (>70%). Schedule immediate maintenance.",
-                    'action': 'Plan maintenance window for REBUILD operations'
-                },
-                {
-                    'category': 'PERFORMANCE',
-                    'message': f"{len(high_indexes)} indexes have high fragmentation (30-70%). Consider REBUILD operations.",
-                    'action': 'Schedule REBUILD during next maintenance window'
-                },
-                {
-                    'category': 'MAINTENANCE',
-                    'message': f"{len(medium_indexes)} indexes need REORGANIZE operations (15-30% fragmentation).",
-                    'action': 'Run REORGANIZE during low-usage periods'
-                },
-                {
-                    'category': 'MONITORING',
-                    'message': 'Consider implementing automated index maintenance jobs.',
-                    'action': 'Set up SQL Agent jobs or maintenance plans'
+                    "category": "MAINTENANCE",
+                    "message": "High/severe fragmentation found. Rebuild those indexes in maintenance window.",
+                    "action": "Run ALTER INDEX ... REBUILD",
                 }
-            ],
-            'sql_commands': {
-                'check_all_indexes': f"""
--- Quick check for all fragmented indexes
-SELECT 
-    OBJECT_NAME(ips.object_id) as TableName,
-    i.name as IndexName,
-    ips.avg_fragmentation_in_percent,
-    ips.page_count
-FROM sys.dm_db_index_physical_stats(DB_ID('{database_name}'), NULL, NULL, NULL, 'LIMITED') ips
-JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
-WHERE ips.avg_fragmentation_in_percent > {min_fragmentation}
-AND ips.page_count > {min_page_count}
-ORDER BY ips.avg_fragmentation_in_percent DESC;
-""",
-                'maintenance_script': """
--- Automated maintenance script template
-DECLARE @SQL NVARCHAR(MAX) = '';
-
-SELECT @SQL = @SQL + 
-    'ALTER INDEX [' + i.name + '] ON [' + s.name + '].[' + t.name + '] '
-    + CASE 
-        WHEN ips.avg_fragmentation_in_percent >= 30 THEN 'REBUILD WITH (ONLINE = ON);'
-        ELSE 'REORGANIZE;'
-      END + CHAR(13)
-FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ips
-JOIN sys.indexes i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
-JOIN sys.tables t ON i.object_id = t.object_id
-JOIN sys.schemas s ON t.schema_id = s.schema_id
-WHERE ips.avg_fragmentation_in_percent > 10
-AND ips.page_count > 50
-AND i.name IS NOT NULL;
-
--- Execute the generated script
-EXEC sp_executesql @SQL;
-"""
+            )
+        if summary["medium"] > 0:
+            recs.append(
+                {
+                    "category": "MAINTENANCE",
+                    "message": "Medium fragmentation found. Reorganize indexes during low-usage periods.",
+                    "action": "Run ALTER INDEX ... REORGANIZE",
+                }
+            )
+        recs.append(
+            {
+                "category": "MONITORING",
+                "message": "Use scheduled index maintenance and periodic fragmentation analysis.",
+                "action": "Configure SQL Agent maintenance jobs.",
             }
-        }
-        
-    except Exception as e:
-        logger.exception(f"Error checking fragmentation: {e}")
-        return {
-            'database': database_name,
-            'error': f"Failed to analyze fragmentation: {str(e)}",
-            'recommendations': [{
-                'category': 'ERROR',
-                'message': 'Unable to analyze fragmentation',
-                'action': 'Check database permissions and SQL Server version compatibility'
-            }]
-        }
-    finally:
-        if conn:
-            conn.close()
+        )
+        output["recommendations"] = recs
+
+    return output
 
 
 @mcp.tool
-def db_sql2019_db_sec_perf_metrics(profile: str = 'oltp') -> dict[str, Any]:
-    """
-    Security and performance metrics analysis for SQL Server databases.
-    
-    This tool provides comprehensive security and performance monitoring
-    with different profiles for various workload types (OLTP, OLAP, Mixed).
-    
-    Features:
-    - Security configuration assessment
-    - Performance baseline metrics
-    - Risk assessment scoring
-    - Best practice recommendations
-    - Compliance checking
-    
-    Args:
-        profile: Workload profile ('oltp', 'olap', 'mixed'). Defaults to 'oltp'.
-        
-    Returns:
-        dict: Security and performance metrics analysis results
-    """
-    logger.info(f"Analyzing security and performance metrics for profile: {profile}")
-
-    conn = None
+def db_sql2019_db_sec_perf_metrics(profile: Literal["oltp", "olap", "mixed"] = "oltp") -> dict[str, Any]:
+    """Security and performance quick audit."""
+    conn = get_connection("master")
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        # Security metrics queries
-        security_queries = {
-            'login_audit': """
-                SELECT 
-                    name,
-                    type_desc,
-                    is_disabled,
-                    create_date,
-                    modify_date,
-                    default_database_name,
-                    is_fixed_role
-                FROM sys.server_principals 
-                WHERE type IN ('S', 'U', 'G') 
-                AND name NOT LIKE '##%'
-                ORDER BY name
-            """,
-            'permissions_audit': """
-                SELECT 
-                    prin.name AS principal_name,
-                    prin.type_desc AS principal_type,
-                    perm.permission_name,
-                    perm.state_desc AS permission_state,
-                    obj.name AS object_name,
-                    obj.type_desc AS object_type
-                FROM sys.server_permissions perm
-                JOIN sys.server_principals prin ON perm.grantee_principal_id = prin.principal_id
-                LEFT JOIN sys.objects obj ON perm.major_id = obj.object_id
-                WHERE prin.name NOT LIKE '##%'
-                ORDER BY prin.name, perm.permission_name
-            """,
-            'security_config': """
-                SELECT 
-                    name,
-                    value,
-                    value_in_use,
-                    description
-                FROM sys.configurations 
-                WHERE name IN (
-                    'cross db ownership chaining',
-                    'xp_cmdshell', 
-                    'Ad Hoc Distributed Queries',
-                    'clr enabled',
-                    'Database Mail XPs',
-                    'Ole Automation Procedures'
-                )
-                ORDER BY name
+        cur = conn.cursor()
+
+        login_audit: list[dict[str, Any]]
+        permissions_audit: list[dict[str, Any]]
+        security_config: dict[str, Any] = {}
+        wait_stats: dict[str, Any] = {}
+        memory_usage: dict[str, Any] = {}
+        cpu_stats: dict[str, Any] = {}
+        risk_factors: list[dict[str, Any]] = []
+
+        _execute_safe(
+            cur,
             """
-        }
-        
-        # Performance metrics queries
-        performance_queries = {
-            'wait_stats': """
-                SELECT TOP 10
-                    wait_type,
-                    waiting_tasks_count,
-                    wait_time_ms,
-                    max_wait_time_ms,
-                    signal_wait_time_ms,
-                    CAST(100.0 * wait_time_ms / SUM(wait_time_ms) OVER() AS DECIMAL(5,2)) AS wait_percentage
-                FROM sys.dm_os_wait_stats 
-                WHERE wait_type NOT IN (
-                    'BROKER_EVENTHANDLER', 'BROKER_RECEIVE_WAITFOR', 'BROKER_TASK_STOP',
-                    'BROKER_TO_FLUSH', 'BROKER_TRANSMITTER', 'CHECKPOINT_QUEUE',
-                    'CLR_AUTO_EVENT', 'CLR_MANUAL_EVENT', 'CLR_SEMAPHORE',
-                    'DBMIRROR_DBM_EVENT', 'DBMIRROR_EVENTS_QUEUE', 'DBMIRROR_WORKER_QUEUE',
-                    'DBMIRRORING_CMD', 'DIRTY_PAGE_POLL', 'DISPATCHER_QUEUE_SEMAPHORE',
-                    'EXECSYNC', 'FSAGENT', 'FT_IFTS_SCHEDULER_IDLE_WAIT', 'FT_IFTSHC_MUTEX',
-                    'HADR_CLUSAPI_CALL', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION', 'HADR_LOGCAPTURE_WAIT',
-                    'HADR_NOTIFICATION_DEQUEUE', 'HADR_TIMER_TASK', 'HADR_WORK_QUEUE',
-                    'KSOURCE_WAKEUP', 'LAZYWRITER_SLEEP', 'LOGMGR_QUEUE', 'MEMORY_ALLOCATION_EXT',
-                    'ONDEMAND_TASK_QUEUE', 'PARALLEL_REDO_DRAIN_WORKER', 'PARALLEL_REDO_LOG_CACHE',
-                    'PARALLEL_REDO_TRAN_LIST', 'PARALLEL_REDO_WORKER_SYNC', 'PARALLEL_REDO_WORKER_WAIT_WORK',
-                    'PREEMPTIVE_XE_GETTARGETSTATE', 'PWAIT_ALL_COMPONENTS_INITIALIZED', 'PWAIT_DIRECTLOGCONSUMER_GETNEXT',
-                    'QDS_ASYNC_QUEUE', 'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP', 'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
-                    'QDS_SHUTDOWN_QUEUE', 'QDS_WIP', 'REDO_THREAD_PENDING_WORK', 'REQUEST_FOR_DEADLOCK_SEARCH',
-                    'RESOURCE_QUEUE', 'SERVER_IDLE_CHECK', 'SLEEP_BPOOL_FLUSH', 'SLEEP_DBSTARTUP',
-                    'SLEEP_DCOMSTARTUP', 'SLEEP_MSDBSTARTUP', 'SLEEP_SYSTEMTASK', 'SLEEP_TASK',
-                    'SLEEP_TEMPDBSTARTUP', 'SNI_HTTP_ACCEPT', 'SP_SERVER_DIAGNOSTICS_SLEEP', 'SQLTRACE_BUFFER_FLUSH',
-                    'SQLTRACE_INCREMENTAL_FLUSH_SLEEP', 'SQLTRACE_WAIT_ENTRIES', 'STARTUP_DEPENDENCY_MANAGER',
-                    'UCS_SESSION_REGISTRATION', 'WAIT_FOR_RESULTS', 'WAIT_XTP_HOST_WAIT', 'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
-                    'WAIT_XTP_CKPT_CLOSE', 'WAIT_XTP_RECOVERY', 'XE_BUFFERMGR_ALLPROCESSED_EVENT', 'XE_DISPATCHER_JOIN',
-                    'XE_DISPATCHER_WAIT', 'XE_LIVE_TARGET_TVF', 'XE_TIMER_EVENT'
-                )
-                ORDER BY wait_time_ms DESC
+            SELECT TOP 50 name, type_desc, is_disabled, create_date, modify_date, default_database_name
+            FROM sys.server_principals
+            WHERE type IN ('S', 'U', 'G')
+            ORDER BY name
             """,
-            'memory_usage': """
-                SELECT 
-                    physical_memory_kb / 1024 AS physical_memory_mb,
-                    virtual_memory_kb / 1024 AS virtual_memory_mb,
-                    committed_kb / 1024 AS committed_mb,
-                    committed_target_kb / 1024 AS committed_target_mb,
-                    CAST(100.0 * committed_kb / committed_target_kb AS DECIMAL(5,2)) AS memory_utilization_percent
-                FROM sys.dm_os_sys_memory
-            """,
-            'cpu_stats': """
-                SELECT 
-                    cpu_count,
-                    hyperthread_ratio,
-                    physical_memory_kb / 1024 AS physical_memory_mb,
-                    virtual_machine_type_desc,
-                    softnuma_configuration_desc
-                FROM sys.dm_os_sys_info
+        )
+        login_audit = _rows_to_dicts(cur, cur.fetchall())
+
+        _execute_safe(
+            cur,
             """
+            SELECT TOP 100
+                pr.name AS principal_name,
+                pr.type_desc AS principal_type,
+                pe.permission_name,
+                pe.state_desc AS permission_state,
+                pe.class_desc
+            FROM sys.server_permissions pe
+            JOIN sys.server_principals pr ON pe.grantee_principal_id = pr.principal_id
+            ORDER BY pr.name
+            """,
+        )
+        permissions_audit = _rows_to_dicts(cur, cur.fetchall())
+
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                CAST(SERVERPROPERTY('IsIntegratedSecurityOnly') AS INT) AS windows_auth_only,
+                CAST(SERVERPROPERTY('ProductVersion') AS VARCHAR(128)) AS product_version,
+                CAST(SERVERPROPERTY('Edition') AS VARCHAR(128)) AS edition
+            """,
+        )
+        cfg = cur.fetchone()
+        security_config = {
+            "windows_auth_only": int(cfg[0]) if cfg else None,
+            "product_version": cfg[1] if cfg else None,
+            "edition": cfg[2] if cfg else None,
         }
-        
-        results = {
-            'profile': profile,
-            'analysis_timestamp': datetime.now().isoformat(),
-            'security_assessment': {},
-            'performance_metrics': {},
-            'risk_assessment': {},
-            'recommendations': []
+
+        _execute_safe(
+            cur,
+            """
+            SELECT TOP 10 wait_type, waiting_tasks_count, wait_time_ms
+            FROM sys.dm_os_wait_stats
+            WHERE wait_type NOT LIKE 'SLEEP%'
+            ORDER BY wait_time_ms DESC
+            """,
+        )
+        wait_stats = {"top_waits": _rows_to_dicts(cur, cur.fetchall())}
+
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                total_physical_memory_kb,
+                available_physical_memory_kb,
+                system_cache_kb,
+                system_memory_state_desc
+            FROM sys.dm_os_sys_memory
+            """,
+        )
+        mem = cur.fetchone()
+        memory_usage = {
+            "total_physical_memory_kb": mem[0] if mem else None,
+            "available_physical_memory_kb": mem[1] if mem else None,
+            "system_cache_kb": mem[2] if mem else None,
+            "system_memory_state_desc": mem[3] if mem else None,
         }
-        
-        # Execute security queries
-        for query_name, query in security_queries.items():
-            try:
-                cursor.execute(query)
-                columns = [desc[0] for desc in cursor.description]
-                results['security_assessment'][query_name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            except pyodbc.Error as e:
-                logger.warning(f"Could not execute security query '{query_name}': {e}")
-                results['security_assessment'][query_name] = {"error": f"Could not execute query: {e}"}
-        
-        # Execute performance queries
-        for query_name, query in performance_queries.items():
-            try:
-                cursor.execute(query)
-                columns = [desc[0] for desc in cursor.description]
-                results['performance_metrics'][query_name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            except pyodbc.Error as e:
-                logger.warning(f"Could not execute performance query '{query_name}': {e}")
-                results['performance_metrics'][query_name] = {"error": f"Could not execute query: {e}"}
-        
-        # Risk assessment based on profile
-        risk_score = 0
-        risk_factors = []
-        
-        # Security risk assessment
-        login_audit_data = results['security_assessment'].get('login_audit')
-        login_audit = login_audit_data if isinstance(login_audit_data, list) else []
-        active_logins = len([login for login in login_audit if login.get('is_disabled') == False])
-        
-        # Check for SQL logins (type = 'S') which might have weaker security
-        sql_logins = [login for login in login_audit if login.get('type') == 'S' and login.get('is_disabled') == False]
-        if sql_logins:
-            risk_score += 10
-            risk_factors.append(f"{len(sql_logins)} SQL logins active (consider Windows authentication)")
-        
-        # Check for old logins (created more than 1 year ago)
-        from datetime import timedelta
-        one_year_ago = datetime.now() - timedelta(days=365)
-        old_logins = []
-        for login in login_audit:
-            try:
-                create_date = datetime.fromisoformat(login['create_date'].replace('Z', '+00:00'))
-                if create_date < one_year_ago and login.get('is_disabled') == False:
-                    old_logins.append(login)
-            except:
-                pass
-        
-        if old_logins:
-            risk_score += 15
-            risk_factors.append(f"{len(old_logins)} logins older than 1 year")
-        
-        # Check for dangerous configurations
-        security_config_data = results['security_assessment']['security_config']
-        if isinstance(security_config_data, list):
-            dangerous_configs = [config for config in security_config_data 
-                               if config.get('value_in_use') == 1 and config.get('name') in ['xp_cmdshell', 'Ad Hoc Distributed Queries']]
-            if dangerous_configs:
-                risk_score += 30
-                risk_factors.extend([f"{config['name']} is enabled" for config in dangerous_configs])
-        
-        # Performance risk assessment
-        wait_stats_data = results['performance_metrics']['wait_stats']
-        if isinstance(wait_stats_data, list) and wait_stats_data:
-            top_wait = wait_stats_data[0]
-            if top_wait.get('wait_percentage', 0) > 50:
-                risk_score += 25
-                risk_factors.append(f"High wait percentage: {top_wait.get('wait_type')} ({top_wait.get('wait_percentage')}%)")
-        
-        # Memory pressure check
-        memory_usage_data = results['performance_metrics']['memory_usage']
-        if isinstance(memory_usage_data, list) and memory_usage_data:
-            memory_data = memory_usage_data[0]
-            if memory_data.get('memory_utilization_percent', 0) > 90:
-                risk_score += 20
-                risk_factors.append(f"High memory utilization: {memory_data.get('memory_utilization_percent')}%")
-        
-        results['risk_assessment'] = {
-            'overall_risk_score': min(risk_score, 100),
-            'risk_level': 'HIGH' if risk_score >= 70 else 'MEDIUM' if risk_score >= 40 else 'LOW',
-            'risk_factors': risk_factors,
-            'profile_specific_metrics': get_profile_metrics(profile, results)
+
+        _execute_safe(
+            cur,
+            """
+            SELECT TOP 1 sqlserver_start_time, cpu_count, scheduler_count
+            FROM sys.dm_os_sys_info
+            """,
+        )
+        cpu = cur.fetchone()
+        cpu_stats = {
+            "sqlserver_start_time": cpu[0].isoformat() if cpu and cpu[0] else None,
+            "cpu_count": cpu[1] if cpu else None,
+            "scheduler_count": cpu[2] if cpu else None,
         }
-        
-        # Generate recommendations
-        recommendations = []
-        
-        if sql_logins:
-            recommendations.append({
-                'category': 'SECURITY',
-                'priority': 'MEDIUM',
-                'issue': f'{len(sql_logins)} SQL logins active',
-                'recommendation': 'Consider using Windows Authentication for better security',
-                'sql_command': "-- Review SQL logins and consider migrating to Windows Auth\nSELECT name, create_date FROM sys.server_principals WHERE type = 'S' AND is_disabled = 0;"
-            })
-        
-        if old_logins:
-            recommendations.append({
-                'category': 'SECURITY',
-                'priority': 'MEDIUM',
-                'issue': f'{len(old_logins)} logins older than 1 year',
-                'recommendation': 'Review and update old logins, consider password rotation',
-                'sql_command': "-- Review old logins\nSELECT name, create_date, modify_date FROM sys.server_principals WHERE create_date < DATEADD(year, -1, GETDATE()) AND is_disabled = 0;"
-            })
-        
-        # Check for dangerous configurations
-        security_config_data = results['security_assessment']['security_config']
-        if isinstance(security_config_data, list):
-            dangerous_configs = [config for config in security_config_data 
-                               if config.get('value_in_use') == 1 and config.get('name') in ['xp_cmdshell', 'Ad Hoc Distributed Queries']]
-            if dangerous_configs:
-                for config in dangerous_configs:
-                    recommendations.append({
-                        'category': 'SECURITY',
-                        'priority': 'CRITICAL',
-                        'issue': f"{config['name']} is enabled",
-                        'recommendation': f"Disable {config['name']} unless absolutely necessary",
-                        'sql_command': f"EXEC sp_configure '{config['name']}', 0; RECONFIGURE;"
-                    })
-        
-        # Performance recommendations
-        wait_stats_data = results['performance_metrics']['wait_stats']
-        if isinstance(wait_stats_data, list) and wait_stats_data:
-            top_wait = wait_stats_data[0]
-            if top_wait.get('wait_percentage', 0) > 50:
-                recommendations.append({
-                    'category': 'PERFORMANCE',
-                    'priority': 'HIGH',
-                    'issue': f"High wait on {top_wait['wait_type']}",
-                    'recommendation': f"Investigate and optimize for {top_wait['wait_type']} waits",
-                    'sql_command': "-- Check specific wait type details\nSELECT * FROM sys.dm_os_wait_stats WHERE wait_type = '{wait_type}';"
-                })
-        
-        memory_usage_data = results['performance_metrics']['memory_usage']
-        if isinstance(memory_usage_data, list) and memory_usage_data:
-            memory_data = memory_usage_data[0]
-            if memory_data.get('memory_utilization_percent', 0) > 90:
-                recommendations.append({
-                    'category': 'PERFORMANCE',
-                    'priority': 'HIGH',
-                    'issue': 'High memory utilization',
-                    'recommendation': 'Consider adding more memory or optimizing queries',
-                    'sql_command': "-- Check memory-consuming queries\nSELECT TOP 10 \n    session_id, \n    memory_usage * 8 AS memory_kb, \n    status \nFROM sys.dm_exec_sessions \nORDER BY memory_usage DESC;"
-                })
-        
-        results['recommendations'] = recommendations
-        
-        logger.info(f"Security and performance analysis completed for profile: {profile}")
-        return results
-        
-    except Exception as e:
-        logger.exception(f"Error analyzing security and performance metrics: {e}")
+
+        if any((row.get("is_disabled") is False and "sa" in str(row.get("name", "")).lower()) for row in login_audit):
+            risk_factors.append(
+                {
+                    "category": "security",
+                    "severity": "medium",
+                    "issue": "Built-in sa login appears enabled",
+                    "recommendation": "Disable sa login when not required.",
+                }
+            )
+
+        overall_risk_score = min(100, len(risk_factors) * 15)
+        risk_level = "LOW" if overall_risk_score < 30 else "MEDIUM" if overall_risk_score < 70 else "HIGH"
+
         return {
-            'profile': profile,
-            'error': f"Failed to analyze security and performance metrics: {str(e)}",
-            'recommendations': [{
-                'category': 'ERROR',
-                'priority': 'CRITICAL',
-                'issue': 'Analysis failed',
-                'recommendation': 'Check database permissions and SQL Server version compatibility',
-                'sql_command': '-- Ensure proper permissions for system views'
-            }]
+            "profile": profile,
+            "analysis_timestamp": _now_utc_iso(),
+            "security_assessment": {
+                "login_audit": login_audit,
+                "permissions_audit": permissions_audit,
+                "security_config": security_config,
+            },
+            "performance_metrics": {
+                "wait_stats": wait_stats,
+                "memory_usage": memory_usage,
+                "cpu_stats": cpu_stats,
+            },
+            "risk_assessment": {
+                "overall_risk_score": overall_risk_score,
+                "risk_level": risk_level,
+                "risk_factors": risk_factors,
+                "profile_specific_metrics": {
+                    "profile": profile,
+                    "compliance_status": "COMPLIANT" if overall_risk_score < 50 else "ATTENTION_REQUIRED",
+                },
+            },
+            "recommendations": risk_factors,
         }
     finally:
-        if conn:
-            conn.close()
-
-def get_profile_metrics(profile: str, results: dict) -> dict:
-    """Get profile-specific metrics and thresholds."""
-    profile_configs = {
-        'oltp': {
-            'max_acceptable_wait_percentage': 30,
-            'max_memory_utilization': 80,
-            'critical_wait_types': ['LCK_M_S', 'LCK_M_X', 'PAGELATCH_EX', 'PAGELATCH_SH'],
-            'performance_priorities': ['Lock waits', 'Latch contention', 'Memory pressure']
-        },
-        'olap': {
-            'max_acceptable_wait_percentage': 50,
-            'max_memory_utilization': 95,
-            'critical_wait_types': ['CXPACKET', 'SOS_SCHEDULER_YIELD', 'THREADPOOL'],
-            'performance_priorities': ['Parallelism', 'CPU contention', 'I/O waits']
-        },
-        'mixed': {
-            'max_acceptable_wait_percentage': 40,
-            'max_memory_utilization': 85,
-            'critical_wait_types': ['LCK_M_S', 'CXPACKET', 'PAGELATCH_EX'],
-            'performance_priorities': ['Lock waits', 'Parallelism', 'Memory pressure']
-        }
-    }
-    
-    config = profile_configs.get(profile, profile_configs['oltp'])
-    
-    # Analyze current metrics against profile thresholds
-    current_metrics = {}
-    
-    wait_stats_data = results['performance_metrics'].get('wait_stats')
-    if isinstance(wait_stats_data, list) and wait_stats_data:
-        critical_waits = [wait for wait in wait_stats_data 
-                         if wait.get('wait_type') in config['critical_wait_types']]
-        current_metrics['critical_wait_count'] = len(critical_waits)
-        current_metrics['highest_critical_wait'] = critical_waits[0] if critical_waits else None
-    
-    memory_usage_data = results['performance_metrics'].get('memory_usage')
-    if isinstance(memory_usage_data, list) and memory_usage_data:
-        memory_data = memory_usage_data[0]
-        current_metrics['memory_threshold_exceeded'] = (
-            memory_data.get('memory_utilization_percent') > config['max_memory_utilization']
-        )
-    
-    return {
-        'profile': profile,
-        'thresholds': config,
-        'current_metrics': current_metrics,
-        'compliance_status': 'COMPLIANT' if not current_metrics.get('memory_threshold_exceeded') and current_metrics.get('critical_wait_count', 0) == 0 else 'NON_COMPLIANT'
-    }
-
-# Main entry point
-import anyio
-
-def main():
-    
-    # Environment-based configuration
-    host = os.environ.get("MCP_HOST", "127.0.0.1")
-    port = _env_int("MCP_PORT", 8000)
-    transport = os.environ.get("MCP_TRANSPORT", "http").lower()
-    
-    # Validate transport
-    if transport not in ["http", "stdio"]:
-        logger.error(f"Invalid MCP_TRANSPORT: '{transport}'. Must be 'http' or 'stdio'.")
-        sys.exit(1)
-    
-    # Set up async-aware signal handlers
-    setup_signal_handlers()
-        
-    logger.info("Starting SQL Server MCP Server...")
-    logger.info(f"  - Transport: {transport}")
-    if transport == "http":
-        logger.info(f"  - Host: {host}")
-        logger.info(f"  - Port: {port}")
-        logger.info(f"  - MCP Endpoint: http://{host}:{port}/sse")
-        
-        # Add middleware only for HTTP transport
-        # This is crucial because the middleware stack depends on Starlette features
-        # not available in the stdio transport.
-        mcp.http_app().add_middleware(APIKeyMiddleware)
-        mcp.http_app().add_middleware(BrowserFriendlyMiddleware)
+        conn.close()
 
 
+@mcp.tool
+def db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml") -> dict[str, Any]:
+    """Return estimated or actual XML execution plan."""
+    if output_format.lower() != "xml":
+        raise ValueError("Only XML output_format is currently supported.")
+    if not SETTINGS.allow_write:
+        _require_readonly(sql)
 
-    # Define run kwargs, excluding those not applicable for stdio
-    run_kwargs: dict[str, Any] = {
-        "transport": cast(Literal["http", "stdio", "sse", "streamable-http"], transport),
-    }
-    if transport == "http":
-        run_kwargs["host"] = host
-        run_kwargs["port"] = port
-    
-    # Run the MCP server
+    conn = get_connection(SETTINGS.db_name)
     try:
-        asyncio.run(cast(Any, mcp.run(**run_kwargs)))
-    except Exception as e:
-        logger.critical(f"Failed to run MCP server: {e}", exc_info=True)
-        sys.exit(1)
+        cur = conn.cursor()
+        if analyze:
+            _execute_safe(cur, "SET STATISTICS XML ON")
+            _execute_safe(cur, sql)
+            rows = cur.fetchall()
+            _execute_safe(cur, "SET STATISTICS XML OFF")
+            last = rows[-1][0] if rows else None
+            return {"format": "xml", "analyze": True, "plan_xml": last}
+
+        _execute_safe(cur, f"SET SHOWPLAN_XML ON; {sql}; SET SHOWPLAN_XML OFF;")
+        plan_rows = cur.fetchall()
+        return {
+            "format": "xml",
+            "analyze": False,
+            "plan_xml": plan_rows[0][0] if plan_rows else None,
+        }
+    finally:
+        conn.close()
+
+
+def _fetch_relationships(
+    cur: pyodbc.Cursor,
+    schema: str,
+    include_views: bool,
+    max_entities: int | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    object_types = ["U"] + (["V"] if include_views else [])
+    placeholders = ", ".join("?" for _ in object_types)
+
+    sql_entities = f"""
+    SELECT t.object_id, s.name AS schema_name, t.name AS entity_name, t.type
+    FROM sys.objects t
+    JOIN sys.schemas s ON t.schema_id = s.schema_id
+    WHERE t.type IN ({placeholders}) AND s.name = ?
+    ORDER BY t.name
+    """
+    params: list[Any] = list(object_types) + [schema]
+    _execute_safe(cur, sql_entities, params)
+    entities = _rows_to_dicts(cur, cur.fetchall())
+    if max_entities is not None and max_entities > 0:
+        entities = entities[:max_entities]
+
+    _execute_safe(
+        cur,
+        """
+        SELECT
+            fk.name AS name,
+            OBJECT_SCHEMA_NAME(fk.parent_object_id) AS from_schema,
+            OBJECT_NAME(fk.parent_object_id) AS from_entity,
+            OBJECT_SCHEMA_NAME(fk.referenced_object_id) AS to_schema,
+            OBJECT_NAME(fk.referenced_object_id) AS to_entity
+        FROM sys.foreign_keys fk
+        WHERE OBJECT_SCHEMA_NAME(fk.parent_object_id) = ?
+        ORDER BY fk.name
+        """,
+        [schema],
+    )
+    relationships = _rows_to_dicts(cur, cur.fetchall())
+    return entities, relationships
+
+
+@mcp.tool
+def db_sql2019_analyze_logical_data_model(
+    database_name: str,
+    schema: str = "dbo",
+    include_views: bool = False,
+    max_entities: int | None = None,
+    include_attributes: bool = True,
+) -> dict[str, Any]:
+    """Analyze schema entities and relationships."""
+    return _analyze_logical_data_model_internal(
+        database_name=database_name,
+        schema=schema,
+        include_views=include_views,
+        max_entities=max_entities,
+        include_attributes=include_attributes,
+    )
+
+
+def _analyze_logical_data_model_internal(
+    database_name: str,
+    schema: str = "dbo",
+    include_views: bool = False,
+    max_entities: int | None = None,
+    include_attributes: bool = True,
+) -> dict[str, Any]:
+    conn = get_connection(database_name)
+    try:
+        cur = conn.cursor()
+        entities, relationships = _fetch_relationships(cur, schema, include_views, max_entities)
+
+        if include_attributes:
+            for entity in entities:
+                _execute_safe(
+                    cur,
+                    """
+                    SELECT c.name, c.column_id, ty.name, c.is_nullable, c.max_length, c.precision, c.scale
+                    FROM sys.columns c
+                    JOIN sys.types ty ON c.user_type_id = ty.user_type_id
+                    WHERE c.object_id = OBJECT_ID(?)
+                    ORDER BY c.column_id
+                    """,
+                    [f"[{entity['schema_name']}].[{entity['entity_name']}]"] ,
+                )
+                attrs = _rows_to_dicts(cur, cur.fetchall())
+                entity["attributes"] = attrs
+
+        return {
+            "summary": {
+                "database": database_name,
+                "schema": schema,
+                "generated_at_utc": _now_utc_iso(),
+                "entities": len(entities),
+                "relationships": len(relationships),
+                "issues_count": {
+                    "entities": 0,
+                    "attributes": 0,
+                    "relationships": 0,
+                    "identifiers": 0,
+                    "normalization": 0,
+                },
+            },
+            "logical_model": {
+                "entities": entities,
+                "relationships": [
+                    {
+                        "name": rel["name"],
+                        "from_entity": f"{rel['from_schema']}.{rel['from_entity']}",
+                        "to_entity": f"{rel['to_schema']}.{rel['to_entity']}",
+                    }
+                    for rel in relationships
+                ],
+            },
+            "issues": {
+                "entities": [],
+                "attributes": [],
+                "relationships": [],
+                "identifiers": [],
+                "normalization": [],
+            },
+            "recommendations": {
+                "entities": [],
+                "attributes": [],
+                "relationships": [],
+                "identifiers": [],
+                "normalization": [],
+            },
+        }
+    finally:
+        conn.close()
+
+
+_OPEN_MODEL_CACHE: dict[str, dict[str, Any]] = {}
+
+
+@mcp.tool
+def db_sql2019_open_logical_model(database_name: str) -> dict[str, Any]:
+    """Generate a URL to the in-memory logical model snapshot."""
+    model = _analyze_logical_data_model_internal(database_name)
+    model_id = str(uuid.uuid4())
+    _OPEN_MODEL_CACHE[model_id] = model
+    base = f"http://localhost:{SETTINGS.port}"
+    return {
+        "message": f"ERD webpage generated for database '{database_name}'.",
+        "database": database_name,
+        "erd_url": f"{base}/data-model-analysis?id={model_id}",
+        "summary": model.get("summary", {}),
+    }
+
+
+@mcp.tool
+def db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: str) -> dict[str, Any]:
+    """Generate CREATE script for table/view/procedure/function/trigger object."""
+    conn = get_connection(database_name)
+    try:
+        cur = conn.cursor()
+        object_type_norm = object_type.lower()
+
+        if object_type_norm == "table":
+            _execute_safe(
+                cur,
+                """
+                SELECT
+                    c.name AS column_name,
+                    ty.name AS data_type,
+                    c.max_length AS max_length,
+                    c.precision AS numeric_precision,
+                    c.scale AS numeric_scale,
+                    c.is_nullable AS is_nullable
+                FROM sys.columns c
+                JOIN sys.types ty ON c.user_type_id = ty.user_type_id
+                JOIN sys.tables t ON c.object_id = t.object_id
+                WHERE t.name = ?
+                ORDER BY c.column_id
+                """,
+                [object_name],
+            )
+            cols = _rows_to_dicts(cur, cur.fetchall())
+            if not cols:
+                return {
+                    "database_name": database_name,
+                    "object_name": object_name,
+                    "object_type": object_type,
+                    "success": False,
+                    "error": "Object not found",
+                }
+
+            col_lines = []
+
+            def _render_type(col: dict[str, Any]) -> str:
+                data_type = str(col.get("data_type", "nvarchar"))
+                max_length = col.get("max_length")
+                precision = col.get("numeric_precision")
+                scale = col.get("numeric_scale")
+
+                if data_type in {"nvarchar", "nchar"} and isinstance(max_length, int):
+                    size = "max" if max_length == -1 else str(max_length // 2)
+                    return f"{data_type}({size})"
+                if data_type in {"varchar", "char", "varbinary", "binary"} and isinstance(max_length, int):
+                    size = "max" if max_length == -1 else str(max_length)
+                    return f"{data_type}({size})"
+                if data_type in {"decimal", "numeric"} and precision is not None and scale is not None:
+                    return f"{data_type}({precision},{scale})"
+                if data_type in {"datetime2", "datetimeoffset", "time"} and scale is not None:
+                    return f"{data_type}({scale})"
+                return data_type
+
+            for col in cols:
+                data_type = _render_type(col)
+                nullable = "NULL" if col.get("is_nullable") else "NOT NULL"
+                col_lines.append(f"    [{col['column_name']}] {data_type} {nullable}")
+            ddl = f"CREATE TABLE [dbo].[{object_name}] (\n" + ",\n".join(col_lines) + "\n);"
+
+            return {
+                "database_name": database_name,
+                "object_name": object_name,
+                "object_type": object_type,
+                "success": True,
+                "metadata": {},
+                "dependencies": [],
+                "ddl": ddl,
+            }
+
+        _execute_safe(cur, "SELECT OBJECT_DEFINITION(OBJECT_ID(?))", [object_name])
+        row = cur.fetchone()
+        ddl = row[0] if row and row[0] else None
+        return {
+            "database_name": database_name,
+            "object_name": object_name,
+            "object_type": object_type,
+            "success": ddl is not None,
+            "metadata": {},
+            "dependencies": [],
+            "ddl": ddl,
+        }
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def db_sql2019_create_db_user(
+    username: str,
+    password: str,
+    privileges: Literal["read", "readwrite"] | str = "read",
+    database: str | None = None,
+) -> dict[str, Any]:
+    """Create SQL login/user and grant role permissions."""
+    _ensure_write_enabled()
+    db_name = database or SETTINGS.db_name
+    safe_user = _validate_identifier(username, "username")
+
+    conn = get_connection("master")
+    try:
+        cur = conn.cursor()
+        _execute_safe(cur, f"CREATE LOGIN {_quoted_ident(safe_user)} WITH PASSWORD = ?", [password])
+        _execute_in_database(cur, db_name, f"CREATE USER {_quoted_ident(safe_user)} FOR LOGIN {_quoted_ident(safe_user)}")
+
+        role = "db_datareader"
+        if str(privileges).lower() in {"rw", "readwrite", "write"}:
+            role = "db_datawriter"
+        _execute_in_database(cur, db_name, f"ALTER ROLE {_quoted_ident(role)} ADD MEMBER {_quoted_ident(safe_user)}")
+
+        return {
+            "status": "success",
+            "database": db_name,
+            "username": safe_user,
+            "role": role,
+        }
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def db_sql2019_drop_db_user(username: str, database: str | None = None) -> dict[str, Any]:
+    """Drop SQL user and login if present."""
+    _ensure_write_enabled()
+    db_name = database or SETTINGS.db_name
+    safe_user = _validate_identifier(username, "username")
+
+    conn = get_connection("master")
+    try:
+        cur = conn.cursor()
+        _execute_in_database(
+            cur,
+            db_name,
+            (
+                "IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = ?) "
+                f"DROP USER {_quoted_ident(safe_user)}"
+            ),
+            [safe_user],
+        )
+        _execute_safe(
+            cur,
+            (
+                "IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = ?) "
+                f"DROP LOGIN {_quoted_ident(safe_user)}"
+            ),
+            [safe_user],
+        )
+        return {
+            "status": "success",
+            "database": db_name,
+            "username": safe_user,
+        }
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def db_sql2019_kill_session(session_id: int) -> dict[str, Any]:
+    """Terminate a SQL Server session."""
+    _ensure_write_enabled()
+    if session_id <= 0:
+        raise ValueError("session_id must be > 0")
+
+    conn = get_connection("master")
+    try:
+        cur = conn.cursor()
+        _execute_safe(cur, "SELECT @@SPID")
+        spid_row = cur.fetchone()
+        if spid_row is None:
+            raise RuntimeError("Could not determine current session id.")
+        current_spid = int(spid_row[0])
+        if session_id == current_spid:
+            raise ValueError("Refusing to kill current MCP session.")
+
+        _execute_safe(cur, f"KILL {session_id}")
+        return {"status": "success", "session_id": session_id}
+    finally:
+        conn.close()
+
+
+def _build_create_object_sql(object_type: str, object_name: str, schema: str, parameters: dict[str, Any] | None) -> str:
+    params = parameters or {}
+    object_type_norm = object_type.lower()
+    fq_name = f"{_quoted_ident(schema)}.{_quoted_ident(object_name)}"
+
+    if object_type_norm == "table":
+        columns = params.get("columns")
+        if not isinstance(columns, list) or not columns:
+            raise ValueError("table creation requires parameters.columns list")
+        col_defs = []
+        for col in columns:
+            col_name = _validate_identifier(col["name"], "column name")
+            col_type = str(col["type"]).strip()
+            nullable = "NULL" if col.get("nullable", True) else "NOT NULL"
+            col_defs.append(f"{_quoted_ident(col_name)} {col_type} {nullable}")
+        return f"CREATE TABLE {fq_name} (" + ", ".join(col_defs) + ")"
+
+    if object_type_norm == "view":
+        definition = params.get("definition")
+        if not definition:
+            raise ValueError("view creation requires parameters.definition")
+        return f"CREATE VIEW {fq_name} AS {definition}"
+
+    if object_type_norm == "index":
+        table = params.get("table")
+        columns = params.get("columns")
+        if not table or not columns:
+            raise ValueError("index creation requires parameters.table and parameters.columns")
+        table_schema = params.get("table_schema", schema)
+        return (
+            f"CREATE INDEX {_quoted_ident(object_name)} ON "
+            f"{_quoted_ident(table_schema)}.{_quoted_ident(_validate_identifier(table, 'table name'))}"
+            f" ({', '.join(_quoted_ident(_validate_identifier(c, 'column')) for c in columns)})"
+        )
+
+    if object_type_norm in {"function", "procedure", "trigger"}:
+        definition = params.get("definition")
+        if not definition:
+            raise ValueError(f"{object_type} creation requires parameters.definition")
+        return str(definition)
+
+    raise ValueError(f"Unsupported object_type: {object_type}")
+
+
+@mcp.tool
+def db_sql2019_create_object(
+    object_type: str,
+    object_name: str,
+    schema: str | None = None,
+    parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create table/view/index/function/procedure/trigger."""
+    _ensure_write_enabled()
+    safe_schema = _validate_identifier(schema or "dbo", "schema")
+    safe_name = _validate_identifier(object_name, "object name")
+
+    sql = _build_create_object_sql(object_type, safe_name, safe_schema, parameters)
+
+    conn = get_connection(SETTINGS.db_name)
+    try:
+        cur = conn.cursor()
+        _execute_safe(cur, sql)
+        return {
+            "status": "success",
+            "operation": "create",
+            "object_type": object_type,
+            "schema": safe_schema,
+            "object_name": safe_name,
+        }
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def db_sql2019_alter_object(
+    object_type: str,
+    object_name: str,
+    operation: str,
+    schema: str | None = None,
+    parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Alter object using predefined operations."""
+    _ensure_write_enabled()
+    safe_schema = _validate_identifier(schema or "dbo", "schema")
+    safe_name = _validate_identifier(object_name, "object name")
+    operation_norm = operation.lower().strip()
+
+    params = parameters or {}
+    fq_name = f"{_quoted_ident(safe_schema)}.{_quoted_ident(safe_name)}"
+
+    if operation_norm == "rename":
+        new_name = _validate_identifier(str(params.get("new_name")), "new_name")
+        sql = f"EXEC sp_rename '{safe_schema}.{safe_name}', '{new_name}'"
+    elif operation_norm == "set_definition":
+        definition = params.get("definition")
+        if not definition:
+            raise ValueError("set_definition requires parameters.definition")
+        sql = str(definition)
+    elif operation_norm == "add_column" and object_type.lower() == "table":
+        column_name = _validate_identifier(str(params.get("name")), "column name")
+        column_type = str(params.get("type", "nvarchar(255)"))
+        nullable = "NULL" if params.get("nullable", True) else "NOT NULL"
+        sql = f"ALTER TABLE {fq_name} ADD {_quoted_ident(column_name)} {column_type} {nullable}"
+    else:
+        raise ValueError(f"Unsupported alter operation: {operation}")
+
+    conn = get_connection(SETTINGS.db_name)
+    try:
+        cur = conn.cursor()
+        _execute_safe(cur, sql)
+        return {
+            "status": "success",
+            "operation": operation,
+            "object_type": object_type,
+            "schema": safe_schema,
+            "object_name": safe_name,
+        }
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def db_sql2019_drop_object(
+    object_type: str,
+    object_name: str,
+    schema: str | None = None,
+    parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Drop object with optional IF EXISTS and CASCADE-like behavior where supported."""
+    _ensure_write_enabled()
+    _ = parameters or {}
+
+    safe_schema = _validate_identifier(schema or "dbo", "schema")
+    safe_name = _validate_identifier(object_name, "object name")
+    object_type_norm = object_type.lower().strip()
+
+    type_map = {
+        "table": "TABLE",
+        "view": "VIEW",
+        "index": "INDEX",
+        "function": "FUNCTION",
+        "procedure": "PROCEDURE",
+        "trigger": "TRIGGER",
+    }
+    if object_type_norm not in type_map:
+        raise ValueError(f"Unsupported object_type: {object_type}")
+
+    fq_name = f"{_quoted_ident(safe_schema)}.{_quoted_ident(safe_name)}"
+
+    if object_type_norm == "index":
+        table_name = (parameters or {}).get("table")
+        table_schema = (parameters or {}).get("table_schema", safe_schema)
+        if not table_name:
+            raise ValueError("Dropping index requires parameters.table")
+        safe_table_name = _validate_identifier(str(table_name), "table")
+        safe_table_schema = _validate_identifier(str(table_schema), "table_schema")
+        sql = (
+            f"DROP INDEX {_quoted_ident(safe_name)} ON "
+            f"{_quoted_ident(safe_table_schema)}.{_quoted_ident(safe_table_name)}"
+        )
+    else:
+        sql = f"DROP {type_map[object_type_norm]} {fq_name}"
+
+    conn = get_connection(SETTINGS.db_name)
+    try:
+        cur = conn.cursor()
+        _execute_safe(cur, sql)
+        return {
+            "status": "success",
+            "operation": "drop",
+            "object_type": object_type,
+            "schema": safe_schema,
+            "object_name": safe_name,
+        }
+    finally:
+        conn.close()
+
+
+def _render_data_model_html(model_id: str, model: dict[str, Any]) -> str:
+    summary = model.get("summary", {})
+    entities = model.get("logical_model", {}).get("entities", [])
+    relationships = model.get("logical_model", {}).get("relationships", [])
+    return (
+        "<html><head><title>Data Model Analysis</title></head><body>"
+        f"<h2>Logical Model Report: {summary.get('database')}</h2>"
+        f"<p>Report ID: {model_id}</p>"
+        f"<p>Entities: {len(entities)} | Relationships: {len(relationships)}</p>"
+        "<h3>Entities</h3><ul>"
+        + "".join(f"<li>{e.get('schema_name')}.{e.get('entity_name')}</li>" for e in entities[:500])
+        + "</ul></body></html>"
+    )
+
+
+if HTTP_APP is not None and hasattr(HTTP_APP, "add_route"):
+
+    async def data_model_analysis_page(request: Request):
+        model_id = request.query_params.get("id")
+        if not model_id:
+            return JSONResponse({"error": "Missing id query parameter"}, status_code=400)
+        model = _OPEN_MODEL_CACHE.get(model_id)
+        if not model:
+            return JSONResponse({"error": "Model id not found"}, status_code=404)
+        return HTMLResponse(_render_data_model_html(model_id, model))
+
+    HTTP_APP.add_route("/data-model-analysis", data_model_analysis_page, methods=["GET"])
+
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.info("Server shut down by user.")
-    except Exception as e:
-        logger.critical(f"Unhandled exception in main: {e}", exc_info=True)
+    transport = SETTINGS.transport
+    logger.info(
+        "Starting SQL Server MCP server",
+        extra={
+            "transport": transport,
+            "host": SETTINGS.host,
+            "port": SETTINGS.port,
+            "allow_write": SETTINGS.allow_write,
+        },
+    )
+
+    if transport in {"http", "sse"}:
+        mcp.run(transport="http", host=SETTINGS.host, port=SETTINGS.port)
+    else:
+        mcp.run(transport="stdio")
