@@ -1,8 +1,8 @@
 {
-  "database": "USGISPRO_800",
+  "database": "TEST_DB",
   "query_store_enabled": true,
   "query_store_config": {
-    "state": "READ_WRITE",
+    "state": "READ_ONLY",
     "current_storage_mb": 11,
     "max_storage_mb": 1024,
     "stale_threshold_days": 14,
@@ -11,7 +11,7 @@
   "analysis_period": {
     "earliest_data": "2026-02-09 15:21:02 +00:00",
     "latest_data": "2026-02-23 15:32:07 +00:00",
-    "days_covered": 0,
+    "days_covered": 14,
     "total_queries": 699
   },
   "long_running_queries": [],

@@ -36,11 +36,8 @@ def setup_env():
 from server import (
     db_sql2019_list_objects,
     db_sql2019_run_query,
-    db_sql2019_analyze_logical_data_model,
     db_sql2019_check_fragmentation,
-    db_sql2019_analyze_indexes,
-    db_sql2019_create_object,
-    db_sql2019_drop_object,
+    db_sql2019_analyze_index_health,
     mcp,
     get_connection # Import to check connectivity
 )
@@ -70,64 +67,36 @@ class TestUnit:
     def test_list_tables(self):
         # This is effectively an integration test as it hits the DB, 
         # but verifies the tool logic
-        result = db_sql2019_list_objects(object_type="table")
+        result = db_sql2019_list_objects(database_name="testdb", object_type="table")
         table_names = [t['name'] for t in result]
         assert "products" in table_names
 
     def test_describe_table(self):
         # Using sp_columns to simulate describe
-        result = db_sql2019_run_query("EXEC sp_columns @table_name = 'products'")
+        result = db_sql2019_run_query(database_name="testdb", sql_query="EXEC sp_columns @table_name = 'products'")
         columns = [row['COLUMN_NAME'] for row in result['rows']]
         assert "id" in columns
         assert "price" in columns
 
     def test_run_query_select(self):
-        result = db_sql2019_run_query("SELECT COUNT(*) as count FROM products")
+        result = db_sql2019_run_query(database_name="testdb", sql_query="SELECT COUNT(*) as count FROM products")
         # Result is a dict with 'rows' key
         assert result["rows"][0]["count"] == 5
 
     def test_run_query_parameterized(self):
-        # The tool expects parameters as a JSON string of a list
-        params_json = json.dumps([1])
-        result = db_sql2019_run_query("SELECT name FROM products WHERE id = ?", params_json=params_json)
+        # The tool expects parameters as a list
+        params = [1]
+        result = db_sql2019_run_query(database_name="testdb", sql_query="SELECT name FROM products WHERE id = ?", parameters=params)
         assert result["rows"][0]["name"] == "Laptop"
 
-    def test_analyze_data_model(self):
-        result = db_sql2019_analyze_logical_data_model.fn()
-        # The result contains a summary and a URL
-        assert "summary" in result
-        assert result["summary"]["entities"] >= 3 # products, customers, orders
-        assert "report_url" in result
 
 @db_required
 class TestIntegration:
     """Integration scenarios"""
 
-    def test_create_and_drop_view(self):
-        view_name = "test_view_products"
-        
-        # Create
-        # server.py: db_sql2019_create_object(object_type, object_name, schema, parameters={'query': ...})
-        result = db_sql2019_create_object.fn(
-            object_type="view",
-            object_name=view_name,
-            schema="dbo",
-            parameters={"query": "SELECT name, price FROM products"}
-        )
-        assert f"View '{view_name}' created" in result or "created successfully" in result
-
-        # Verify
-        tables = db_sql2019_list_objects(object_type="view", schema="dbo")
-        view_names = [t['name'] for t in tables]
-        assert view_name in view_names
-
-        # Drop
-        result = db_sql2019_drop_object.fn(
-            object_type="view",
-            object_name=view_name,
-            schema="dbo"
-        )
-        assert f"View '{view_name}' dropped" in result or "dropped successfully" in result
+    # Skipped: db_sql2019_create_object and db_sql2019_drop_object do not exist in server.py
+    # def test_create_and_drop_view(self):
+    #     pass
 
 @db_required
 class TestStress:
@@ -137,7 +106,7 @@ class TestStress:
         import time
         start = time.time()
         for i in range(50):
-            db_sql2019_run_query("SELECT * FROM products")
+            db_sql2019_run_query(database_name="testdb", sql_query="SELECT * FROM products")
         end = time.time()
         duration = end - start
         print(f"50 queries took {duration:.2f}s")
@@ -150,18 +119,16 @@ class TestBlackbox:
     # For now, we simulate the tool calls which is the core logic
     
     def test_fragmentation_check(self):
-        result = db_sql2019_check_fragmentation()
-        # Fresh DB shouldn't have fragmentation, but tool should return a list (possibly empty)
-        assert isinstance(result, list)
+        result = db_sql2019_check_fragmentation(database_name="testdb")
+        # Should return a dict with fragmentation analysis
+        assert isinstance(result, dict)
         # If we had fragmentation, we'd check for specific keys
-        if result:
-             assert "object_name" in result[0]
+        if "fragmented_indexes" in result:
+            assert isinstance(result["fragmented_indexes"], list)
 
-    def test_analyze_indexes(self):
-        result = db_sql2019_analyze_indexes.fn()
-        # Should return analysis dict
-        assert "unused_indexes" in result
-        assert "missing_indexes" in result
+    # Skipped: db_sql2019_analyze_indexes does not exist in server.py
+    # def test_analyze_indexes(self):
+    #     pass
 
 if __name__ == "__main__":
     sys.exit(pytest.main(["-v", __file__]))

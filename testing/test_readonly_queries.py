@@ -22,8 +22,8 @@ async def test_readonly_queries():
     print("🧪 Testing db_sql2019_show_top_queries with readonly alias")
     print("=" * 60)
     
-    # Test database name (simulating USGISPRO_800)
-    test_database = "USGISPRO_800"
+    # Test database name from environment (fallback to TEST_DB)
+    test_database = os.environ.get("DB_NAME") or os.environ.get("TEST_DB_NAME") or "TEST_DB"
     
     try:
         print(f"📊 Analyzing Query Store for database: {test_database}")
@@ -32,6 +32,8 @@ async def test_readonly_queries():
         
         # Call the function directly (this simulates the MCP tool call)
         result = db_sql2019_show_top_queries(test_database)
+        if asyncio.iscoroutine(result):
+            result = await result
         
         print("✅ Query Store analysis completed successfully!")
         print()
@@ -65,13 +67,11 @@ async def test_readonly_queries():
             for category_key, category_name in categories:
                 queries = result.get(category_key, [])
                 print(f"🔍 {category_name}: {len(queries)} found")
-                
                 if queries:
                     print(f"   Top issues:")
                     for i, query in enumerate(queries[:3], 1):  # Show top 3
                         query_text = query.get('query_text', 'N/A')[:100] + "..." if len(query.get('query_text', '')) > 100 else query.get('query_text', 'N/A')
                         print(f"   {i}. Query ID {query.get('query_id', 'N/A')}: {query_text}")
-                        
                         # Show specific metrics based on category
                         if category_key == 'long_running_queries':
                             print(f"      ⏱️  Avg duration: {query.get('avg_duration_ms', 0):.1f}ms")
@@ -85,7 +85,6 @@ async def test_readonly_queries():
                             print(f"      💾 Avg logical reads: {query.get('avg_logical_io_reads', 0):,}")
                         elif category_key == 'high_execution_queries':
                             print(f"      🔢 Executions: {query.get('executions', 0):,}")
-                    
                     if len(queries) > 3:
                         print(f"   ... and {len(queries) - 3} more")
                 print()
@@ -96,7 +95,9 @@ async def test_readonly_queries():
                 print("💡 RECOMMENDATIONS:")
                 print("-" * 40)
                 for i, rec in enumerate(recommendations[:5], 1):  # Show top 5 recommendations
-                    print(f"{i}. [{rec.get('priority', 'N/A').upper()}] {rec.get('type', 'N/A')}")
+                    priority = (rec.get('priority') or 'N/A').upper()
+                    typ = (rec.get('type') or 'N/A')
+                    print(f"{i}. [{priority}] {typ}")
                     print(f"   Issue: {rec.get('issue', 'N/A')}")
                     print(f"   Recommendation: {rec.get('recommendation', 'N/A')}")
                     print()
@@ -111,12 +112,22 @@ async def test_readonly_queries():
         
         print()
         print("🎯 Test completed successfully!")
-        print(f"📋 Full results saved to: test_readonly_results.json")
-        
-        # Save the full results to a JSON file for detailed analysis
-        with open('test_readonly_results.json', 'w') as f:
-            json.dump(result, f, indent=2, default=str)
-        
+
+        # Minimal assertions for contract
+        assert result is not None, "Result should not be None"
+        assert result.get('query_store_enabled') is True, "Query Store should be enabled"
+        assert isinstance(result.get('total_queries', 0), int), "total_queries should be int"
+        assert isinstance(result.get('long_running_queries', []), list), "long_running_queries should be a list"
+
+        # Save results only if TEST_SAVE_RESULTS env is set
+        import tempfile
+        save_results = os.environ.get('TEST_SAVE_RESULTS') == '1'
+        if save_results:
+            with tempfile.NamedTemporaryFile('w', delete=False, suffix='.json', prefix='readonly_results_', dir='.') as f:
+                json.dump(result, f, indent=2, default=str)
+                temp_path = f.name
+            print(f"📋 Full results saved to: {temp_path}")
+
         return result
         
     except ValueError as e:
