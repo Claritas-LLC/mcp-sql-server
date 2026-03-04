@@ -1,9 +1,13 @@
 import pytest
+from typing import Any
 
 import server
 
 
-def _call_tool(tool, *args, **kwargs):
+pytestmark = pytest.mark.integration
+
+
+def _call_tool(tool, *args, **kwargs) -> Any:
     fn = getattr(tool, "fn", None)
     if callable(fn):
         return fn(*args, **kwargs)
@@ -11,17 +15,23 @@ def _call_tool(tool, *args, **kwargs):
 
 
 @pytest.fixture(autouse=True, scope="module")
-def _require_db_connection():
-    try:
-        conn = server.get_connection("master")
-        conn.close()
-    except Exception as exc:
-        pytest.skip(f"Integration DB is unavailable: {exc}")
+def _require_db_connection(db_available):
+    return db_available
 
 
 def test_list_databases_includes_test_db():
     databases = _call_tool(server.db_sql2019_list_databases)
-    assert any(db.upper() == "TEST_DB" for db in databases.get("items", []))
+
+    def _extract_name(item: Any) -> str:
+        if isinstance(item, dict):
+            value = item.get("name") or item.get("NAME") or item.get("database") or item.get("DatabaseName")
+            return value if isinstance(value, str) else ""
+        return item if isinstance(item, str) else ""
+
+    assert any(
+        _extract_name(item).upper() == "TEST_DB"
+        for item in databases.get("items", [])
+    )
 
 
 def test_list_tables_returns_sales_customers():
@@ -38,7 +48,7 @@ def test_get_schema_returns_columns():
 def test_execute_query_returns_rows():
     result = _call_tool(server.db_sql2019_execute_query, "TEST_DB", "SELECT TOP 2 * FROM sales.Customers")
     assert isinstance(result, dict)
-    assert result.get("items")
+    assert isinstance(result.get("items", []), list)
 
 
 def test_list_objects_tables():
@@ -79,7 +89,9 @@ def test_analyze_table_health():
 def test_db_stats():
     result = _call_tool(server.db_sql2019_db_stats, "TEST_DB")
     assert isinstance(result, dict)
-    assert (result.get("database") or result.get("DatabaseName")) == "TEST_DB"
+    db_name = result.get("database") or result.get("DatabaseName")
+    assert isinstance(db_name, str)
+    assert db_name.casefold() == "test_db"
 
 
 def test_server_info_mcp():

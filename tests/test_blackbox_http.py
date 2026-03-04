@@ -46,6 +46,12 @@ def test_sse_endpoint_auth_or_streams():
             if response.status_code == 404:
                 # Some transports expose SSE on /mcp instead of /sse.
                 with client.stream("GET", f"{BASE_URL}/mcp", headers=headers) as fallback:
+                    if fallback.status_code == 404:
+                        raise AssertionError(
+                            "Both /sse and /mcp returned 404. "
+                            "MCP HTTP/SSE endpoints do not appear to be mounted at expected paths."
+                        )
+
                     if AUTH_TYPE == "apikey" and not API_KEY:
                         assert fallback.status_code in {401, 403}
                         return
