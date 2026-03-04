@@ -57,3 +57,54 @@ def test_apply_token_budget_none_keeps_payload():
     budgeted = server._apply_token_budget(payload, token_budget=None)
 
     assert budgeted == payload
+
+
+def test_render_data_model_html_sanitizes_relationship_label_strictly():
+    model = {
+        "summary": {"database": "TEST_DB", "generated_at_utc": "2026-01-01T00:00:00Z", "issues_count": {}},
+        "logical_model": {
+            "entities": [
+                {"schema_name": "dbo", "entity_name": "Parent", "attributes": []},
+                {"schema_name": "dbo", "entity_name": "Child", "attributes": []},
+            ],
+            "relationships": [
+                {
+                    "name": "FK bad-label <script>alert(1)</script>",
+                    "from_entity": "dbo.Child",
+                    "to_entity": "dbo.Parent",
+                }
+            ],
+        },
+    }
+
+    html = server._render_data_model_html("model-1", model, page=1, focus_entity=None)
+
+    assert "FKbadlabelscriptalert1script" in html
+    assert "bad-label" not in html
+    assert "<script>alert(1)</script>" not in html.lower()
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" not in html.lower()
+
+
+def test_render_data_model_html_escapes_mermaid_payload_in_dom():
+    model = {
+        "summary": {"database": "TEST_DB", "generated_at_utc": "2026-01-01T00:00:00Z", "issues_count": {}},
+        "logical_model": {
+            "entities": [
+                {"schema_name": "dbo", "entity_name": "Parent", "attributes": []},
+                {"schema_name": "dbo", "entity_name": "Child", "attributes": []},
+            ],
+            "relationships": [
+                {
+                    "name": "FK_LABEL",
+                    "from_entity": "dbo.Child",
+                    "to_entity": "dbo.Parent",
+                }
+            ],
+        },
+    }
+
+    html = server._render_data_model_html("model-2", model, page=1, focus_entity=None)
+
+    assert '<div id="diagramLayer" class="mermaid">' in html
+    assert "&quot;FK_LABEL&quot;" in html
+    assert ': "FK_LABEL"' not in html
