@@ -2522,7 +2522,7 @@ def _render_data_model_html(model_id: str, model: dict[str, Any], page: int, foc
         if from_entity not in entity_map or to_entity not in entity_map:
             continue
         rel_name = str(rel.get("name", "FK"))
-        rel_label = re.sub(r"[^A-Za-z0-9_\- ]", "", rel_name)[:80]
+        rel_label = re.sub(r"[^A-Za-z0-9_]", "", rel_name)[:80] or "FK"
         lines.append(f"    {entity_map[from_entity]}}}o--||{entity_map[to_entity]} : \"{rel_label}\"")
 
     mermaid_markup = "\n".join(lines)
@@ -2634,7 +2634,7 @@ def _render_data_model_html(model_id: str, model: dict[str, Any], page: int, foc
 
         <div class=\"diagram-shell\">
             <div id=\"diagramViewport\">
-                <div id=\"diagramLayer\" class=\"mermaid\">{mermaid_markup}</div>
+                <div id=\"diagramLayer\" class=\"mermaid\">{escape(mermaid_markup)}</div>
             </div>
         </div>
 
