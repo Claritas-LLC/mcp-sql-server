@@ -619,6 +619,38 @@ Here are concise examples of calling the most-used tools from an MCP client.
 }
 ```
 
+### 6. Token-Efficient Tool Calls
+
+Use these patterns to keep MCP responses compact in long agent sessions.
+
+**A. Summary-first response:**
+```text
+using sqlserver_readonly, call db_sql2019_show_top_queries(
+  database_name='USGISPRO_800',
+  view='summary'
+)
+```
+
+**B. Project only required fields:**
+```text
+using sqlserver_readonly, call db_sql2019_show_top_queries(
+  database_name='USGISPRO_800',
+  view='standard',
+  fields='database,summary,long_running_queries.query_id,long_running_queries.avg_duration_ms'
+)
+```
+
+**C. Enforce a token budget:**
+```text
+using sqlserver_readonly, call db_sql2019_analyze_logical_data_model(
+  database_name='USGISPRO_800',
+  view='standard',
+  token_budget=1200
+)
+```
+
+When `token_budget` is applied, responses include `_truncation` metadata so the client can detect compaction and request a deeper follow-up call if needed.
+
 ---
 
 ## 🧪 Testing
