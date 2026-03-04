@@ -1,5 +1,7 @@
 import concurrent.futures
 
+import pytest
+
 import server
 
 
@@ -18,9 +20,19 @@ def _run_query():
     )
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _require_db_connection():
+    try:
+        conn = server.get_connection("master")
+        conn.close()
+    except Exception as exc:
+        pytest.skip(f"Stress DB is unavailable: {exc}")
+
+
 def test_concurrent_queries():
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(_run_query) for _ in range(25)]
         results = [future.result() for future in futures]
 
-    assert all(isinstance(result, list) for result in results)
+    assert all(isinstance(result, dict) for result in results)
+    assert all(isinstance(result.get("items", []), list) for result in results)
