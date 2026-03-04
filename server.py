@@ -239,6 +239,123 @@ def _paginate_tool_result(result: Any, page: int = 1, page_size: int = DEFAULT_T
     return result
 
 
+def _estimate_tokens(value: Any) -> int:
+    try:
+        payload = json.dumps(value, default=str, ensure_ascii=False)
+    except Exception:
+        payload = str(value)
+    return max(1, len(payload) // 4)
+
+
+def _shrink_lists(value: Any, max_items: int) -> Any:
+    if isinstance(value, list):
+        return [_shrink_lists(item, max_items) for item in value[:max_items]]
+    if isinstance(value, dict):
+        return {key: _shrink_lists(item, max_items) for key, item in value.items()}
+    return value
+
+
+def _apply_token_budget(result: Any, token_budget: int | None) -> Any:
+    if token_budget is None or token_budget <= 0:
+        return result
+
+    estimated = _estimate_tokens(result)
+    if estimated <= token_budget:
+        return result
+
+    for max_items in (50, 25, 10, 5, 3, 1):
+        candidate = _shrink_lists(result, max_items)
+        estimated_candidate = _estimate_tokens(candidate)
+        if estimated_candidate <= token_budget:
+            if isinstance(candidate, dict):
+                candidate["_truncation"] = {
+                    "applied": True,
+                    "token_budget": token_budget,
+                    "estimated_tokens": estimated_candidate,
+                    "list_max_items": max_items,
+                }
+            return candidate
+
+    fallback = {
+        "summary": "Result exceeds token budget and was compacted to minimal payload.",
+        "_truncation": {
+            "applied": True,
+            "token_budget": token_budget,
+            "estimated_tokens": _estimate_tokens(result),
+            "list_max_items": 0,
+        },
+    }
+    if isinstance(result, dict):
+        for key in ("database", "schema", "table_info"):
+            if key in result:
+                fallback[key] = result.get(key)
+        if "summary" in result and isinstance(result.get("summary"), dict):
+            fallback["summary"] = result.get("summary")
+    return fallback
+
+
+def _build_projection_tree(paths: list[list[str]]) -> dict[str, Any]:
+    tree: dict[str, Any] = {}
+    for parts in paths:
+        node = tree
+        for part in parts:
+            node = node.setdefault(part, {})
+        node["__leaf__"] = True
+    return tree
+
+
+def _project_with_tree(value: Any, tree: dict[str, Any]) -> Any:
+    if not tree or tree.get("__leaf__"):
+        return value
+
+    if isinstance(value, dict):
+        projected: dict[str, Any] = {}
+        for key, subtree in tree.items():
+            if key == "__leaf__":
+                continue
+            if key not in value:
+                continue
+            child = _project_with_tree(value.get(key), subtree)
+            if child is not None:
+                projected[key] = child
+        return projected or None
+
+    if isinstance(value, list):
+        items: list[Any] = []
+        for item in value:
+            child = _project_with_tree(item, tree)
+            if child is not None:
+                items.append(child)
+        return items or None
+
+    return None
+
+
+def _apply_field_projection(result: Any, fields: str | None) -> Any:
+    if not fields or not isinstance(result, dict):
+        return result
+
+    parsed_fields = [item.strip() for item in fields.split(",") if item.strip()]
+    if not parsed_fields:
+        return result
+
+    path_parts = [[segment for segment in path.split(".") if segment] for path in parsed_fields]
+    path_parts = [parts for parts in path_parts if parts]
+    if not path_parts:
+        return result
+
+    projection_tree = _build_projection_tree(path_parts)
+    projected = _project_with_tree(result, projection_tree)
+    if not isinstance(projected, dict):
+        return result
+
+    for metadata_key in ("pagination", "_pagination", "_truncation"):
+        if metadata_key in result and metadata_key not in projected:
+            projected[metadata_key] = result[metadata_key]
+
+    return projected or result
+
+
 def _slice_query_text(value: Any, max_chars: int = 240) -> Any:
     if not isinstance(value, str):
         return value
@@ -431,7 +548,14 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         if path == "/mcp" and request.method == "GET":
             return RedirectResponse(url="/sse")
 
-        if path.startswith("/sse") or path.startswith("/messages") or path.startswith("/mcp"):
+        if (
+            path.startswith("/sse")
+            or path.startswith("/messages")
+            or path.startswith("/mcp")
+            or path.startswith("/data-model-analysis")
+            or path.startswith("/data-model-identifiers")
+            or path.startswith("/data-model-relationships")
+        ):
             if SETTINGS.auth_type == "apikey":
                 token = None
                 auth_header = request.headers.get("Authorization", "")
@@ -915,6 +1039,8 @@ def db_sql2019_analyze_table_health(
     schema: str,
     table_name: str,
     view: Literal["summary", "standard", "full"] = "standard",
+    fields: str | None = None,
+    token_budget: int | None = None,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
@@ -1064,7 +1190,9 @@ def db_sql2019_analyze_table_health(
             "recommendations": recommendations,
         }
         shaped = _apply_table_health_view(result, view)
-        return _paginate_tool_result(shaped, page=page, page_size=page_size)
+        budgeted = _apply_token_budget(shaped, token_budget)
+        projected = _apply_field_projection(budgeted, fields)
+        return _paginate_tool_result(projected, page=page, page_size=page_size)
     finally:
         conn.close()
 
@@ -1145,6 +1273,8 @@ def db_sql2019_server_info_mcp() -> dict[str, Any]:
 def db_sql2019_show_top_queries(
     database_name: str,
     view: Literal["summary", "standard", "full"] = "standard",
+    fields: str | None = None,
+    token_budget: int | None = None,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
@@ -1201,7 +1331,9 @@ def db_sql2019_show_top_queries(
                 }
             )
             shaped = _apply_top_queries_view(output, view)
-            return _paginate_tool_result(shaped, page=page, page_size=page_size)
+            budgeted = _apply_token_budget(shaped, token_budget)
+            projected = _apply_field_projection(budgeted, fields)
+            return _paginate_tool_result(projected, page=page, page_size=page_size)
 
         _execute_safe(
             cur,
@@ -1259,7 +1391,9 @@ def db_sql2019_show_top_queries(
             "analysis_timestamp": _now_utc_iso(),
         }
         shaped = _apply_top_queries_view(output, view)
-        return _paginate_tool_result(shaped, page=page, page_size=page_size)
+        budgeted = _apply_token_budget(shaped, token_budget)
+        projected = _apply_field_projection(budgeted, fields)
+        return _paginate_tool_result(projected, page=page, page_size=page_size)
     finally:
         conn.close()
 
@@ -1596,6 +1730,8 @@ def db_sql2019_analyze_logical_data_model(
     max_entities: int | None = None,
     include_attributes: bool = True,
     view: Literal["summary", "standard", "full"] = "standard",
+    fields: str | None = None,
+    token_budget: int | None = None,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
@@ -1608,7 +1744,9 @@ def db_sql2019_analyze_logical_data_model(
         include_attributes=include_attributes,
     )
     shaped = _apply_logical_model_view(result, view)
-    return _paginate_tool_result(shaped, page=page, page_size=page_size)
+    budgeted = _apply_token_budget(shaped, token_budget)
+    projected = _apply_field_projection(budgeted, fields)
+    return _paginate_tool_result(projected, page=page, page_size=page_size)
 
 
 def _analyze_erd_issues(
@@ -2496,7 +2634,7 @@ def _render_data_model_html(model_id: str, model: dict[str, Any], page: int, foc
 
         <div class=\"diagram-shell\">
             <div id=\"diagramViewport\">
-                <div id=\"diagramLayer\" class=\"mermaid\">{escape(mermaid_markup)}</div>
+                <div id=\"diagramLayer\" class=\"mermaid\">{mermaid_markup}</div>
             </div>
         </div>
 
@@ -3485,6 +3623,7 @@ if __name__ == "__main__":
                     raise RuntimeError(message) from exc
                 logger.warning("%s Falling back to HTTP without native TLS.", message)
                 mcp.run(transport="http", host=SETTINGS.host, port=SETTINGS.port)
-            raise
+            else:
+                raise
     else:
         mcp.run(transport="stdio")
