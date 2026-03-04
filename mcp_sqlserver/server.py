@@ -21,7 +21,7 @@ def _resolve_public_api(module: ModuleType) -> list[str]:
 	exported = getattr(module, "__all__", None)
 	if isinstance(exported, (list, tuple)):
 		return [name for name in exported if isinstance(name, str)]
-	return [name for name in PUBLIC_API if name != "main" and hasattr(module, name)]
+	return [name for name in PUBLIC_API if hasattr(module, name)]
 
 
 def _sync_public_api(module: ModuleType) -> list[str]:
