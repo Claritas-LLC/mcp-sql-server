@@ -451,13 +451,13 @@ This server implements strict security practices for logging:
 - `db_sql2019_get_index_fragmentation(database_name: str, schema: str | None = None, min_fragmentation: float = 10.0, min_page_count: int = 100, limit: int = 50)`: Raw fragmentation rows.
 - `db_sql2019_analyze_index_health(...)`: Severity summary over fragmented indexes.
 - `db_sql2019_check_fragmentation(database_name: str, min_fragmentation: float = 10.0, min_page_count: int = 100, include_recommendations: bool = True)`: Maintenance-focused fragmentation report.
-- `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str, view: Literal["summary", "standard", "full"] = "standard")`: Table size, indexes, FKs, stats, and recommendations with token-aware response shaping.
-- `db_sql2019_show_top_queries(database_name: str, view: Literal["summary", "standard", "full"] = "standard")`: Query Store top-query analysis (requires Query Store enabled) with summary/standard/full payload options.
+- `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Table size, indexes, FKs, stats, and recommendations with token-aware response shaping, field projection, and budgeted truncation.
+- `db_sql2019_show_top_queries(database_name: str, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Query Store top-query analysis (requires Query Store enabled) with summary/standard/full payload options plus field projection and budgeted truncation.
 - `db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: XML execution plan.
 - `db_sql2019_db_sec_perf_metrics(profile: str = "oltp")`: Security + performance audit snapshot.
 
 ### 🧠 Data Model (Always Available)
-- `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int | None = None, include_attributes: bool = True, view: Literal["summary", "standard", "full"] = "standard")`: Entity/relationship model analysis with response shaping for context-window efficiency.
+- `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int | None = None, include_attributes: bool = True, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Entity/relationship model analysis with response shaping for context-window efficiency, field projection, and budgeted truncation.
 - `db_sql2019_open_logical_model(database_name: str)`: Generates a shareable data model report URL.
 - `db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: str)`: DDL extraction/generation for supported objects.
 
