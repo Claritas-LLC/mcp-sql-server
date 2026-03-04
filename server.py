@@ -5,9 +5,12 @@ import logging
 import os
 import re
 import uuid
+import hmac
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import escape
 from typing import Any, Literal, Sequence
+from urllib.parse import quote
 
 import pyodbc
 from dotenv import load_dotenv
@@ -48,6 +51,11 @@ class Settings:
     port: int
     auth_type: str
     api_key: str
+    allow_query_token_auth: bool
+    public_base_url: str
+    ssl_cert: str
+    ssl_key: str
+    ssl_strict: bool
 
 
 def _env(name: str, default: str = "") -> str:
@@ -94,6 +102,11 @@ def _load_settings() -> Settings:
         port=_env_int("MCP_PORT", 8000),
         auth_type=_env("FASTMCP_AUTH_TYPE", "").lower(),
         api_key=_env("FASTMCP_API_KEY", ""),
+        allow_query_token_auth=_env_bool("MCP_ALLOW_QUERY_TOKEN_AUTH", False),
+        public_base_url=_env("MCP_PUBLIC_BASE_URL", "").strip(),
+        ssl_cert=_env("MCP_SSL_CERT", "").strip(),
+        ssl_key=_env("MCP_SSL_KEY", "").strip(),
+        ssl_strict=_env_bool("MCP_SSL_STRICT", False),
     )
 
 
@@ -161,6 +174,185 @@ def _rows_to_dicts(cur: pyodbc.Cursor, rows: Sequence[Any]) -> list[dict[str, An
     return out
 
 
+DEFAULT_TOOL_PAGE_SIZE = 10
+MAX_TOOL_PAGE_SIZE = 200
+
+
+def _normalize_tool_pagination(page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> tuple[int, int]:
+    safe_page = page if isinstance(page, int) and page > 0 else 1
+    safe_page_size = page_size if isinstance(page_size, int) and page_size > 0 else DEFAULT_TOOL_PAGE_SIZE
+    safe_page_size = min(MAX_TOOL_PAGE_SIZE, safe_page_size)
+    return safe_page, safe_page_size
+
+
+def _paginate_sequence(items: Sequence[Any], page: int, page_size: int) -> tuple[list[Any], dict[str, int]]:
+    total_items = len(items)
+    total_pages = max(1, (total_items + page_size - 1) // page_size)
+    safe_page = min(page, total_pages)
+    start = (safe_page - 1) * page_size
+    paged_items = list(items[start:start + page_size])
+    return paged_items, {
+        "page": safe_page,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": total_pages,
+    }
+
+
+def _paginate_lists_in_object(value: Any, page: int, page_size: int, path: str) -> tuple[Any, dict[str, dict[str, int]]]:
+    if isinstance(value, list):
+        paged_items, pagination = _paginate_sequence(value, page, page_size)
+        return paged_items, {path: pagination}
+
+    if isinstance(value, dict):
+        transformed: dict[str, Any] = {}
+        list_pagination: dict[str, dict[str, int]] = {}
+        for key, item in value.items():
+            transformed_item, item_pagination = _paginate_lists_in_object(item, page, page_size, f"{path}.{key}")
+            transformed[key] = transformed_item
+            list_pagination.update(item_pagination)
+        return transformed, list_pagination
+
+    return value, {}
+
+
+def _paginate_tool_result(result: Any, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> Any:
+    safe_page, safe_page_size = _normalize_tool_pagination(page, page_size)
+
+    if isinstance(result, list):
+        paged_items, pagination = _paginate_sequence(result, safe_page, safe_page_size)
+        return {
+            "items": paged_items,
+            "pagination": pagination,
+        }
+
+    if isinstance(result, dict):
+        transformed, list_pagination = _paginate_lists_in_object(result, safe_page, safe_page_size, "root")
+        if list_pagination:
+            transformed["_pagination"] = {
+                "page": safe_page,
+                "page_size": safe_page_size,
+                "lists": list_pagination,
+            }
+        return transformed
+
+    return result
+
+
+def _slice_query_text(value: Any, max_chars: int = 240) -> Any:
+    if not isinstance(value, str):
+        return value
+    compact = " ".join(value.split())
+    if len(compact) <= max_chars:
+        return compact
+    return f"{compact[:max_chars]}…"
+
+
+def _apply_top_queries_view(result: dict[str, Any], view: Literal["summary", "standard", "full"]) -> dict[str, Any]:
+    if view == "full":
+        return result
+
+    compact_keys = ["long_running_queries", "high_cpu_queries", "high_io_queries", "high_execution_queries"]
+    if view == "summary":
+        return {
+            "database": result.get("database"),
+            "query_store_enabled": result.get("query_store_enabled"),
+            "query_store_config": result.get("query_store_config"),
+            "summary": result.get("summary", {}),
+            "recommendations": result.get("recommendations", []),
+        }
+
+    transformed = dict(result)
+    for key in compact_keys:
+        queries = transformed.get(key)
+        if isinstance(queries, list):
+            transformed[key] = [
+                {
+                    **query,
+                    "query_sql_text": _slice_query_text(query.get("query_sql_text"), 240),
+                }
+                for query in queries
+            ]
+    return transformed
+
+
+def _apply_table_health_view(result: dict[str, Any], view: Literal["summary", "standard", "full"]) -> dict[str, Any]:
+    if view == "full":
+        return result
+
+    indexes = result.get("indexes", [])
+    foreign_keys = result.get("foreign_keys", [])
+    statistics_sample = result.get("statistics_sample", [])
+    health_analysis = result.get("health_analysis", {})
+    recommendations = result.get("recommendations", [])
+
+    if view == "summary":
+        return {
+            "table_info": result.get("table_info", {}),
+            "health_summary": {
+                "indexes_count": len(indexes) if isinstance(indexes, list) else 0,
+                "foreign_keys_count": len(foreign_keys) if isinstance(foreign_keys, list) else 0,
+                "statistics_count": len(statistics_sample) if isinstance(statistics_sample, list) else 0,
+                "constraint_issues_count": len(health_analysis.get("constraint_issues", [])) if isinstance(health_analysis, dict) else 0,
+                "recommendations_count": len(recommendations) if isinstance(recommendations, list) else 0,
+            },
+            "recommendations": recommendations,
+        }
+
+    transformed = dict(result)
+    if isinstance(indexes, list):
+        transformed["indexes"] = indexes[:10]
+    if isinstance(statistics_sample, list):
+        transformed["statistics_sample"] = statistics_sample[:10]
+    return transformed
+
+
+def _apply_logical_model_view(result: dict[str, Any], view: Literal["summary", "standard", "full"]) -> dict[str, Any]:
+    if view == "full":
+        return result
+
+    summary = result.get("summary", {})
+    logical_model = result.get("logical_model", {}) if isinstance(result.get("logical_model"), dict) else {}
+    recommendations = result.get("recommendations", {}) if isinstance(result.get("recommendations"), dict) else {}
+    issues = result.get("issues", {}) if isinstance(result.get("issues"), dict) else {}
+
+    if view == "summary":
+        return {
+            "summary": summary,
+            "sample_relationships": logical_model.get("relationships", [])[:10] if isinstance(logical_model.get("relationships"), list) else [],
+            "recommendations": {
+                "entities": recommendations.get("entities", [])[:5],
+                "attributes": recommendations.get("attributes", [])[:5],
+                "relationships": recommendations.get("relationships", [])[:5],
+                "identifiers": recommendations.get("identifiers", [])[:5],
+                "normalization": recommendations.get("normalization", [])[:5],
+            },
+        }
+
+    transformed = dict(result)
+    model_copy = dict(logical_model)
+    if isinstance(model_copy.get("entities"), list):
+        trimmed_entities: list[dict[str, Any]] = []
+        for entity in model_copy["entities"]:
+            if not isinstance(entity, dict):
+                continue
+            entity_copy = dict(entity)
+            attrs = entity_copy.get("attributes")
+            if isinstance(attrs, list):
+                entity_copy["attributes"] = attrs[:12]
+            trimmed_entities.append(entity_copy)
+        model_copy["entities"] = trimmed_entities
+    transformed["logical_model"] = model_copy
+
+    issues_copy = dict(issues)
+    for key in ("entities", "attributes", "relationships", "identifiers", "normalization"):
+        values = issues_copy.get(key)
+        if isinstance(values, list):
+            issues_copy[key] = values[:12]
+    transformed["issues"] = issues_copy
+    return transformed
+
+
 def _strip_sql_comments_and_literals(sql: str) -> str:
     if not sql:
         return ""
@@ -224,6 +416,15 @@ app = mcp
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
+    @staticmethod
+    def _client_ip(request: Request) -> str:
+        forwarded_for = request.headers.get("x-forwarded-for", "").strip()
+        if forwarded_for:
+            return forwarded_for.split(",", 1)[0].strip()
+        if request.client and request.client.host:
+            return request.client.host
+        return "unknown"
+
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
@@ -234,16 +435,27 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             if SETTINGS.auth_type == "apikey":
                 token = None
                 auth_header = request.headers.get("Authorization", "")
-                if auth_header.startswith("Bearer "):
-                    token = auth_header.split(" ", 1)[1].strip()
-                if token is None:
+                if auth_header:
+                    parts = auth_header.split(" ", 1)
+                    if len(parts) == 2 and parts[0].lower() == "bearer":
+                        token = parts[1].strip()
+                if token is None and SETTINGS.allow_query_token_auth:
                     token = request.query_params.get("token") or request.query_params.get("api_key")
+                elif token is None and (request.query_params.get("token") or request.query_params.get("api_key")):
+                    logger.warning(
+                        "security_event=apikey_query_token_rejected ip=%s path=%s",
+                        self._client_ip(request),
+                        path,
+                    )
 
                 if not SETTINGS.api_key:
+                    logger.error("security_event=apikey_not_configured ip=%s path=%s", self._client_ip(request), path)
                     return JSONResponse({"detail": "Server API key is not configured."}, status_code=500)
                 if not token:
+                    logger.warning("security_event=apikey_missing_token ip=%s path=%s", self._client_ip(request), path)
                     return JSONResponse({"detail": "Missing Authorization token."}, status_code=401)
-                if token != SETTINGS.api_key:
+                if not hmac.compare_digest(token, SETTINGS.api_key):
+                    logger.warning("security_event=apikey_invalid_token ip=%s path=%s", self._client_ip(request), path)
                     return JSONResponse({"detail": "Invalid API key."}, status_code=403)
 
         return await call_next(request)
@@ -299,7 +511,7 @@ def db_sql2019_ping() -> dict[str, Any]:
 
 
 @mcp.tool
-def db_sql2019_list_databases() -> list[str]:
+def db_sql2019_list_databases(page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
     """List online databases visible to the current login."""
     conn = get_connection("master")
     try:
@@ -313,13 +525,19 @@ def db_sql2019_list_databases() -> list[str]:
             ORDER BY name
             """,
         )
-        return [row[0] for row in cur.fetchall()]
+        items = [row[0] for row in cur.fetchall()]
+        return _paginate_tool_result(items, page=page, page_size=page_size)
     finally:
         conn.close()
 
 
 @mcp.tool
-def db_sql2019_list_tables(database_name: str, schema_name: str | None = None) -> list[dict[str, Any]]:
+def db_sql2019_list_tables(
+    database_name: str,
+    schema_name: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
     """List tables for a database/schema."""
     conn = get_connection(database_name)
     try:
@@ -346,13 +564,20 @@ def db_sql2019_list_tables(database_name: str, schema_name: str | None = None) -
                 """,
             )
         rows = cur.fetchall()
-        return [{"TABLE_SCHEMA": row[0], "TABLE_NAME": row[1]} for row in rows]
+        items = [{"TABLE_SCHEMA": row[0], "TABLE_NAME": row[1]} for row in rows]
+        return _paginate_tool_result(items, page=page, page_size=page_size)
     finally:
         conn.close()
 
 
 @mcp.tool
-def db_sql2019_get_schema(database_name: str, table_name: str, schema_name: str = "dbo") -> dict[str, Any]:
+def db_sql2019_get_schema(
+    database_name: str,
+    table_name: str,
+    schema_name: str = "dbo",
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
     """Get column metadata for a table."""
     conn = get_connection(database_name)
     try:
@@ -389,12 +614,13 @@ def db_sql2019_get_schema(database_name: str, table_name: str, schema_name: str 
             }
             for row in rows
         ]
-        return {
+        result = {
             "database": database_name,
             "schema": schema_name,
             "table": table_name,
             "columns": columns,
         }
+        return _paginate_tool_result(result, page=page, page_size=page_size)
     finally:
         conn.close()
 
@@ -439,15 +665,18 @@ def db_sql2019_execute_query(
     sql: str,
     params_json: str | None = None,
     max_rows: int | None = None,
-) -> list[dict[str, Any]]:
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
     """Legacy-compatible query executor (read-only unless write mode is enabled)."""
-    return _run_query_internal(
+    rows = _run_query_internal(
         database_name=database_name,
         sql=sql,
         params_json=params_json,
         max_rows=max_rows,
         enforce_readonly=True,
     )
+    return _paginate_tool_result(rows, page=page, page_size=page_size)
 
 
 @mcp.tool
@@ -456,7 +685,9 @@ def db_sql2019_run_query(
     arg2: str | None = None,
     params_json: str | None = None,
     max_rows: int | None = None,
-) -> list[dict[str, Any]]:
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
     """Execute SQL; supports both legacy (db, sql) and new (sql only) signatures."""
     if arg2 is None:
         database_name = SETTINGS.db_name
@@ -465,13 +696,14 @@ def db_sql2019_run_query(
         database_name = arg1
         sql = arg2
 
-    return _run_query_internal(
+    rows = _run_query_internal(
         database_name=database_name,
         sql=sql,
         params_json=params_json,
         max_rows=max_rows,
         enforce_readonly=True,
     )
+    return _paginate_tool_result(rows, page=page, page_size=page_size)
 
 
 @mcp.tool
@@ -482,7 +714,9 @@ def db_sql2019_list_objects(
     schema: str | None = None,
     order_by: str | None = None,
     limit: int = 50,
-) -> list[dict[str, Any]] | list[str]:
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
     """Unified object listing for database/schema/table/view/index/function/procedure/trigger."""
     conn = get_connection(database_name)
     try:
@@ -490,11 +724,20 @@ def db_sql2019_list_objects(
         object_type_norm = object_type.strip().upper()
 
         if object_type_norm in {"DATABASE", "DATABASES"}:
-            return db_sql2019_list_databases()
+            _execute_safe(
+                cur,
+                """
+                SELECT name
+                FROM sys.databases
+                WHERE state_desc = 'ONLINE'
+                ORDER BY name
+                """,
+            )
+            return _paginate_tool_result([row[0] for row in cur.fetchall()], page=page, page_size=page_size)
 
         if object_type_norm in {"SCHEMA", "SCHEMAS"}:
             _execute_safe(cur, "SELECT name FROM sys.schemas ORDER BY name")
-            return [row[0] for row in cur.fetchall()]
+            return _paginate_tool_result([row[0] for row in cur.fetchall()], page=page, page_size=page_size)
 
         if object_type_norm in {"TABLE", "VIEW"}:
             table_type = "BASE TABLE" if object_type_norm == "TABLE" else "VIEW"
@@ -513,7 +756,7 @@ def db_sql2019_list_objects(
             sql += " ORDER BY TABLE_SCHEMA, TABLE_NAME"
             _execute_safe(cur, sql, params)
             rows = _fetch_limited(cur, max(1, limit))
-            return _rows_to_dicts(cur, rows)
+            return _paginate_tool_result(_rows_to_dicts(cur, rows), page=page, page_size=page_size)
 
         if object_type_norm == "INDEX":
             sql = """
@@ -537,7 +780,11 @@ def db_sql2019_list_objects(
                 params.append(object_name)
             sql += " ORDER BY s.name, t.name, i.name"
             _execute_safe(cur, sql, params)
-            return _rows_to_dicts(cur, _fetch_limited(cur, max(1, limit)))
+            return _paginate_tool_result(
+                _rows_to_dicts(cur, _fetch_limited(cur, max(1, limit))),
+                page=page,
+                page_size=page_size,
+            )
 
         if object_type_norm in {"FUNCTION", "PROCEDURE", "TRIGGER"}:
             code = {"FUNCTION": "FN", "PROCEDURE": "P", "TRIGGER": "TR"}[object_type_norm]
@@ -556,7 +803,11 @@ def db_sql2019_list_objects(
                 params.append(object_name)
             sql += " ORDER BY s.name, o.name"
             _execute_safe(cur, sql, params)
-            return _rows_to_dicts(cur, _fetch_limited(cur, max(1, limit)))
+            return _paginate_tool_result(
+                _rows_to_dicts(cur, _fetch_limited(cur, max(1, limit))),
+                page=page,
+                page_size=page_size,
+            )
 
         raise ValueError(f"Unsupported object_type: {object_type}")
     finally:
@@ -609,15 +860,18 @@ def db_sql2019_get_index_fragmentation(
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
     limit: int = 50,
-) -> list[dict[str, Any]]:
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
     """Return index fragmentation rows from dm_db_index_physical_stats."""
-    return _get_index_fragmentation_data(
+    items = _get_index_fragmentation_data(
         database_name=database_name,
         schema=schema,
         min_fragmentation=min_fragmentation,
         min_page_count=min_page_count,
         limit=limit,
     )
+    return _paginate_tool_result(items, page=page, page_size=page_size)
 
 
 @mcp.tool
@@ -627,6 +881,8 @@ def db_sql2019_analyze_index_health(
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
     limit: int = 50,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """High-level index health summary."""
     items = _get_index_fragmentation_data(
@@ -640,7 +896,7 @@ def db_sql2019_analyze_index_health(
     severe = [r for r in items if (r.get("avg_fragmentation_in_percent") or 0) >= 30]
     medium = [r for r in items if 10 <= (r.get("avg_fragmentation_in_percent") or 0) < 30]
 
-    return {
+    result = {
         "database": database_name,
         "schema": schema,
         "fragmented_indexes": items,
@@ -650,10 +906,18 @@ def db_sql2019_analyze_index_health(
             "total": len(items),
         },
     }
+    return _paginate_tool_result(result, page=page, page_size=page_size)
 
 
 @mcp.tool
-def db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str) -> dict[str, Any]:
+def db_sql2019_analyze_table_health(
+    database_name: str,
+    schema: str,
+    table_name: str,
+    view: Literal["summary", "standard", "full"] = "standard",
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
     """Table-level storage/index/stats/constraint analysis."""
     conn = get_connection(database_name)
     try:
@@ -788,7 +1052,7 @@ def db_sql2019_analyze_table_health(database_name: str, schema: str, table_name:
                     }
                 )
 
-        return {
+        result = {
             "table_info": table_info,
             "indexes": indexes,
             "foreign_keys": foreign_keys,
@@ -799,6 +1063,8 @@ def db_sql2019_analyze_table_health(database_name: str, schema: str, table_name:
             },
             "recommendations": recommendations,
         }
+        shaped = _apply_table_health_view(result, view)
+        return _paginate_tool_result(shaped, page=page, page_size=page_size)
     finally:
         conn.close()
 
@@ -876,7 +1142,12 @@ def db_sql2019_server_info_mcp() -> dict[str, Any]:
 
 
 @mcp.tool
-def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
+def db_sql2019_show_top_queries(
+    database_name: str,
+    view: Literal["summary", "standard", "full"] = "standard",
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
     """Query Store summary for high-cost queries."""
     conn = get_connection(database_name)
     try:
@@ -929,7 +1200,8 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
                     "recommendation": f"Enable Query Store: ALTER DATABASE [{database_name}] SET QUERY_STORE = ON;",
                 }
             )
-            return output
+            shaped = _apply_top_queries_view(output, view)
+            return _paginate_tool_result(shaped, page=page, page_size=page_size)
 
         _execute_safe(
             cur,
@@ -986,7 +1258,8 @@ def db_sql2019_show_top_queries(database_name: str) -> dict[str, Any]:
             "high_priority_recommendations": len([r for r in recommendations if r.get("priority") == "high"]),
             "analysis_timestamp": _now_utc_iso(),
         }
-        return output
+        shaped = _apply_top_queries_view(output, view)
+        return _paginate_tool_result(shaped, page=page, page_size=page_size)
     finally:
         conn.close()
 
@@ -997,6 +1270,8 @@ def db_sql2019_check_fragmentation(
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
     include_recommendations: bool = True,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Fragmentation summary with maintenance recommendations."""
     fragmented_indexes = _get_index_fragmentation_data(
@@ -1091,11 +1366,15 @@ def db_sql2019_check_fragmentation(
         )
         output["recommendations"] = recs
 
-    return output
+    return _paginate_tool_result(output, page=page, page_size=page_size)
 
 
 @mcp.tool
-def db_sql2019_db_sec_perf_metrics(profile: Literal["oltp", "olap", "mixed"] = "oltp") -> dict[str, Any]:
+def db_sql2019_db_sec_perf_metrics(
+    profile: Literal["oltp", "olap", "mixed"] = "oltp",
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
     """Security and performance quick audit."""
     conn = get_connection("master")
     try:
@@ -1209,7 +1488,7 @@ def db_sql2019_db_sec_perf_metrics(profile: Literal["oltp", "olap", "mixed"] = "
         overall_risk_score = min(100, len(risk_factors) * 15)
         risk_level = "LOW" if overall_risk_score < 30 else "MEDIUM" if overall_risk_score < 70 else "HIGH"
 
-        return {
+        result = {
             "profile": profile,
             "analysis_timestamp": _now_utc_iso(),
             "security_assessment": {
@@ -1233,6 +1512,7 @@ def db_sql2019_db_sec_perf_metrics(profile: Literal["oltp", "olap", "mixed"] = "
             },
             "recommendations": risk_factors,
         }
+        return _paginate_tool_result(result, page=page, page_size=page_size)
     finally:
         conn.close()
 
@@ -1315,15 +1595,20 @@ def db_sql2019_analyze_logical_data_model(
     include_views: bool = False,
     max_entities: int | None = None,
     include_attributes: bool = True,
+    view: Literal["summary", "standard", "full"] = "standard",
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Analyze schema entities and relationships."""
-    return _analyze_logical_data_model_internal(
+    result = _analyze_logical_data_model_internal(
         database_name=database_name,
         schema=schema,
         include_views=include_views,
         max_entities=max_entities,
         include_attributes=include_attributes,
     )
+    shaped = _apply_logical_model_view(result, view)
+    return _paginate_tool_result(shaped, page=page, page_size=page_size)
 
 
 def _analyze_erd_issues(
@@ -1637,7 +1922,7 @@ def db_sql2019_open_logical_model(database_name: str) -> dict[str, Any]:
     model = _analyze_logical_data_model_internal(database_name)
     model_id = str(uuid.uuid4())
     _OPEN_MODEL_CACHE[model_id] = model
-    base = f"http://localhost:{SETTINGS.port}"
+    base = SETTINGS.public_base_url or f"http://localhost:{SETTINGS.port}"
     return {
         "message": f"ERD webpage generated for database '{database_name}'.",
         "database": database_name,
@@ -1647,7 +1932,13 @@ def db_sql2019_open_logical_model(database_name: str) -> dict[str, Any]:
 
 
 @mcp.tool
-def db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: str) -> dict[str, Any]:
+def db_sql2019_generate_ddl(
+    database_name: str,
+    object_name: str,
+    object_type: str,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
     """Generate CREATE script for table/view/procedure/function/trigger object."""
     conn = get_connection(database_name)
     try:
@@ -1675,13 +1966,14 @@ def db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: s
             )
             cols = _rows_to_dicts(cur, cur.fetchall())
             if not cols:
-                return {
+                result = {
                     "database_name": database_name,
                     "object_name": object_name,
                     "object_type": object_type,
                     "success": False,
                     "error": "Object not found",
                 }
+                return _paginate_tool_result(result, page=page, page_size=page_size)
 
             col_lines = []
 
@@ -1709,7 +2001,7 @@ def db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: s
                 col_lines.append(f"    [{col['column_name']}] {data_type} {nullable}")
             ddl = f"CREATE TABLE [dbo].[{object_name}] (\n" + ",\n".join(col_lines) + "\n);"
 
-            return {
+            result = {
                 "database_name": database_name,
                 "object_name": object_name,
                 "object_type": object_type,
@@ -1718,11 +2010,12 @@ def db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: s
                 "dependencies": [],
                 "ddl": ddl,
             }
+            return _paginate_tool_result(result, page=page, page_size=page_size)
 
         _execute_safe(cur, "SELECT OBJECT_DEFINITION(OBJECT_ID(?))", [object_name])
         row = cur.fetchone()
         ddl = row[0] if row and row[0] else None
-        return {
+        result = {
             "database_name": database_name,
             "object_name": object_name,
             "object_type": object_type,
@@ -1731,6 +2024,7 @@ def db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: s
             "dependencies": [],
             "ddl": ddl,
         }
+        return _paginate_tool_result(result, page=page, page_size=page_size)
     finally:
         conn.close()
 
@@ -2006,33 +2300,1150 @@ def db_sql2019_drop_object(
         conn.close()
 
 
-def _render_data_model_html(model_id: str, model: dict[str, Any]) -> str:
+def _paginate(items: list[Any], page: int, per_page: int) -> tuple[list[Any], int]:
+    total = len(items)
+    if per_page <= 0:
+        return items, 1
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    safe_page = min(max(1, page), total_pages)
+    start = (safe_page - 1) * per_page
+    end = start + per_page
+    return items[start:end], total_pages
+
+
+def _render_data_model_html(model_id: str, model: dict[str, Any], page: int, focus_entity: str | None) -> str:
     summary = model.get("summary", {})
     entities = model.get("logical_model", {}).get("entities", [])
     relationships = model.get("logical_model", {}).get("relationships", [])
-    return (
-        "<html><head><title>Data Model Analysis</title></head><body>"
-        f"<h2>Logical Model Report: {summary.get('database')}</h2>"
-        f"<p>Report ID: {model_id}</p>"
-        f"<p>Entities: {len(entities)} | Relationships: {len(relationships)}</p>"
-        "<h3>Entities</h3><ul>"
-        + "".join(f"<li>{e.get('schema_name')}.{e.get('entity_name')}</li>" for e in entities[:500])
-        + "</ul></body></html>"
+
+    def _entity_key(schema_name: str, entity_name: str) -> str:
+        raw = f"{schema_name}_{entity_name}"
+        cleaned = re.sub(r"[^A-Za-z0-9_]", "_", raw)
+        if not re.match(r"^[A-Za-z_]", cleaned):
+            cleaned = f"E_{cleaned}"
+        return cleaned
+
+    entity_map: dict[str, str] = {}
+    lines: list[str] = ["erDiagram"]
+
+    per_page = 10
+    max_entities = 120
+    max_attrs = 12
+    all_entities = sorted(
+        entities,
+        key=lambda e: (str(e.get("schema_name", "")), str(e.get("entity_name", ""))),
+    )
+    paged_entities, total_pages = _paginate(all_entities, page, per_page)
+
+    focus = (focus_entity or "").strip()
+    focus_set: set[str] = set()
+    if focus:
+        adjacency: dict[str, set[str]] = {}
+        for rel in relationships:
+            from_name = str(rel.get("from_entity", ""))
+            to_name = str(rel.get("to_entity", ""))
+            if not from_name or not to_name:
+                continue
+            adjacency.setdefault(from_name, set()).add(to_name)
+            adjacency.setdefault(to_name, set()).add(from_name)
+
+        level1 = set(adjacency.get(focus, set()))
+        level2: set[str] = set()
+        for node in level1:
+            level2.update(adjacency.get(node, set()))
+        focus_set = {focus} | level1 | level2
+
+    if focus_set:
+        limited_entities = [e for e in all_entities if f"{e.get('schema_name')}.{e.get('entity_name')}" in focus_set]
+    else:
+        limited_entities = all_entities[:max_entities]
+
+    for entity in limited_entities:
+        schema_name = str(entity.get("schema_name", "dbo"))
+        entity_name = str(entity.get("entity_name", "unknown"))
+        key = _entity_key(schema_name, entity_name)
+        entity_map[f"{schema_name}.{entity_name}"] = key
+        lines.append(f"    {key} {{")
+
+        attrs = entity.get("attributes", [])
+        if isinstance(attrs, list):
+            for attr in attrs[:max_attrs]:
+                col_name = str(attr.get("name", "col"))
+                data_type = str(attr.get("type_name", ""))
+                safe_col_name = re.sub(r"[^A-Za-z0-9_]", "_", col_name)
+                safe_data_type = re.sub(r"[^A-Za-z0-9_]", "_", data_type)
+                lines.append(f"        {safe_data_type} {safe_col_name}")
+            if len(attrs) > max_attrs:
+                lines.append("        string MORE_COLUMNS")
+
+        lines.append("    }")
+
+    for rel in relationships:
+        from_entity = str(rel.get("from_entity", ""))
+        to_entity = str(rel.get("to_entity", ""))
+        if from_entity not in entity_map or to_entity not in entity_map:
+            continue
+        rel_name = str(rel.get("name", "FK"))
+        rel_label = re.sub(r"[^A-Za-z0-9_\- ]", "", rel_name)[:80]
+        lines.append(f"    {entity_map[from_entity]}}}o--||{entity_map[to_entity]} : \"{rel_label}\"")
+
+    mermaid_markup = "\n".join(lines)
+
+    entity_cards: list[str] = []
+    for entity in paged_entities:
+        schema_name = str(entity.get("schema_name", "dbo"))
+        entity_name = str(entity.get("entity_name", "unknown"))
+        attrs = entity.get("attributes", [])
+        attr_preview: list[str] = []
+        if isinstance(attrs, list):
+            for attr in attrs[:8]:
+                col = escape(str(attr.get("name", "col")))
+                typ = escape(str(attr.get("type_name", "")))
+                attr_preview.append(f"{col} ({typ})")
+        entity_label = f"{schema_name}.{entity_name}"
+        entity_cards.append(
+            f"<div class='entity-card' data-entity='{escape(entity_label)}'>"
+            f"<h4><a href='/data-model-analysis?id={quote(model_id)}&focus={quote(entity_label)}&page={page}'>{escape(entity_label)}</a></h4>"
+            f"<div class='muted'>Columns: {len(attrs) if isinstance(attrs, list) else 0}</div>"
+            "<ul>"
+            + "".join(f"<li>{item}</li>" for item in attr_preview)
+            + "</ul>"
+            "</div>"
+        )
+
+    issues_count = summary.get("issues_count", {})
+    issues_html = (
+        "<div class='stats'>"
+        f"<div><strong>Entities</strong><br>{len(entities)}</div>"
+        f"<div><strong>Relationships</strong><br>{len(relationships)}</div>"
+        f"<div><strong>Identifier Issues</strong><br>{issues_count.get('identifiers', 0)}</div>"
+        f"<div><strong>Relationship Issues</strong><br>{issues_count.get('relationships', 0)}</div>"
+        "</div>"
     )
 
+    truncated_note = ""
+    if focus_set:
+        truncated_note = f"<p class='warn'>ERD focused on {escape(focus)} with two-level relationships.</p>"
+    elif len(entities) > max_entities:
+        truncated_note = f"<p class='warn'>Diagram is showing first {max_entities} of {len(entities)} entities for readability.</p>"
 
-if HTTP_APP is not None and hasattr(HTTP_APP, "add_route"):
+    prev_page = max(1, page - 1)
+    next_page = min(total_pages, page + 1)
+    pagination_html = (
+        "<div class='pager'>"
+        f"<a href='/data-model-analysis?id={quote(model_id)}&page={prev_page}&focus={quote(focus)}'>Prev</a>"
+        f"<span>Page {page} of {total_pages}</span>"
+        f"<a href='/data-model-analysis?id={quote(model_id)}&page={next_page}&focus={quote(focus)}'>Next</a>"
+        "</div>"
+    )
 
-    async def data_model_analysis_page(request: Request):
-        model_id = request.query_params.get("id")
-        if not model_id:
-            return JSONResponse({"error": "Missing id query parameter"}, status_code=400)
-        model = _OPEN_MODEL_CACHE.get(model_id)
-        if not model:
-            return JSONResponse({"error": "Model id not found"}, status_code=404)
-        return HTMLResponse(_render_data_model_html(model_id, model))
+    return f"""
+<!doctype html>
+<html>
+<head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>Data Model Analysis</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 0; color: #1f2937; }}
+        .wrap {{ padding: 16px; }}
+        .muted {{ color: #6b7280; font-size: 13px; }}
+        .warn {{ color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; padding: 8px; border-radius: 6px; }}
+        .stats {{ display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin: 12px 0; }}
+        .stats > div {{ background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; text-align: center; }}
+        .toolbar {{ display: flex; gap: 8px; margin: 8px 0; align-items: center; flex-wrap: wrap; }}
+        .toolbar button {{ padding: 6px 10px; border: 1px solid #d1d5db; background: white; border-radius: 6px; cursor: pointer; }}
+        .toolbar input {{ padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; min-width: 260px; }}
+        .search-status {{ font-size: 12px; color: #4b5563; }}
+        .diagram-shell {{ border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; height: 70vh; background: #fff; }}
+        #diagramViewport {{ width: 100%; height: 100%; overflow: hidden; cursor: grab; }}
+        #diagramViewport:active {{ cursor: grabbing; }}
+        #diagramLayer {{ transform-origin: 0 0; }}
+        .grid {{ margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }}
+        .entity-card {{ border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; background: #fff; }}
+        .entity-card.match {{ border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15); }}
+        .entity-card h4 {{ margin: 0 0 4px; font-size: 14px; }}
+        .entity-card a {{ color: #1d4ed8; text-decoration: none; }}
+        .entity-card ul {{ margin: 8px 0 0; padding-left: 18px; }}
+        .entity-card li {{ font-size: 12px; line-height: 1.35; }}
+        .pager {{ display: flex; gap: 12px; align-items: center; margin: 8px 0 16px; }}
+        .pager a {{ color: #1d4ed8; text-decoration: none; }}
+    </style>
+    <script type=\"module\">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window._mermaid = mermaid;
+    </script>
+</head>
+<body>
+    <div class=\"wrap\">
+        <h2>Logical Model Report: {escape(str(summary.get("database", "unknown")))}</h2>
+        <div class=\"muted\">Report ID: {escape(model_id)} · Generated: {escape(str(summary.get("generated_at_utc", "")))}</div>
+        {issues_html}
+        {truncated_note}
 
-    HTTP_APP.add_route("/data-model-analysis", data_model_analysis_page, methods=["GET"])
+        <div class=\"toolbar\">
+            <button onclick=\"zoomIn()\">Zoom In</button>
+            <button onclick=\"zoomOut()\">Zoom Out</button>
+            <button onclick=\"resetView()\">Reset</button>
+            <input id=\"entitySearch\" type=\"text\" placeholder=\"Focus entity (e.g., AccountDataIndicator)\" onkeydown=\"if(event.key==='Enter') focusEntity()\" />
+            <button onclick=\"focusEntity()\">Focus Entity</button>
+            <button onclick=\"clearEntityFocus()\">Clear Focus</button>
+            <span id=\"searchStatus\" class=\"search-status\"></span>
+            <a href=\"/data-model-analysis?id={quote(model_id)}\" class=\"muted\">Clear ERD</a>
+            <a href=\"/data-model-identifiers?id={quote(model_id)}\" class=\"muted\">Identifier Issues</a>
+            <a href=\"/data-model-relationships?id={quote(model_id)}\" class=\"muted\">Relationship Issues</a>
+        </div>
+
+        <div class=\"diagram-shell\">
+            <div id=\"diagramViewport\">
+                <div id=\"diagramLayer\" class=\"mermaid\">{escape(mermaid_markup)}</div>
+            </div>
+        </div>
+
+        <h3>Entity Details</h3>
+        {pagination_html}
+        <div id=\"entityGrid\" class=\"grid\">{''.join(entity_cards)}</div>
+    </div>
+
+    <script>
+        let scale = 1;
+        let tx = 0;
+        let ty = 0;
+        let dragging = false;
+        let startX = 0;
+        let startY = 0;
+        const viewport = document.getElementById('diagramViewport');
+        const layer = document.getElementById('diagramLayer');
+        const entityGrid = document.getElementById('entityGrid');
+        const searchInput = document.getElementById('entitySearch');
+        const searchStatus = document.getElementById('searchStatus');
+
+        function applyTransform() {{
+            layer.style.transform = `translate(${{tx}}px, ${{ty}}px) scale(${{scale}})`;
+        }}
+        function zoomIn() {{ scale = Math.min(3, scale + 0.1); applyTransform(); }}
+        function zoomOut() {{ scale = Math.max(0.2, scale - 0.1); applyTransform(); }}
+        function resetView() {{ scale = 1; tx = 0; ty = 0; applyTransform(); }}
+        window.zoomIn = zoomIn;
+        window.zoomOut = zoomOut;
+        window.resetView = resetView;
+
+        function focusEntity() {{
+            const query = (searchInput.value || '').trim().toLowerCase();
+            const cards = Array.from(entityGrid.querySelectorAll('.entity-card'));
+            cards.forEach((card) => card.classList.remove('match'));
+            if (!query) {{
+                searchStatus.textContent = '';
+                return;
+            }}
+
+            const matches = cards.filter((card) => (card.dataset.entity || '').toLowerCase().includes(query));
+            searchStatus.textContent = `${{matches.length}} match(es)`;
+            if (matches.length === 0) return;
+
+            matches.forEach((card) => card.classList.add('match'));
+            matches[0].scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+
+            const svg = layer.querySelector('svg');
+            if (!svg) return;
+            const targetText = Array.from(svg.querySelectorAll('text')).find((node) => (node.textContent || '').toLowerCase().includes(query));
+            if (!targetText) return;
+            const graphNode = targetText.closest('g');
+            if (!graphNode || !graphNode.getBBox) return;
+            const box = graphNode.getBBox();
+            tx = Math.max(20, (viewport.clientWidth / 2) - ((box.x + box.width / 2) * scale));
+            ty = Math.max(20, (viewport.clientHeight / 2) - ((box.y + box.height / 2) * scale));
+            applyTransform();
+        }}
+
+        function clearEntityFocus() {{
+            const cards = Array.from(entityGrid.querySelectorAll('.entity-card'));
+            cards.forEach((card) => card.classList.remove('match'));
+            searchInput.value = '';
+            searchStatus.textContent = '';
+        }}
+
+        window.focusEntity = focusEntity;
+        window.clearEntityFocus = clearEntityFocus;
+
+        viewport.addEventListener('wheel', (e) => {{
+            e.preventDefault();
+            if (e.deltaY < 0) zoomIn(); else zoomOut();
+        }}, {{ passive: false }});
+
+        viewport.addEventListener('mousedown', (e) => {{
+            dragging = true;
+            startX = e.clientX - tx;
+            startY = e.clientY - ty;
+        }});
+        window.addEventListener('mouseup', () => dragging = false);
+        window.addEventListener('mousemove', (e) => {{
+            if (!dragging) return;
+            tx = e.clientX - startX;
+            ty = e.clientY - startY;
+            applyTransform();
+        }});
+
+        async function initMermaid() {{
+            const mermaid = window._mermaid;
+            if (!mermaid) return;
+            mermaid.initialize({{ startOnLoad: true, securityLevel: 'loose', theme: 'default' }});
+            await mermaid.run({{ querySelector: '.mermaid' }});
+            applyTransform();
+        }}
+        initMermaid();
+    </script>
+</body>
+</html>
+"""
+
+
+def _render_issue_list_html(
+    model_id: str,
+    title: str,
+    issues: list[dict[str, Any]],
+    page: int,
+) -> str:
+    per_page = 10
+    paged, total_pages = _paginate(issues, page, per_page)
+    prev_page = max(1, page - 1)
+    next_page = min(total_pages, page + 1)
+    items_html = "".join(
+        "<li>"
+        f"<strong>{escape(str(item.get('entity', '')))}</strong><br>"
+        f"<span class='muted'>{escape(str(item.get('issue', 'Issue')))}</span><br>"
+        f"{escape(str(item.get('description', '')))}"
+        "</li>"
+        for item in paged
+    )
+    if not items_html:
+        items_html = "<li>No issues found.</li>"
+
+    return f"""
+<!doctype html>
+<html>
+<head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>{escape(title)}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 0; color: #1f2937; }}
+        .wrap {{ padding: 16px; }}
+        .pager {{ display: flex; gap: 12px; align-items: center; margin: 8px 0 16px; }}
+        .pager a {{ color: #1d4ed8; text-decoration: none; }}
+        .muted {{ color: #6b7280; font-size: 12px; }}
+        ul {{ padding-left: 18px; }}
+        li {{ margin-bottom: 10px; }}
+    </style>
+</head>
+<body>
+    <div class=\"wrap\">
+        <h2>{escape(title)}</h2>
+        <div class=\"pager\">
+            <a href=\"?id={quote(model_id)}&page={prev_page}\">Prev</a>
+            <span>Page {page} of {total_pages}</span>
+            <a href=\"?id={quote(model_id)}&page={next_page}\">Next</a>
+            <a href=\"/data-model-analysis?id={quote(model_id)}\">Back to ERD</a>
+        </div>
+        <ul>{items_html}</ul>
+    </div>
+</body>
+</html>
+"""
+
+
+@mcp.custom_route("/data-model-analysis", methods=["GET"])
+async def data_model_analysis_page(request: Request):
+    model_id = request.query_params.get("id")
+    if not model_id:
+        return JSONResponse({"error": "Missing id query parameter"}, status_code=400)
+    model = _OPEN_MODEL_CACHE.get(model_id)
+    if not model:
+        return JSONResponse({"error": "Model id not found"}, status_code=404)
+    page_raw = request.query_params.get("page")
+    focus_entity = request.query_params.get("focus")
+    try:
+        page = int(page_raw) if page_raw else 1
+    except ValueError:
+        page = 1
+    return HTMLResponse(_render_data_model_html(model_id, model, page, focus_entity))
+
+
+@mcp.custom_route("/data-model-identifiers", methods=["GET"])
+async def data_model_identifiers_page(request: Request):
+    model_id = request.query_params.get("id")
+    if not model_id:
+        return JSONResponse({"error": "Missing id query parameter"}, status_code=400)
+    model = _OPEN_MODEL_CACHE.get(model_id)
+    if not model:
+        return JSONResponse({"error": "Model id not found"}, status_code=404)
+    page_raw = request.query_params.get("page")
+    try:
+        page = int(page_raw) if page_raw else 1
+    except ValueError:
+        page = 1
+    issues = model.get("issues", {}).get("identifiers", [])
+    return HTMLResponse(_render_issue_list_html(model_id, "Identifier Issues", issues, page))
+
+
+@mcp.custom_route("/data-model-relationships", methods=["GET"])
+async def data_model_relationships_page(request: Request):
+    model_id = request.query_params.get("id")
+    if not model_id:
+        return JSONResponse({"error": "Missing id query parameter"}, status_code=400)
+    model = _OPEN_MODEL_CACHE.get(model_id)
+    if not model:
+        return JSONResponse({"error": "Model id not found"}, status_code=404)
+    page_raw = request.query_params.get("page")
+    try:
+        page = int(page_raw) if page_raw else 1
+    except ValueError:
+        page = 1
+    issues = model.get("issues", {}).get("relationships", [])
+    return HTMLResponse(_render_issue_list_html(model_id, "Relationship Issues", issues, page))
+
+
+def _get_sessions_data() -> dict[str, Any]:
+    """Fetch current SQL Server session data."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        _execute_safe(
+            cur,
+            """
+            SELECT 
+                es.session_id,
+                es.login_name,
+                es.host_name,
+                es.program_name,
+                es.status AS session_status,
+                CONVERT(VARCHAR, es.login_time, 121) AS login_time,
+                CONVERT(VARCHAR, es.last_request_end_time, 121) AS last_request_end_time,
+                r.command,
+                COALESCE(r.status, es.status) AS status,
+                r.wait_type,
+                r.blocking_session_id,
+                CONVERT(VARCHAR, r.start_time, 121) AS start_time,
+                DATEDIFF(SECOND, r.start_time, GETUTCDATE()) AS duration_seconds,
+                es.cpu_time,
+                es.memory_usage
+            FROM sys.dm_exec_sessions es
+            LEFT JOIN sys.dm_exec_requests r ON es.session_id = r.session_id
+            WHERE es.session_id > 50
+            ORDER BY r.status DESC, es.session_id
+            """,
+        )
+        
+        columns = [desc[0] for desc in cur.description]
+        sessions = []
+        for row in cur.fetchall():
+            session_dict = dict(zip(columns, row))
+            sessions.append(session_dict)
+        
+        active_count = sum(1 for s in sessions if s.get("status") in {"running", "runnable", "suspended"})
+        idle_count = len(sessions) - active_count
+        blocked_count = sum(1 for s in sessions if (s.get("blocking_session_id") or 0) > 0)
+        blocker_count = len({
+            int(s.get("blocking_session_id"))
+            for s in sessions
+            if (s.get("blocking_session_id") or 0) > 0
+        })
+        
+        return {
+            "timestamp": _now_utc_iso(),
+            "active_sessions": active_count,
+            "idle_sessions": idle_count,
+            "total_sessions": len(sessions),
+            "blocked_sessions": blocked_count,
+            "blocking_sessions": blocker_count,
+            "sessions": sessions,
+        }
+    finally:
+        conn.close()
+
+
+@mcp.custom_route("/api/sessions", methods=["GET"])
+async def get_sessions_api(request: Request):
+    """API endpoint to fetch current session data."""
+    try:
+        data = _get_sessions_data()
+        return JSONResponse(data)
+    except Exception as e:
+        logger.exception("Error fetching sessions data")
+        return JSONResponse(
+            {"error": str(e), "timestamp": _now_utc_iso()},
+            status_code=500
+        )
+
+
+@mcp.custom_route("/sessions-monitor", methods=["GET"])
+async def sessions_monitor_page(request: Request):
+    """Real-time session monitor dashboard."""
+    html = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>SQL Server Session Monitor</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                padding: 20px;
+            }
+            .container {
+                max-width: 1400px;
+                margin: 0 auto;
+            }
+            header {
+                background: white;
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 20px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }
+            h1 {
+                color: #333;
+                font-size: 28px;
+                margin-bottom: 5px;
+            }
+            .status-line {
+                color: #666;
+                font-size: 14px;
+            }
+            .status-line.ok {
+                color: #10b981;
+            }
+            .status-line.error {
+                color: #ef4444;
+            }
+            .stats {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin-top: 15px;
+            }
+            .stat-card {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 20px;
+                border-radius: 6px;
+                text-align: center;
+            }
+            .stat-card .value {
+                font-size: 32px;
+                font-weight: bold;
+                margin: 10px 0;
+            }
+            .stat-card .label {
+                font-size: 14px;
+                opacity: 0.9;
+            }
+            .content {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+                margin-bottom: 20px;
+            }
+            @media (max-width: 1024px) {
+                .content {
+                    grid-template-columns: 1fr;
+                }
+            }
+            .panel {
+                background: white;
+                border-radius: 8px;
+                padding: 20px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }
+            .panel h2 {
+                font-size: 18px;
+                color: #333;
+                margin-bottom: 15px;
+                border-bottom: 2px solid #667eea;
+                padding-bottom: 10px;
+            }
+            #sessionChart {
+                position: relative;
+                height: 300px;
+            }
+            .sessions-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 13px;
+            }
+            .sessions-table th {
+                background: #667eea;
+                color: white;
+                padding: 12px;
+                text-align: left;
+                font-weight: 600;
+            }
+            .sessions-table td {
+                padding: 10px 12px;
+                border-bottom: 1px solid #e5e7eb;
+            }
+            .sessions-table tr:hover {
+                background: #f9fafb;
+            }
+            .status-badge {
+                display: inline-block;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            .status-badge.running {
+                background: #d1fae5;
+                color: #065f46;
+            }
+            .status-badge.idle {
+                background: #fef3c7;
+                color: #92400e;
+            }
+            .status-badge.suspended {
+                background: #fee2e2;
+                color: #991b1b;
+            }
+            .footer {
+                text-align: center;
+                color: white;
+                font-size: 12px;
+                margin-top: 20px;
+            }
+            .refresh-info {
+                text-align: right;
+                color: #666;
+                font-size: 12px;
+                margin-top: 10px;
+            }
+            .error-message {
+                background: #fee2e2;
+                color: #991b1b;
+                padding: 15px;
+                border-radius: 6px;
+                margin: 10px 0;
+            }
+            .scroll-container {
+                max-height: 400px;
+                overflow-y: auto;
+            }
+            .pagination-controls {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-top: 12px;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+            .pagination-buttons {
+                display: flex;
+                gap: 8px;
+            }
+            .pagination-btn {
+                background: #667eea;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 12px;
+                font-size: 12px;
+                cursor: pointer;
+            }
+            .pagination-btn:disabled {
+                background: #cbd5e1;
+                cursor: not-allowed;
+            }
+            .page-number-btn {
+                background: #e2e8f0;
+                color: #1e293b;
+                border: none;
+                border-radius: 4px;
+                min-width: 30px;
+                padding: 6px 10px;
+                font-size: 12px;
+                cursor: pointer;
+            }
+            .page-number-btn.active {
+                background: #667eea;
+                color: white;
+            }
+            .pagination-text {
+                font-size: 12px;
+                color: #475569;
+            }
+            .blocking-panel {
+                margin-top: 20px;
+            }
+            .blocking-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 10px;
+                flex-wrap: wrap;
+            }
+            .blocking-toggle {
+                background: #667eea;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 12px;
+                font-size: 12px;
+                cursor: pointer;
+            }
+            .blocking-tree {
+                background: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                padding: 12px;
+                max-height: 320px;
+                overflow-y: auto;
+            }
+            .tree-list {
+                list-style: none;
+                padding-left: 14px;
+                margin: 0;
+                border-left: 2px solid #cbd5e1;
+            }
+            .tree-node {
+                margin: 8px 0;
+                padding-left: 10px;
+            }
+            .tree-card {
+                background: white;
+                border: 1px solid #dbeafe;
+                border-radius: 6px;
+                padding: 8px 10px;
+            }
+            .tree-title {
+                font-size: 12px;
+                font-weight: 700;
+                color: #1e293b;
+                margin-bottom: 4px;
+            }
+            .tree-meta {
+                font-size: 11px;
+                color: #475569;
+                line-height: 1.4;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <header>
+                <h1>🔍 SQL Server Session Monitor</h1>
+                <div class="status-line ok" id="statusLine">● Connected and monitoring...</div>
+                
+                <div class="stats">
+                    <div class="stat-card">
+                        <div class="label">Active Sessions</div>
+                        <div class="value" id="activeSessions">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Idle Sessions</div>
+                        <div class="value" id="idleSessions">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Total Sessions</div>
+                        <div class="value" id="totalSessions">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">Last Updated</div>
+                        <div class="value" id="lastUpdate" style="font-size: 18px;">--:--:--</div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="content">
+                <div class="panel">
+                    <h2>Session Trend (Last 20 Updates)</h2>
+                    <div id="sessionChart">
+                        <canvas id="trendChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>Session Summary</h2>
+                    <div style="text-align: center; padding: 40px 20px; color: #999;">
+                        <p>Active: <strong id="summary-active">0</strong></p>
+                        <p style="margin: 10px 0;">Idle: <strong id="summary-idle">0</strong></p>
+                        <p>Total: <strong id="summary-total">0</strong></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h2>Active & Idle Sessions</h2>
+                <div class="scroll-container">
+                    <table class="sessions-table">
+                        <thead>
+                            <tr>
+                                <th>Session ID</th>
+                                <th>Login</th>
+                                <th>Host</th>
+                                <th>Program</th>
+                                <th>Status</th>
+                                <th>Command</th>
+                                <th>Duration (s)</th>
+                                <th>Wait Type</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sessionsTable">
+                            <tr>
+                                <td colspan="8" style="text-align: center; color: #999; padding: 30px;">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination-controls">
+                    <div class="pagination-text" id="paginationInfo">Showing 0 to 0 of 0 sessions</div>
+                    <div class="pagination-buttons">
+                        <button class="pagination-btn" id="prevPageBtn" disabled>Previous</button>
+                        <div id="pageNumbers"></div>
+                        <div class="pagination-text" id="pageIndicator">Page 1 of 1</div>
+                        <button class="pagination-btn" id="nextPageBtn" disabled>Next</button>
+                    </div>
+                </div>
+                <div class="refresh-info">Auto-refreshes every 5 seconds</div>
+
+                <div class="blocking-panel">
+                    <div class="blocking-header">
+                        <h2 style="margin: 0; border: 0; padding: 0;">Blocking / Blocked Session Tree</h2>
+                        <button class="blocking-toggle" id="toggleBlockingTreeBtn">View blocking tree</button>
+                    </div>
+                    <div class="blocking-tree" id="blockingTree" style="display: none;">
+                        <div class="pagination-text">No blocking chains detected.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="footer">
+                <p>SQL Server Session Monitor • Real-time monitoring dashboard</p>
+            </div>
+        </div>
+
+        <script>
+            let trendChart = null;
+            const PAGE_SIZE = 10;
+            let currentPage = 1;
+            let currentSessions = [];
+            const trendData = {
+                labels: [],
+                active: [],
+                idle: []
+            };
+
+            function formatTime(date) {
+                return date.toLocaleTimeString('en-US', { hour12: false });
+            }
+
+            function createTrendChart() {
+                const ctx = document.getElementById('trendChart').getContext('2d');
+                trendChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: trendData.labels,
+                        datasets: [
+                            {
+                                label: 'Active Sessions',
+                                data: trendData.active,
+                                borderColor: '#10b981',
+                                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                                tension: 0.4,
+                                fill: true,
+                                pointRadius: 4
+                            },
+                            {
+                                label: 'Idle Sessions',
+                                data: trendData.idle,
+                                borderColor: '#f59e0b',
+                                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                                tension: 0.4,
+                                fill: true,
+                                pointRadius: 4
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 100
+                            }
+                        }
+                    }
+                });
+            }
+
+            function updateTrendChart(activeCount, idleCount) {
+                const now = new Date();
+                trendData.labels.push(formatTime(now));
+                trendData.active.push(activeCount);
+                trendData.idle.push(idleCount);
+
+                if (trendData.labels.length > 20) {
+                    trendData.labels.shift();
+                    trendData.active.shift();
+                    trendData.idle.shift();
+                }
+
+                if (trendChart) {
+                    trendChart.data.labels = trendData.labels;
+                    trendChart.data.datasets[0].data = trendData.active;
+                    trendChart.data.datasets[1].data = trendData.idle;
+                    trendChart.update('none');
+                }
+            }
+
+            function renderPagination(totalItems, pageCount, displayedCount) {
+                const startIndex = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+                const endIndex = totalItems === 0 ? 0 : startIndex + displayedCount - 1;
+
+                document.getElementById('paginationInfo').textContent =
+                    `Showing ${startIndex} to ${endIndex} of ${totalItems} sessions`;
+                document.getElementById('pageIndicator').textContent =
+                    `Page ${pageCount === 0 ? 1 : currentPage} of ${pageCount === 0 ? 1 : pageCount}`;
+
+                document.getElementById('prevPageBtn').disabled = currentPage <= 1 || totalItems === 0;
+                document.getElementById('nextPageBtn').disabled = currentPage >= pageCount || totalItems === 0;
+
+                const pageNumbers = document.getElementById('pageNumbers');
+                pageNumbers.innerHTML = '';
+                for (let page = 1; page <= pageCount; page++) {
+                    const btn = document.createElement('button');
+                    btn.className = 'page-number-btn' + (page === currentPage ? ' active' : '');
+                    btn.textContent = String(page);
+                    btn.addEventListener('click', () => goToPage(page));
+                    pageNumbers.appendChild(btn);
+                }
+            }
+
+            function renderSessionsTable(sessions) {
+                const tbody = document.getElementById('sessionsTable');
+                currentSessions = sessions || [];
+                const pageCount = Math.ceil(currentSessions.length / PAGE_SIZE);
+
+                if (pageCount > 0 && currentPage > pageCount) {
+                    currentPage = pageCount;
+                }
+                if (pageCount === 0) {
+                    currentPage = 1;
+                }
+
+                const startIndex = (currentPage - 1) * PAGE_SIZE;
+                const pageSessions = currentSessions.slice(startIndex, startIndex + PAGE_SIZE);
+                
+                if (currentSessions.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #999;">No sessions found</td></tr>';
+                    renderPagination(0, 0, 0);
+                    return;
+                }
+
+                tbody.innerHTML = pageSessions.map(s => {
+                    const status = s.status || 'unknown';
+                    const statusBadgeClass = status === 'running' ? 'running' : 'idle';
+                    const durationSec = s.duration_seconds || 0;
+                    
+                    return `
+                        <tr>
+                            <td><strong>${s.session_id}</strong></td>
+                            <td>${escape(s.login_name || 'N/A')}</td>
+                            <td>${escape(s.host_name || 'N/A')}</td>
+                            <td>${escape((s.program_name || 'N/A').substring(0, 30))}</td>
+                            <td><span class="status-badge ${statusBadgeClass}">${capitalize(status)}</span></td>
+                            <td>${s.command || 'N/A'}</td>
+                            <td>${durationSec || 0}</td>
+                            <td>${s.wait_type || 'None'}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                renderPagination(currentSessions.length, pageCount, pageSessions.length);
+            }
+
+            function buildSessionDetails(session, relationLabel) {
+                const sid = session.session_id || 'N/A';
+                const login = escape(session.login_name || 'N/A');
+                const host = escape(session.host_name || 'N/A');
+                const command = escape(session.command || 'N/A');
+                const waitType = escape(session.wait_type || 'None');
+                const duration = session.duration_seconds || 0;
+                return `
+                    <div class="tree-card">
+                        <div class="tree-title">SPID ${sid} (${relationLabel})</div>
+                        <div class="tree-meta">Login: ${login} • Host: ${host}</div>
+                        <div class="tree-meta">Status: ${escape(session.status || 'unknown')} • Command: ${command}</div>
+                        <div class="tree-meta">Wait: ${waitType} • Duration: ${duration}s</div>
+                    </div>
+                `;
+            }
+
+            function renderBlockingNode(sessionId, childrenByBlocker, sessionById, pathSet) {
+                const sidKey = String(sessionId);
+                if (pathSet.has(sidKey)) {
+                    return `<li class="tree-node"><div class="tree-meta">Cycle detected at SPID ${sidKey}</div></li>`;
+                }
+
+                const nextPath = new Set(pathSet);
+                nextPath.add(sidKey);
+                const session = sessionById.get(sidKey) || {
+                    session_id: sidKey,
+                    login_name: 'Unknown',
+                    host_name: 'Unknown',
+                    status: 'unknown',
+                    command: 'N/A',
+                    wait_type: 'N/A',
+                    duration_seconds: 0,
+                };
+                const children = childrenByBlocker.get(sidKey) || [];
+                const relation = children.length > 0 ? 'Blocker' : 'Blocked';
+
+                let html = `<li class="tree-node">${buildSessionDetails(session, relation)}`;
+                if (children.length > 0) {
+                    html += '<ul class="tree-list">';
+                    for (const child of children) {
+                        html += renderBlockingNode(child, childrenByBlocker, sessionById, nextPath);
+                    }
+                    html += '</ul>';
+                }
+                html += '</li>';
+                return html;
+            }
+
+            function renderBlockingTree(sessions) {
+                const container = document.getElementById('blockingTree');
+                const blocked = (sessions || []).filter(s => (s.blocking_session_id || 0) > 0);
+                if (blocked.length === 0) {
+                    container.innerHTML = '<div class="pagination-text">No blocking chains detected.</div>';
+                    return;
+                }
+
+                const sessionById = new Map();
+                for (const session of sessions) {
+                    sessionById.set(String(session.session_id), session);
+                }
+
+                const childrenByBlocker = new Map();
+                const blockedIds = new Set();
+                const blockerIds = new Set();
+
+                for (const session of blocked) {
+                    const blockerId = String(session.blocking_session_id);
+                    const blockedId = String(session.session_id);
+                    blockerIds.add(blockerId);
+                    blockedIds.add(blockedId);
+                    if (!childrenByBlocker.has(blockerId)) {
+                        childrenByBlocker.set(blockerId, []);
+                    }
+                    childrenByBlocker.get(blockerId).push(blockedId);
+                }
+
+                const rootIds = [...blockerIds].filter(id => !blockedIds.has(id));
+                const renderRoots = rootIds.length > 0 ? rootIds : [...blockerIds];
+
+                let html = `<div class="pagination-text" style="margin-bottom: 8px;">Blocking Sessions: ${blockerIds.size} • Blocked Sessions: ${blocked.length}</div>`;
+                html += '<ul class="tree-list">';
+                for (const rootId of renderRoots) {
+                    html += renderBlockingNode(rootId, childrenByBlocker, sessionById, new Set());
+                }
+                html += '</ul>';
+                container.innerHTML = html;
+            }
+
+            function goToPage(nextPage) {
+                const pageCount = Math.ceil(currentSessions.length / PAGE_SIZE);
+                if (pageCount === 0) {
+                    currentPage = 1;
+                    renderSessionsTable(currentSessions);
+                    return;
+                }
+                if (nextPage < 1 || nextPage > pageCount) {
+                    return;
+                }
+                currentPage = nextPage;
+                renderSessionsTable(currentSessions);
+            }
+
+            function capitalize(str) {
+                return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+            }
+
+            function escape(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            async function fetchSessions() {
+                try {
+                    const response = await fetch('/api/sessions');
+                    if (!response.ok) throw new Error('Network response was not ok');
+                    
+                    const data = await response.json();
+                    
+                    document.getElementById('activeSessions').textContent = data.active_sessions || 0;
+                    document.getElementById('idleSessions').textContent = data.idle_sessions || 0;
+                    document.getElementById('totalSessions').textContent = data.total_sessions || 0;
+                    
+                    document.getElementById('summary-active').textContent = data.active_sessions || 0;
+                    document.getElementById('summary-idle').textContent = data.idle_sessions || 0;
+                    document.getElementById('summary-total').textContent = data.total_sessions || 0;
+                    
+                    const now = new Date();
+                    document.getElementById('lastUpdate').textContent = now.toLocaleTimeString('en-US', { hour12: false });
+                    
+                    updateTrendChart(data.active_sessions || 0, data.idle_sessions || 0);
+                    renderSessionsTable(data.sessions || []);
+                    renderBlockingTree(data.sessions || []);
+                    
+                    document.getElementById('statusLine').textContent = '● Connected and monitoring...';
+                    document.getElementById('statusLine').className = 'status-line ok';
+                } catch (error) {
+                    console.error('Error fetching sessions:', error);
+                    document.getElementById('statusLine').textContent = '✗ Connection error: ' + error.message;
+                    document.getElementById('statusLine').className = 'status-line error';
+                    document.getElementById('sessionsTable').innerHTML = 
+                        '<tr><td colspan="8" style="text-align: center; color: #ef4444; padding: 30px;">Error fetching sessions: ' + 
+                        escape(error.message) + '</td></tr>';
+                }
+            }
+
+            // Initialize chart on page load
+            document.addEventListener('DOMContentLoaded', () => {
+                document.getElementById('prevPageBtn').addEventListener('click', () => goToPage(currentPage - 1));
+                document.getElementById('nextPageBtn').addEventListener('click', () => goToPage(currentPage + 1));
+                document.getElementById('toggleBlockingTreeBtn').addEventListener('click', () => {
+                    const tree = document.getElementById('blockingTree');
+                    const button = document.getElementById('toggleBlockingTreeBtn');
+                    const isHidden = tree.style.display === 'none';
+                    tree.style.display = isHidden ? 'block' : 'none';
+                    button.textContent = isHidden ? 'Hide blocking tree' : 'View blocking tree';
+                });
+                createTrendChart();
+                fetchSessions();
+                setInterval(fetchSessions, 5000);
+            });
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html)
 
 
 if __name__ == "__main__":
@@ -2048,6 +3459,32 @@ if __name__ == "__main__":
     )
 
     if transport in {"http", "sse"}:
-        mcp.run(transport="http", host=SETTINGS.host, port=SETTINGS.port)
+        run_kwargs: dict[str, Any] = {}
+
+        ssl_cert = SETTINGS.ssl_cert
+        ssl_key = SETTINGS.ssl_key
+        if ssl_cert or ssl_key:
+            if not (ssl_cert and ssl_key):
+                raise RuntimeError("Both MCP_SSL_CERT and MCP_SSL_KEY must be set to enable HTTPS.")
+            run_kwargs["ssl_certfile"] = ssl_cert
+            run_kwargs["ssl_keyfile"] = ssl_key
+            logger.info(
+                "HTTPS enabled for MCP HTTP transport",
+                extra={"ssl_cert": ssl_cert, "ssl_key": ssl_key},
+            )
+
+        try:
+            mcp.run(transport="http", host=SETTINGS.host, port=SETTINGS.port, **run_kwargs)
+        except TypeError as exc:
+            if run_kwargs:
+                message = (
+                    "Current FastMCP runtime does not accept SSL parameters. "
+                    "Use a reverse proxy for HTTPS termination."
+                )
+                if SETTINGS.ssl_strict:
+                    raise RuntimeError(message) from exc
+                logger.warning("%s Falling back to HTTP without native TLS.", message)
+                mcp.run(transport="http", host=SETTINGS.host, port=SETTINGS.port)
+            raise
     else:
         mcp.run(transport="stdio")

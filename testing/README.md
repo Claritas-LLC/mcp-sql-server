@@ -59,7 +59,8 @@ $summary.tools_executed | Select-Object -ExpandProperty '*' | Format-Table
 
 # Process individual tool result
 $databases = Get-Content tool_results/db_sql2019_list_databases.json | ConvertFrom-Json
-$databases.databases
+$databases.items
+$databases.pagination
 ```
 
 ### Parse Results in Python
@@ -77,7 +78,9 @@ for tool_name, info in summary['tools_executed'].items():
 # Read individual tool result
 with open('tool_results/db_sql2019_list_databases.json') as f:
     databases = json.load(f)
-    print(f"Found {databases['count']} databases: {databases['databases']}")
+  print(f"Found {databases['pagination']['total_items']} databases")
+  print(f"Page {databases['pagination']['page']} of {databases['pagination']['total_pages']}")
+  print(databases['items'])
 ```
 
 ---
@@ -109,40 +112,43 @@ with open('tool_results/db_sql2019_list_databases.json') as f:
 ### `db_sql2019_list_databases.json`
 **Purpose:** List all SQL Server databases  
 **Key Fields:**
-- `status`: "success" or "error"
-- `databases`: Array of database names
-- `count`: Total number of databases
+- `items`: Array of database names for current page
+- `pagination.page`: Current page number
+- `pagination.page_size`: Items per page
+- `pagination.total_items`: Total number of items
+- `pagination.total_pages`: Total pages available
 
 **Example:**
 ```json
 {
-  "status": "success",
-  "databases": ["master", "model", "msdb", "tempdb", "TEST_DB"],
-  "count": 5
+  "items": ["master", "model", "msdb", "tempdb", "TEST_DB"],
+  "pagination": {
+    "page": 1,
+    "page_size": 10,
+    "total_items": 5,
+    "total_pages": 1
+  }
 }
 ```
 
 ### `db_sql2019_list_tables.json`
 **Purpose:** List all tables in a schema  
 **Key Fields:**
-- `database`: Target database
-- `schema`: Target schema
-- `tables`: Array of table names
-- `count`: Total number of tables
+- `items`: Array of table rows for current page
+- `pagination`: Page metadata (`page`, `page_size`, `total_items`, `total_pages`)
 
 ### `db_sql2019_get_schema.json`
 **Purpose:** Get table structure and column definitions  
 **Key Fields:**
-- `column_count`: Number of columns
-- `columns`: Array of column objects with name, type, nullable, default
+- `database`, `schema`, `table`: Context values
+- `columns`: Array of column objects (paginated in response)
+- `_pagination.lists.root.columns`: Pagination metadata for `columns`
 
 ### `db_sql2019_execute_query.json`
 **Purpose:** Execute SELECT query and return results  
 **Key Fields:**
-- `query`: The executed query (first 100 chars)
-- `columns`: Column names
-- `data`: Array of result rows (limited to 10 rows)
-- `row_count`: Number of rows returned
+- `items`: Query result rows for current page
+- `pagination`: Page metadata (`page`, `page_size`, `total_items`, `total_pages`)
 
 ### `db_sql2019_db_stats.json`
 **Purpose:** Database object statistics  
@@ -166,15 +172,15 @@ with open('tool_results/db_sql2019_list_databases.json') as f:
 ### `db_sql2019_analyze_table_health.json`
 **Purpose:** Analyze table sizes and row counts  
 **Key Fields:**
-- `tables`: Array of table objects with name, row count, size in MB
-- `count`: Number of tables analyzed
+- `table_info`: Base table health metadata
+- `indexes`, `foreign_keys`, `statistics_sample`, `recommendations`: Paginated list fields
+- `_pagination.lists`: Per-list pagination metadata
 
 ### `db_sql2019_get_index_fragmentation.json` & `db_sql2019_check_fragmentation.json`
 **Purpose:** Index fragmentation analysis  
 **Key Fields:**
-- `fragmented_indexes`: Array of index objects
-- `index.fragmentation`: Percentage fragmentation
-- `index.pages`: Page count
+- `db_sql2019_get_index_fragmentation`: `items` + `pagination`
+- `db_sql2019_check_fragmentation`: list fields are paginated and tracked under `_pagination.lists`
 
 ### `db_sql2019_server_info_mcp.json`
 **Purpose:** SQL Server instance information  
@@ -186,9 +192,8 @@ with open('tool_results/db_sql2019_list_databases.json') as f:
 ### `db_sql2019_show_top_queries.json`
 **Purpose:** Top executing queries  
 **Key Fields:**
-- `top_queries`: Array of query objects
-- `query.executions`: Execution count
-- `query.elapsed_seconds`: Total elapsed time
+- `long_running_queries`, `high_cpu_queries`, `high_io_queries`, `high_execution_queries`: Paginated list fields
+- `_pagination.lists`: Per-list pagination metadata
 
 ### `db_sql2019_db_sec_perf_metrics.json`
 **Purpose:** Security and performance metrics  
@@ -239,6 +244,9 @@ docker run -e 'ACCEPT_EULA=Y' -e 'SA_PASSWORD=McpTestPassword123!' \
 
 ## 🎓 Using Results for Testing
 
+> **Note on pagination:** Non-UI tools now paginate list outputs by default (`page=1`, `page_size=10`).
+> For top-level list tools, read `items` and `pagination`. For dict responses with lists, use `_pagination.lists`.
+
 ### Unit Test Mocking
 ```python
 # Load tool results as mock data for unit tests
@@ -246,7 +254,7 @@ with open('tool_results/db_list_databases.json') as f:
     mock_db_list = json.load(f)
 
 # Use in test assertions
-assert 'TEST_DB' in mock_db_list['databases']
+assert 'TEST_DB' in mock_db_list['items']
 ```
 
 ### Integration Test Validation
@@ -267,19 +275,19 @@ cp -r testing/ /artifacts/mcp-sql-server-test-results/
 
 ## 📈 Metrics Summary
 
-| Tool | Status | Result Count | Query Time |
-|------|--------|--------------|------------|
-| db_sql2019_list_databases | ✅ | 5 databases | <100ms |
-| db_sql2019_list_tables | ✅ | 8 tables | <100ms |
-| db_sql2019_get_schema | ✅ | 10 columns | <100ms |
-| db_sql2019_execute_query | ✅ | 10 rows | <200ms |
-| db_sql2019_get_index_fragmentation | ✅ | Multiple indexes | <500ms |
-| db_sql2019_analyze_table_health | ✅ | 10 tables | <200ms |
-| db_sql2019_db_stats | ✅ | 4 counts | <100ms |
-| db_sql2019_server_info_mcp | ✅ | 3 fields | <100ms |
-| db_sql2019_show_top_queries | ✅ | 5 queries | <200ms |
-| db_sql2019_check_fragmentation | ✅ | Multiple indexes | <500ms |
-| db_sql2019_db_sec_perf_metrics | ✅ | 4 metrics | <200ms |
+| Tool | Status | Pagination Semantics | Query Time |
+|------|--------|----------------------|------------|
+| db_sql2019_list_databases | ✅ | top-level `items` + `pagination` (`page_size=10`) | <100ms |
+| db_sql2019_list_tables | ✅ | top-level `items` + `pagination` (`page_size=10`) | <100ms |
+| db_sql2019_get_schema | ✅ | `columns` paginated via `_pagination.lists.root.columns` | <100ms |
+| db_sql2019_execute_query | ✅ | top-level `items` + `pagination` (`page_size=10`) | <200ms |
+| db_sql2019_get_index_fragmentation | ✅ | top-level `items` + `pagination` (`page_size=10`) | <500ms |
+| db_sql2019_analyze_table_health | ✅ | list fields paginated via `_pagination.lists` | <200ms |
+| db_sql2019_db_stats | ✅ | no list fields (unchanged) | <100ms |
+| db_sql2019_server_info_mcp | ✅ | no list fields (unchanged) | <100ms |
+| db_sql2019_show_top_queries | ✅ | query lists paginated via `_pagination.lists` | <200ms |
+| db_sql2019_check_fragmentation | ✅ | list fields paginated via `_pagination.lists` | <500ms |
+| db_sql2019_db_sec_perf_metrics | ✅ | list fields paginated via `_pagination.lists` | <200ms |
 
 **Overall:** 11/11 tools (100% success rate, ~3-5 seconds total execution time)
 
@@ -301,6 +309,6 @@ cp -r testing/ /artifacts/mcp-sql-server-test-results/
 
 ---
 
-**Last Updated:** 2026-02-24  
+**Last Updated:** 2026-02-26  
 **Test Framework:** run_all_tools_http.py  
 **Status:** ✅ Production Ready
