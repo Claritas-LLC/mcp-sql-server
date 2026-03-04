@@ -1,4 +1,6 @@
 import concurrent.futures
+import os
+import sys
 
 import pytest
 
@@ -22,6 +24,9 @@ def _run_query():
 
 @pytest.fixture(autouse=True, scope="module")
 def _require_db_connection():
+    if sys.platform == "win32" and os.getenv("MCP_RUN_STRESS_WINDOWS", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        pytest.skip("Stress tests are disabled on Windows by default due intermittent pyodbc access violations. Set MCP_RUN_STRESS_WINDOWS=true to force run.")
+
     try:
         conn = server.get_connection("master")
         conn.close()

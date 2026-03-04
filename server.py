@@ -4,11 +4,13 @@ import json
 import logging
 import os
 import re
+import sys
 import uuid
 import hmac
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import escape
+from threading import Lock
 from typing import Any, Literal, Sequence
 from urllib.parse import quote
 
@@ -112,6 +114,8 @@ def _load_settings() -> Settings:
 
 SETTINGS = _load_settings()
 
+_PYODBC_CONNECT_LOCK = Lock() if sys.platform == "win32" else None
+
 
 def _validate_runtime_guards() -> None:
     if SETTINGS.allow_write and not SETTINGS.confirm_write:
@@ -140,7 +144,11 @@ def get_connection(database: str | None = None) -> pyodbc.Connection:
     if not SETTINGS.db_server or not SETTINGS.db_user or not SETTINGS.db_password:
         raise RuntimeError("Database credentials are not configured. Set DB_SERVER, DB_USER, DB_PASSWORD.")
 
-    conn = pyodbc.connect(_connection_string(database), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+    if _PYODBC_CONNECT_LOCK is not None:
+        with _PYODBC_CONNECT_LOCK:
+            conn = pyodbc.connect(_connection_string(database), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+    else:
+        conn = pyodbc.connect(_connection_string(database), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
     conn.autocommit = True
     return conn
 
