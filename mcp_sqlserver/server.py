@@ -53,7 +53,7 @@ def _load_server() -> ModuleType:
 		spec.loader.exec_module(module)
 	except Exception as exc:
 		sys.modules.pop(module_name, None)
-		logging.error("Failed to exec server module at %s: %s", server_path, exc)
+		logging.exception("Failed to exec server module at %s: %s", server_path, exc)
 		raise
 
 	_server = module
