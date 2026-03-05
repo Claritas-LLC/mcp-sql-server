@@ -260,6 +260,12 @@ This project includes a comprehensive test suite covering **Unit**, **Integratio
     *   ✅ **Integration Tests**: End-to-end verification of all 25+ MCP tools against a live SQL Server 2019 instance.
     *   ✅ **Stress Tests**: Verifies stability under concurrent load (50+ parallel requests).
     *   ✅ **Blackbox Tests**: Validates the MCP protocol implementation and tool discovery.
+  *   ✅ **Hardening Controls**: Validates table-scope enforcement, rate-limit breaker behavior, and prompt-aware audit logging.
+
+4.  **Recommended CI/Local Fast Path**:
+  ```bash
+  pytest tests/test_hardening_controls.py tests/test_integration_tools.py tests/test_stress_tools.py -q
+  ```
 
 ---
 
@@ -275,6 +281,8 @@ To prevent the MCP server from becoming unresponsive or overloading the database
     *   **Configuration**: Set `MCP_STATEMENT_TIMEOUT_MS` (milliseconds) to adjust this limit.
 *   **Max Rows**: Queries returning large result sets are truncated to **500 rows** (default).
     *   **Configuration**: Set `MCP_MAX_ROWS` to adjust.
+*   **Rate Limiting + Circuit Breaker**: HTTP clients can be throttled per window and temporarily blocked after repeated violations.
+  *   **Configuration**: `MCP_RATE_LIMIT_ENABLED`, `MCP_RATE_LIMIT_WINDOW_SECONDS`, `MCP_RATE_LIMIT_MAX_REQUESTS`, `MCP_RATE_LIMIT_BREAKER_VIOLATIONS`, `MCP_RATE_LIMIT_BREAKER_SECONDS`.
 
 ### Core Connection
 | Variable | Description | Default |
@@ -293,6 +301,16 @@ To prevent the MCP server from becoming unresponsive or overloading the database
 | `MCP_ALLOW_WRITE` | Enable write tools (`db_sql2019_create_db_user`, etc.) | `false` |
 | `MCP_CONFIRM_WRITE` | **Required if ALLOW_WRITE=true**. Safety latch to confirm write mode. | `false` |
 | `MCP_STATEMENT_TIMEOUT_MS` | Max execution time per query in milliseconds | `120000` (2 minutes) |
+| `MCP_TABLE_SCOPE_ENFORCED` | Enforce table access policy against configured allowlist | `false` |
+| `MCP_ALLOWED_TABLES` | Comma-separated table allowlist patterns (`schema.table`, supports `*`) | *None* |
+| `MCP_RATE_LIMIT_ENABLED` | Enable HTTP rate limiting and circuit breaker | `true` |
+| `MCP_RATE_LIMIT_WINDOW_SECONDS` | Rolling window size for rate limit checks | `60` |
+| `MCP_RATE_LIMIT_MAX_REQUESTS` | Max requests per client per window | `240` |
+| `MCP_RATE_LIMIT_BREAKER_VIOLATIONS` | Consecutive violations before temporary block | `3` |
+| `MCP_RATE_LIMIT_BREAKER_SECONDS` | Temporary block duration after breaker trips | `60` |
+| `MCP_AUDIT_LOG_QUERIES` | Enable query audit JSONL logging | `false` |
+| `MCP_AUDIT_LOG_FILE` | Query audit log path | `mcp_query_audit.jsonl` |
+| `MCP_AUDIT_LOG_INCLUDE_PARAMS` | Include raw params payload in audit record | `false` |
 | `MCP_SKIP_CONFIRMATION` | Set to "true" to skip startup confirmation dialog (Windows) | `false` |
 | `MCP_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) | `INFO` |
 | `MCP_LOG_FILE` | Optional path to write logs to a file | *None* |
@@ -301,6 +319,11 @@ To prevent the MCP server from becoming unresponsive or overloading the database
 If `MCP_ALLOW_WRITE=true`, the server enforces the following additional security checks at startup:
 1. **Explicit Confirmation**: You must set `MCP_CONFIRM_WRITE=true`.
 2. **Mandatory Authentication (HTTP)**: If using `http` transport, you must configure `FASTMCP_AUTH_TYPE` (e.g., `azure-ad`, `oidc`, `jwt`). Write mode over unauthenticated HTTP is prohibited.
+
+Additional hardening controls:
+3. **Table Scope Policy (optional)**: Set `MCP_TABLE_SCOPE_ENFORCED=true` and provide `MCP_ALLOWED_TABLES` to deny query/table access outside your allowlist.
+4. **Abuse Protection (optional)**: Rate limiter + circuit breaker can reject runaway request loops with `429` and `Retry-After`.
+5. **Prompt-aware Audit Trail (optional)**: Query tools can log an immutable JSONL record containing SQL and the exact `prompt_context` passed by the caller.
 
 > ⚠️ **Warning: Authentication Verification Pending**
 > **Token Auth** and **Azure AD Auth** have not been tested and are **not production-ready**.
@@ -423,10 +446,10 @@ To access a database behind a bastion host, configure the following SSH variable
 
 This server implements strict security practices for logging:
 
-- **Sanitized INFO Logs**: High-level operations (like `db_sql2019_run_query` and `db_sql2019_explain_query`) are logged at `INFO` level, but **raw SQL queries and parameters are never included** to prevent sensitive data leaks.
-- **Fingerprinting**: Instead of raw SQL, we log SHA-256 fingerprints (`sql_sha256`, `params_sha256`) to allow correlation and debugging without exposing data.
-- **Debug Mode**: Raw SQL and parameters are only logged when `MCP_LOG_LEVEL=DEBUG` is explicitly set, and even then, sensitive parameters are hashed where possible.
-- **Safe Defaults**: By default, the server runs in `INFO` mode, ensuring production logs are safe.
+- **Sanitized service logs**: Standard logger output avoids raw SQL and params by default.
+- **Optional audit log**: If `MCP_AUDIT_LOG_QUERIES=true`, query tools append JSONL records with `sql`, `sql_sha256`, and optional exact `prompt_context`.
+- **Prompt provenance**: `prompt_context` is captured only when the caller supplies it (for example, from agent prompt text).
+- **Safe defaults**: Query audit logging is disabled by default.
 
 ---
 
@@ -442,10 +465,10 @@ This server implements strict security practices for logging:
 - `db_sql2019_list_tables(database_name: str, schema_name: str | None = None)`: List base tables.
 - `db_sql2019_get_schema(database_name: str, table_name: str, schema_name: str = "dbo")`: Column metadata.
 - `db_sql2019_list_objects(database_name: str, object_type: str = "TABLE", object_name: str | None = None, schema: str | None = None, order_by: str | None = None, limit: int = 50)`: Unified object listing for database/schema/table/view/index/function/procedure/trigger.
-- `db_sql2019_execute_query(database_name: str, sql: str, params_json: str | None = None, max_rows: int | None = None)`: Legacy-compatible read/query tool.
+- `db_sql2019_execute_query(database_name: str, sql: str, params_json: str | None = None, max_rows: int | None = None, prompt_context: str | None = None)`: Legacy-compatible read/query tool with optional prompt audit context.
 - `db_sql2019_run_query(...)`: Supports both signatures:
-  - `db_sql2019_run_query(database_name, sql, params_json=None, max_rows=None)`
-  - `db_sql2019_run_query(sql, params_json=None, max_rows=None)` (uses default `DB_NAME`)
+  - `db_sql2019_run_query(database_name, sql, params_json=None, max_rows=None, prompt_context=None)`
+  - `db_sql2019_run_query(sql, params_json=None, max_rows=None, prompt_context=None)` (uses default `DB_NAME`)
 
 ### ⚡ Analysis & Performance (Always Available)
 - `db_sql2019_get_index_fragmentation(database_name: str, schema: str | None = None, min_fragmentation: float = 10.0, min_page_count: int = 100, limit: int = 50)`: Raw fragmentation rows.
