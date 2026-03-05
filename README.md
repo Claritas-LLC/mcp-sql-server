@@ -314,6 +314,7 @@ To prevent the MCP server from becoming unresponsive or overloading the database
 | `MCP_AUDIT_LOG_QUERIES` | Enable query audit JSONL logging | `false` |
 | `MCP_AUDIT_LOG_FILE` | Query audit log path | `mcp_query_audit.jsonl` |
 | `MCP_AUDIT_LOG_INCLUDE_PARAMS` | Include raw params payload in audit record | `false` |
+| `MCP_ALLOW_RAW_PROMPTS` | Allow storing raw `prompt_context` in audit logs (default stores only hash/redaction token) | `false` |
 | `MCP_SKIP_CONFIRMATION` | Set to "true" to skip startup confirmation dialog (Windows) | `false` |
 | `MCP_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) | `INFO` |
 | `MCP_LOG_FILE` | Optional path to write logs to a file | *None* |
@@ -326,7 +327,7 @@ If `MCP_ALLOW_WRITE=true`, the server enforces the following additional security
 Additional hardening controls:
 3. **Table Scope Policy (optional)**: Set `MCP_TABLE_SCOPE_ENFORCED=true` and provide `MCP_ALLOWED_TABLES` to deny query/table access outside your allowlist.
 4. **Abuse Protection (optional)**: Rate limiter + circuit breaker can reject runaway request loops with `429` and `Retry-After`.
-5. **Prompt-aware Audit Trail (optional)**: Query tools can log an immutable JSONL record containing SQL and the exact `prompt_context` passed by the caller.
+5. **Prompt-aware Audit Trail (optional)**: Query tools log immutable JSONL records with `prompt_sha256` and a redaction token by default; exact `prompt_context` is stored only when `MCP_ALLOW_RAW_PROMPTS=true`.
 
 > ⚠️ **Warning: Authentication Verification Pending**
 > **Token Auth** and **Azure AD Auth** have not been tested and are **not production-ready**.
@@ -450,8 +451,8 @@ To access a database behind a bastion host, configure the following SSH variable
 This server implements strict security practices for logging:
 
 - **Sanitized service logs**: Standard logger output avoids raw SQL and params by default.
-- **Optional audit log**: If `MCP_AUDIT_LOG_QUERIES=true`, query tools append JSONL records with `sql`, `sql_sha256`, and optional exact `prompt_context`.
-- **Prompt provenance**: `prompt_context` is captured only when the caller supplies it (for example, from agent prompt text).
+- **Optional audit log**: If `MCP_AUDIT_LOG_QUERIES=true`, query tools append JSONL records with `sql`, `sql_sha256`, `prompt_sha256`, and a redaction token.
+- **Prompt provenance**: Raw `prompt_context` is never persisted unless `MCP_ALLOW_RAW_PROMPTS=true` is explicitly enabled.
 - **Safe defaults**: Query audit logging is disabled by default.
 
 ---
@@ -485,7 +486,8 @@ This server implements strict security practices for logging:
 ### 🧠 Data Model (Always Available)
 - `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int | None = None, include_attributes: bool = True, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Entity/relationship model analysis with response shaping for context-window efficiency, field projection, and budgeted truncation.
 - `db_sql2019_open_logical_model(database_name: str)`: Generates a shareable data model report URL.
-- `db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: str)`: DDL extraction/generation for supported objects.
+- `db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: str)`: DDL extraction/generation for supported objects. For `object_type="table"`, `object_name` may be `schema.table` (or `[schema].[table]`); when schema is omitted, `dbo` is used.
+  - Example: `db_sql2019_generate_ddl("SalesDb", "sales.Customers", "table")`
 
 ### 🔧 Write/Admin (Requires `MCP_ALLOW_WRITE=true` and `MCP_CONFIRM_WRITE=true`)
 - `db_sql2019_create_db_user(username: str, password: str, privileges: str = "read", database: str | None = None)`
