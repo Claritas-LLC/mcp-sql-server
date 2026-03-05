@@ -7,6 +7,8 @@ import re
 import sys
 import uuid
 import hmac
+import time
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import escape
@@ -58,6 +60,16 @@ class Settings:
     ssl_cert: str
     ssl_key: str
     ssl_strict: bool
+    table_scope_enforced: bool
+    allowed_tables: str
+    rate_limit_enabled: bool
+    rate_limit_window_seconds: int
+    rate_limit_max_requests: int
+    rate_limit_breaker_seconds: int
+    rate_limit_breaker_violations: int
+    audit_log_queries: bool
+    audit_log_file: str
+    audit_log_include_params: bool
 
 
 def _env(name: str, default: str = "") -> str:
@@ -109,12 +121,52 @@ def _load_settings() -> Settings:
         ssl_cert=_env("MCP_SSL_CERT", "").strip(),
         ssl_key=_env("MCP_SSL_KEY", "").strip(),
         ssl_strict=_env_bool("MCP_SSL_STRICT", False),
+        table_scope_enforced=_env_bool("MCP_TABLE_SCOPE_ENFORCED", False),
+        allowed_tables=_env("MCP_ALLOWED_TABLES", "").strip(),
+        rate_limit_enabled=_env_bool("MCP_RATE_LIMIT_ENABLED", True),
+        rate_limit_window_seconds=_env_int("MCP_RATE_LIMIT_WINDOW_SECONDS", 60),
+        rate_limit_max_requests=_env_int("MCP_RATE_LIMIT_MAX_REQUESTS", 240),
+        rate_limit_breaker_seconds=_env_int("MCP_RATE_LIMIT_BREAKER_SECONDS", 60),
+        rate_limit_breaker_violations=_env_int("MCP_RATE_LIMIT_BREAKER_VIOLATIONS", 3),
+        audit_log_queries=_env_bool("MCP_AUDIT_LOG_QUERIES", False),
+        audit_log_file=_env("MCP_AUDIT_LOG_FILE", "mcp_query_audit.jsonl").strip() or "mcp_query_audit.jsonl",
+        audit_log_include_params=_env_bool("MCP_AUDIT_LOG_INCLUDE_PARAMS", False),
     )
 
 
 SETTINGS = _load_settings()
 
 _PYODBC_CONNECT_LOCK = Lock() if sys.platform == "win32" else None
+_AUDIT_LOG_LOCK = Lock()
+_RATE_LIMIT_LOCK = Lock()
+_RATE_LIMIT_REQUESTS: dict[str, list[float]] = {}
+_RATE_LIMIT_VIOLATIONS: dict[str, int] = {}
+_RATE_LIMIT_BLOCKED_UNTIL: dict[str, float] = {}
+_SCOPE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _parse_allowed_table_patterns(raw_value: str) -> set[str]:
+    patterns: set[str] = set()
+    if not raw_value:
+        return patterns
+
+    for item in raw_value.split(","):
+        pattern = item.strip().lower()
+        if not pattern:
+            continue
+        if "." not in pattern:
+            raise ValueError(f"Invalid table scope pattern: {item!r}. Use schema.table format.")
+        schema_name, table_name = pattern.split(".", 1)
+        schema_valid = schema_name == "*" or bool(_SCOPE_IDENTIFIER_RE.fullmatch(schema_name))
+        table_valid = table_name == "*" or bool(_SCOPE_IDENTIFIER_RE.fullmatch(table_name))
+        if not schema_valid or not table_valid:
+            raise ValueError(f"Invalid table scope pattern: {item!r}. Use identifiers and optional '*' wildcard.")
+        patterns.add(f"{schema_name}.{table_name}")
+
+    return patterns
+
+
+_TABLE_SCOPE_PATTERNS = _parse_allowed_table_patterns(SETTINGS.allowed_tables)
 
 
 def _validate_runtime_guards() -> None:
@@ -122,9 +174,146 @@ def _validate_runtime_guards() -> None:
         raise RuntimeError("Write mode requires MCP_CONFIRM_WRITE=true.")
     if SETTINGS.allow_write and SETTINGS.transport in {"http", "sse"} and SETTINGS.auth_type in {"", "none"}:
         raise RuntimeError("Write mode over HTTP requires FASTMCP_AUTH_TYPE.")
+    if SETTINGS.table_scope_enforced and not _TABLE_SCOPE_PATTERNS:
+        raise RuntimeError("MCP_TABLE_SCOPE_ENFORCED=true requires MCP_ALLOWED_TABLES.")
+    if SETTINGS.rate_limit_window_seconds <= 0:
+        raise RuntimeError("MCP_RATE_LIMIT_WINDOW_SECONDS must be > 0.")
+    if SETTINGS.rate_limit_max_requests <= 0:
+        raise RuntimeError("MCP_RATE_LIMIT_MAX_REQUESTS must be > 0.")
+    if SETTINGS.rate_limit_breaker_seconds <= 0:
+        raise RuntimeError("MCP_RATE_LIMIT_BREAKER_SECONDS must be > 0.")
+    if SETTINGS.rate_limit_breaker_violations <= 0:
+        raise RuntimeError("MCP_RATE_LIMIT_BREAKER_VIOLATIONS must be > 0.")
 
 
 _validate_runtime_guards()
+
+
+def _is_table_allowed(schema_name: str, table_name: str) -> bool:
+    if not SETTINGS.table_scope_enforced:
+        return True
+
+    schema_norm = (schema_name or "").strip().lower() or "dbo"
+    table_norm = (table_name or "").strip().lower()
+    if not table_norm:
+        return False
+
+    for pattern in _TABLE_SCOPE_PATTERNS:
+        pattern_schema, pattern_table = pattern.split(".", 1)
+        schema_ok = pattern_schema == "*" or pattern_schema == schema_norm
+        table_ok = pattern_table == "*" or pattern_table == table_norm
+        if schema_ok and table_ok:
+            return True
+    return False
+
+
+def _enforce_table_scope_for_ident(schema_name: str, table_name: str) -> None:
+    if SETTINGS.table_scope_enforced and not _is_table_allowed(schema_name, table_name):
+        raise ValueError(f"Access denied by table scope policy for {schema_name}.{table_name}.")
+
+
+def _strip_identifier_quotes(value: str) -> str:
+    s = value.strip()
+    if s.startswith("[") and s.endswith("]") and len(s) >= 2:
+        s = s[1:-1]
+    if s.startswith('"') and s.endswith('"') and len(s) >= 2:
+        s = s[1:-1]
+    return s.strip().lower()
+
+
+def _extract_referenced_tables(sql: str) -> list[tuple[str, str]]:
+    cleaned = _strip_sql_comments_and_literals(sql)
+    pattern = re.compile(
+        r"\b(?:from|join)\s+((?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)|(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*))",
+        flags=re.I,
+    )
+    references: list[tuple[str, str]] = []
+    for match in pattern.finditer(cleaned):
+        raw_target = match.group(1).strip()
+        if raw_target.startswith("("):
+            continue
+        parts = [p.strip() for p in raw_target.split(".")]
+        if len(parts) == 2:
+            schema_name = _strip_identifier_quotes(parts[0])
+            table_name = _strip_identifier_quotes(parts[1])
+        else:
+            schema_name = "dbo"
+            table_name = _strip_identifier_quotes(parts[0])
+        if table_name:
+            references.append((schema_name, table_name))
+    return references
+
+
+def _enforce_table_scope_for_sql(sql: str) -> None:
+    if not SETTINGS.table_scope_enforced:
+        return
+    for schema_name, table_name in _extract_referenced_tables(sql):
+        _enforce_table_scope_for_ident(schema_name, table_name)
+
+
+def _write_query_audit_record(
+    tool_name: str,
+    database_name: str,
+    sql: str,
+    params_json: str | None = None,
+    prompt_context: str | None = None,
+) -> None:
+    if not SETTINGS.audit_log_queries:
+        return
+
+    payload: dict[str, Any] = {
+        "timestamp": _now_utc_iso(),
+        "event": "query_execution",
+        "tool": tool_name,
+        "database": database_name,
+        "sql": sql,
+        "sql_sha256": hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+        "prompt": prompt_context,
+        "prompt_sha256": hashlib.sha256(prompt_context.encode("utf-8")).hexdigest() if prompt_context else None,
+        "db_user": SETTINGS.db_user,
+    }
+    if SETTINGS.audit_log_include_params:
+        payload["params_json"] = params_json
+
+    line = json.dumps(payload, ensure_ascii=False, default=str)
+    log_path = SETTINGS.audit_log_file
+    log_dir = os.path.dirname(log_path)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+
+    with _AUDIT_LOG_LOCK:
+        with open(log_path, "a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+
+
+def _rate_limit_check(client_key: str) -> tuple[bool, int | None]:
+    if not SETTINGS.rate_limit_enabled:
+        return True, None
+
+    now = time.monotonic()
+    with _RATE_LIMIT_LOCK:
+        blocked_until = _RATE_LIMIT_BLOCKED_UNTIL.get(client_key, 0.0)
+        if blocked_until > now:
+            retry_after = max(1, int(blocked_until - now))
+            return False, retry_after
+
+        request_times = _RATE_LIMIT_REQUESTS.get(client_key, [])
+        window_start = now - SETTINGS.rate_limit_window_seconds
+        request_times = [t for t in request_times if t >= window_start]
+
+        if len(request_times) >= SETTINGS.rate_limit_max_requests:
+            violations = _RATE_LIMIT_VIOLATIONS.get(client_key, 0) + 1
+            _RATE_LIMIT_VIOLATIONS[client_key] = violations
+            if violations >= SETTINGS.rate_limit_breaker_violations:
+                _RATE_LIMIT_BLOCKED_UNTIL[client_key] = now + SETTINGS.rate_limit_breaker_seconds
+            _RATE_LIMIT_REQUESTS[client_key] = request_times
+            return False, SETTINGS.rate_limit_breaker_seconds
+
+        request_times.append(now)
+        _RATE_LIMIT_REQUESTS[client_key] = request_times
+        if _RATE_LIMIT_VIOLATIONS.get(client_key, 0) > 0 and len(request_times) < SETTINGS.rate_limit_max_requests // 2:
+            _RATE_LIMIT_VIOLATIONS[client_key] = max(0, _RATE_LIMIT_VIOLATIONS.get(client_key, 0) - 1)
+        return True, None
 
 
 def _connection_string(database: str | None = None) -> str:
@@ -550,6 +739,23 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             return request.client.host
         return "unknown"
 
+    @staticmethod
+    def _bearer_token(request: Request) -> str | None:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header:
+            return None
+        parts = auth_header.split(" ", 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            return parts[1].strip()
+        return None
+
+    def _rate_limit_client_key(self, request: Request) -> str:
+        token = self._bearer_token(request)
+        if token:
+            digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+            return f"token:{digest}"
+        return f"ip:{self._client_ip(request)}"
+
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
@@ -564,6 +770,22 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             or path.startswith("/data-model-identifiers")
             or path.startswith("/data-model-relationships")
         ):
+            rate_ok, retry_after = _rate_limit_check(self._rate_limit_client_key(request))
+            if not rate_ok:
+                logger.warning(
+                    "security_event=rate_limited ip=%s path=%s retry_after=%s",
+                    self._client_ip(request),
+                    path,
+                    retry_after,
+                )
+                response = JSONResponse(
+                    {"detail": "Rate limit exceeded. Try again later."},
+                    status_code=429,
+                )
+                if retry_after is not None:
+                    response.headers["Retry-After"] = str(retry_after)
+                return response
+
             if SETTINGS.auth_type == "apikey":
                 token = None
                 auth_header = request.headers.get("Authorization", "")
@@ -696,7 +918,11 @@ def db_sql2019_list_tables(
                 """,
             )
         rows = cur.fetchall()
-        items = [{"TABLE_SCHEMA": row[0], "TABLE_NAME": row[1]} for row in rows]
+        items = [
+            {"TABLE_SCHEMA": row[0], "TABLE_NAME": row[1]}
+            for row in rows
+            if _is_table_allowed(str(row[0] or "dbo"), str(row[1] or ""))
+        ]
         return _paginate_tool_result(items, page=page, page_size=page_size)
     finally:
         conn.close()
@@ -711,6 +937,7 @@ def db_sql2019_get_schema(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Get column metadata for a table."""
+    _enforce_table_scope_for_ident(schema_name, table_name)
     conn = get_connection(database_name)
     try:
         cur = conn.cursor()
@@ -774,9 +1001,19 @@ def _run_query_internal(
     params_json: str | None = None,
     max_rows: int | None = None,
     enforce_readonly: bool = True,
+    tool_name: str = "db_sql2019_run_query",
+    prompt_context: str | None = None,
 ) -> list[dict[str, Any]]:
     if enforce_readonly and not SETTINGS.allow_write:
         _require_readonly(sql)
+    _enforce_table_scope_for_sql(sql)
+    _write_query_audit_record(
+        tool_name=tool_name,
+        database_name=database_name,
+        sql=sql,
+        params_json=params_json,
+        prompt_context=prompt_context,
+    )
 
     params = _parse_params_json(params_json)
     row_cap = max_rows if isinstance(max_rows, int) and max_rows > 0 else SETTINGS.max_rows
@@ -797,6 +1034,7 @@ def db_sql2019_execute_query(
     sql: str,
     params_json: str | None = None,
     max_rows: int | None = None,
+    prompt_context: str | None = None,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
@@ -807,6 +1045,8 @@ def db_sql2019_execute_query(
         params_json=params_json,
         max_rows=max_rows,
         enforce_readonly=True,
+        tool_name="db_sql2019_execute_query",
+        prompt_context=prompt_context,
     )
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
@@ -817,6 +1057,7 @@ def db_sql2019_run_query(
     arg2: str | None = None,
     params_json: str | None = None,
     max_rows: int | None = None,
+    prompt_context: str | None = None,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
@@ -834,6 +1075,8 @@ def db_sql2019_run_query(
         params_json=params_json,
         max_rows=max_rows,
         enforce_readonly=True,
+        tool_name="db_sql2019_run_query",
+        prompt_context=prompt_context,
     )
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
@@ -888,7 +1131,12 @@ def db_sql2019_list_objects(
             sql += " ORDER BY TABLE_SCHEMA, TABLE_NAME"
             _execute_safe(cur, sql, params)
             rows = _fetch_limited(cur, max(1, limit))
-            return _paginate_tool_result(_rows_to_dicts(cur, rows), page=page, page_size=page_size)
+            scoped_rows = [
+                row
+                for row in _rows_to_dicts(cur, rows)
+                if _is_table_allowed(str(row.get("TABLE_SCHEMA") or "dbo"), str(row.get("TABLE_NAME") or ""))
+            ]
+            return _paginate_tool_result(scoped_rows, page=page, page_size=page_size)
 
         if object_type_norm == "INDEX":
             sql = """
@@ -912,8 +1160,13 @@ def db_sql2019_list_objects(
                 params.append(object_name)
             sql += " ORDER BY s.name, t.name, i.name"
             _execute_safe(cur, sql, params)
+            scoped_rows = [
+                row
+                for row in _rows_to_dicts(cur, _fetch_limited(cur, max(1, limit)))
+                if _is_table_allowed(str(row.get("schema_name") or "dbo"), str(row.get("table_name") or ""))
+            ]
             return _paginate_tool_result(
-                _rows_to_dicts(cur, _fetch_limited(cur, max(1, limit))),
+                scoped_rows,
                 page=page,
                 page_size=page_size,
             )
@@ -1053,6 +1306,7 @@ def db_sql2019_analyze_table_health(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Table-level storage/index/stats/constraint analysis."""
+    _enforce_table_scope_for_ident(schema, table_name)
     conn = get_connection(database_name)
     try:
         cur = conn.cursor()
@@ -1660,12 +1914,25 @@ def db_sql2019_db_sec_perf_metrics(
 
 
 @mcp.tool
-def db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml") -> dict[str, Any]:
+def db_sql2019_explain_query(
+    sql: str,
+    analyze: bool = False,
+    output_format: str = "xml",
+    prompt_context: str | None = None,
+) -> dict[str, Any]:
     """Return estimated or actual XML execution plan."""
     if output_format.lower() != "xml":
         raise ValueError("Only XML output_format is currently supported.")
     if not SETTINGS.allow_write:
         _require_readonly(sql)
+    _enforce_table_scope_for_sql(sql)
+    _write_query_audit_record(
+        tool_name="db_sql2019_explain_query",
+        database_name=SETTINGS.db_name,
+        sql=sql,
+        params_json=None,
+        prompt_context=prompt_context,
+    )
 
     conn = get_connection(SETTINGS.db_name)
     try:
@@ -2086,6 +2353,8 @@ def db_sql2019_generate_ddl(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Generate CREATE script for table/view/procedure/function/trigger object."""
+    if object_type.lower() == "table":
+        _enforce_table_scope_for_ident("dbo", object_name)
     conn = get_connection(database_name)
     try:
         cur = conn.cursor()
