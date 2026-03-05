@@ -245,14 +245,17 @@ This project includes a comprehensive test suite covering **Unit**, **Integratio
 
 2.  **Run Full Test Cycle**:
     ```bash
-    # 1. Provision & Populate Test Database
-    python testing/setup_sql_server.py
+    # 1. Provision & Populate Test Database (Docker)
+    docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=McpTestPassword123!" \
+      --name mcp_sqlserver_test -p 14333:1433 -d \
+      mcr.microsoft.com/mssql/server:2019-latest
     
     # 2. Run Comprehensive Test Suite
-    pytest -v testing/
+    pytest tests/ -v
     
-    # Or run specific tests like server info validation
-    python testing/test_server_info_mcp.py
+    # Or run specific test categories
+    pytest tests/test_integration_tools.py -v
+    pytest tests/test_hardening_controls.py -v
     ```
 
 3.  **Verification Coverage**:
