@@ -109,7 +109,7 @@
 ```env
 DB_SERVER=localhost
 DB_PORT=14333
-DB_USER=SA
+DB_USER=readonly_user
 DB_PASSWORD=McpTestPassword123!
 DB_NAME=TEST_DB
 MCP_ALLOW_WRITE=false
@@ -219,7 +219,7 @@ sleep 30
 
 # 3. Populate with test data
 docker exec -i mcp_test /opt/mssql-tools18/bin/sqlcmd \
-  -U SA -P "McpTestPassword123!" < setup_test_simple.sql
+  -U <admin_user> -P "<admin_password>" < setup_test_simple.sql
 
 # 4. Run test runner
 python test_runner.py

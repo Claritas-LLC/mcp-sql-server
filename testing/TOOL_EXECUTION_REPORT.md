@@ -144,7 +144,7 @@ testing/
 
 ### Connection Details
 - **Driver Used:** ODBC Driver 17 for SQL Server
-- **Authentication:** SQL Server Login (SA user)
+- **Authentication:** SQL Server Login (least-privilege test user)
 - **Encryption:** Disabled (dev environment)
 - **Connection Pool:** Direct connections (no pooling for testing)
 

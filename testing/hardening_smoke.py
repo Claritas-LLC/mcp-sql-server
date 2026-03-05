@@ -42,16 +42,18 @@ def main() -> None:
     print("RATE2", s._rate_limit_check("smoke-client"))
     rate3 = s._rate_limit_check("smoke-client")
     print("RATE3", rate3)
-    if rate3[0] is not False:
+    if rate3[0]:
         raise RuntimeError("Expected rate limit block on third request")
 
     s.SETTINGS.audit_log_queries = True
     s.SETTINGS.audit_log_file = audit_path
     s.SETTINGS.audit_log_include_params = False
+    s.SETTINGS.allow_raw_prompts = True
+    s.SETTINGS.db_user = "readonly_user"
     s._write_query_audit_record(
         tool_name="db_sql2019_run_query",
         database_name="TEST_DB",
-        sql="SELECT TOP 1 * FROM dbo.Sample",
+        sql="SELECT TOP 1 * FROM sales.Customers ORDER BY CreatedDate DESC, CustomerID DESC",
         params_json=None,
         prompt_context="User asked for latest customer row",
     )

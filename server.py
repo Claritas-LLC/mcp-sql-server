@@ -9,6 +9,7 @@ import uuid
 import hmac
 import time
 import hashlib
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import escape
@@ -70,6 +71,7 @@ class Settings:
     audit_log_queries: bool
     audit_log_file: str
     audit_log_include_params: bool
+    allow_raw_prompts: bool
 
 
 def _env(name: str, default: str = "") -> str:
@@ -131,6 +133,7 @@ def _load_settings() -> Settings:
         audit_log_queries=_env_bool("MCP_AUDIT_LOG_QUERIES", False),
         audit_log_file=_env("MCP_AUDIT_LOG_FILE", "mcp_query_audit.jsonl").strip() or "mcp_query_audit.jsonl",
         audit_log_include_params=_env_bool("MCP_AUDIT_LOG_INCLUDE_PARAMS", False),
+        allow_raw_prompts=_env_bool("MCP_ALLOW_RAW_PROMPTS", _env_bool("ALLOW_RAW_PROMPTS", False)),
     )
 
 
@@ -139,9 +142,12 @@ SETTINGS = _load_settings()
 _PYODBC_CONNECT_LOCK = Lock() if sys.platform == "win32" else None
 _AUDIT_LOG_LOCK = Lock()
 _RATE_LIMIT_LOCK = Lock()
+_API_CALLER_CONTEXT: ContextVar[str] = ContextVar("api_caller", default="unknown")
 _RATE_LIMIT_REQUESTS: dict[str, list[float]] = {}
 _RATE_LIMIT_VIOLATIONS: dict[str, int] = {}
 _RATE_LIMIT_BLOCKED_UNTIL: dict[str, float] = {}
+_RATE_LIMIT_CHECK_COUNTER = 0
+_RATE_LIMIT_CLEANUP_EVERY_REQUESTS = 256
 _SCOPE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -223,24 +229,33 @@ def _strip_identifier_quotes(value: str) -> str:
 
 def _extract_referenced_tables(sql: str) -> list[tuple[str, str]]:
     cleaned = _strip_sql_comments_and_literals(sql)
-    pattern = re.compile(
-        r"\b(?:from|join)\s+((?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)|(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*))",
-        flags=re.I,
-    )
+    ident = r"(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)"
+    object_ref = rf"(?:{ident}\s*\.\s*{ident}|{ident})"
+    patterns = [
+        re.compile(rf"\b(?:from|join)\s+({object_ref})", flags=re.I),
+        re.compile(rf"\b(?:insert(?:\s+into)?|update|delete(?:\s+from)?|merge(?:\s+into)?)\s+({object_ref})", flags=re.I),
+        re.compile(rf"\bwith\s+({ident})\s+as\s*\(\s*select\b", flags=re.I),
+        re.compile(rf",\s*({ident})\s+as\s*\(\s*select\b", flags=re.I),
+    ]
     references: list[tuple[str, str]] = []
-    for match in pattern.finditer(cleaned):
-        raw_target = match.group(1).strip()
-        if raw_target.startswith("("):
-            continue
-        parts = [p.strip() for p in raw_target.split(".")]
-        if len(parts) == 2:
-            schema_name = _strip_identifier_quotes(parts[0])
-            table_name = _strip_identifier_quotes(parts[1])
-        else:
-            schema_name = "dbo"
-            table_name = _strip_identifier_quotes(parts[0])
-        if table_name:
-            references.append((schema_name, table_name))
+    seen: set[tuple[str, str]] = set()
+    for pattern in patterns:
+        for match in pattern.finditer(cleaned):
+            raw_target = match.group(1).strip()
+            if raw_target.startswith("("):
+                continue
+            parts = [p.strip() for p in raw_target.split(".")]
+            if len(parts) == 2:
+                schema_name = _strip_identifier_quotes(parts[0])
+                table_name = _strip_identifier_quotes(parts[1])
+            else:
+                schema_name = "dbo"
+                table_name = _strip_identifier_quotes(parts[0])
+            if table_name:
+                entry = (schema_name, table_name)
+                if entry not in seen:
+                    seen.add(entry)
+                    references.append(entry)
     return references
 
 
@@ -249,6 +264,34 @@ def _enforce_table_scope_for_sql(sql: str) -> None:
         return
     for schema_name, table_name in _extract_referenced_tables(sql):
         _enforce_table_scope_for_ident(schema_name, table_name)
+
+
+def _parse_schema_qualified_name(object_name: str, default_schema: str = "dbo") -> tuple[str, str]:
+    raw = (object_name or "").strip()
+    if not raw:
+        raise ValueError("object_name is required")
+
+    match = re.fullmatch(
+        r"\s*(?:\[(?P<schema_br>[^\]]+)\]|(?P<schema_plain>[^.\[\]]+))\s*\.\s*(?:\[(?P<table_br>[^\]]+)\]|(?P<table_plain>[^.\[\]]+))\s*",
+        raw,
+    )
+    if match:
+        schema_name = (match.group("schema_br") or match.group("schema_plain") or "").strip()
+        table_name = (match.group("table_br") or match.group("table_plain") or "").strip()
+        if not schema_name or not table_name:
+            raise ValueError(f"Invalid object_name: {object_name!r}")
+        return schema_name, table_name
+
+    table_name = raw
+    if table_name.startswith("[") and table_name.endswith("]") and len(table_name) >= 2:
+        table_name = table_name[1:-1].strip()
+    if not table_name:
+        raise ValueError(f"Invalid object_name: {object_name!r}")
+    return default_schema, table_name
+
+
+def _current_api_caller() -> str:
+    return _API_CALLER_CONTEXT.get()
 
 
 def _write_query_audit_record(
@@ -261,17 +304,27 @@ def _write_query_audit_record(
     if not SETTINGS.audit_log_queries:
         return
 
+    prompt_sha256: str | None = None
+    prompt_redaction_token: str | None = None
+    if prompt_context:
+        prompt_redaction_token, prompt_sha256 = sanitize_prompt(prompt_context)
+
     payload: dict[str, Any] = {
         "timestamp": _now_utc_iso(),
         "event": "query_execution",
         "tool": tool_name,
         "database": database_name,
+        "api_caller": _current_api_caller(),
         "sql": sql,
         "sql_sha256": hashlib.sha256(sql.encode("utf-8")).hexdigest(),
-        "prompt": prompt_context,
-        "prompt_sha256": hashlib.sha256(prompt_context.encode("utf-8")).hexdigest() if prompt_context else None,
+        "prompt_sha256": prompt_sha256,
+        "prompt_redaction_token": prompt_redaction_token,
+        "prompt_storage_mode": "raw_opt_in" if SETTINGS.allow_raw_prompts else "hashed_redacted",
         "db_user": SETTINGS.db_user,
     }
+    if SETTINGS.allow_raw_prompts and prompt_context:
+        payload["prompt"] = prompt_context
+        payload["raw_prompt_storage_enabled"] = True
     if SETTINGS.audit_log_include_params:
         payload["params_json"] = params_json
 
@@ -286,11 +339,49 @@ def _write_query_audit_record(
             handle.write(line + "\n")
 
 
+def sanitize_prompt(prompt_context: str) -> tuple[str, str]:
+    prompt_sha256 = hashlib.sha256(prompt_context.encode("utf-8")).hexdigest()
+    return f"[REDACTED_PROMPT:{prompt_sha256[:12]}]", prompt_sha256
+
+
+def _rate_limit_cleanup(now: float | None = None) -> int:
+    current = now if now is not None else time.monotonic()
+    stale_threshold = current - (SETTINGS.rate_limit_window_seconds + SETTINGS.rate_limit_breaker_seconds)
+
+    with _RATE_LIMIT_LOCK:
+        stale_keys: list[str] = []
+        for key, timestamps in _RATE_LIMIT_REQUESTS.items():
+            if not timestamps:
+                stale_keys.append(key)
+                continue
+            if max(timestamps) < stale_threshold:
+                stale_keys.append(key)
+
+        for key in stale_keys:
+            _RATE_LIMIT_REQUESTS.pop(key, None)
+            _RATE_LIMIT_VIOLATIONS.pop(key, None)
+            _RATE_LIMIT_BLOCKED_UNTIL.pop(key, None)
+
+    return len(stale_keys)
+
+
 def _rate_limit_check(client_key: str) -> tuple[bool, int | None]:
     if not SETTINGS.rate_limit_enabled:
         return True, None
 
+    global _RATE_LIMIT_CHECK_COUNTER
     now = time.monotonic()
+
+    run_cleanup = False
+    with _RATE_LIMIT_LOCK:
+        _RATE_LIMIT_CHECK_COUNTER += 1
+        if _RATE_LIMIT_CHECK_COUNTER >= _RATE_LIMIT_CLEANUP_EVERY_REQUESTS:
+            _RATE_LIMIT_CHECK_COUNTER = 0
+            run_cleanup = True
+
+    if run_cleanup:
+        _rate_limit_cleanup(now)
+
     with _RATE_LIMIT_LOCK:
         blocked_until = _RATE_LIMIT_BLOCKED_UNTIL.get(client_key, 0.0)
         if blocked_until > now:
@@ -306,8 +397,18 @@ def _rate_limit_check(client_key: str) -> tuple[bool, int | None]:
             _RATE_LIMIT_VIOLATIONS[client_key] = violations
             if violations >= SETTINGS.rate_limit_breaker_violations:
                 _RATE_LIMIT_BLOCKED_UNTIL[client_key] = now + SETTINGS.rate_limit_breaker_seconds
+                _RATE_LIMIT_REQUESTS[client_key] = request_times
+                return False, SETTINGS.rate_limit_breaker_seconds
+
+            retry_after = SETTINGS.rate_limit_window_seconds
+            if request_times:
+                oldest_request_time = request_times[0]
+                retry_after = max(
+                    1,
+                    int((oldest_request_time + SETTINGS.rate_limit_window_seconds) - now),
+                )
             _RATE_LIMIT_REQUESTS[client_key] = request_times
-            return False, SETTINGS.rate_limit_breaker_seconds
+            return False, retry_after
 
         request_times.append(now)
         _RATE_LIMIT_REQUESTS[client_key] = request_times
@@ -756,63 +857,74 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             return f"token:{digest}"
         return f"ip:{self._client_ip(request)}"
 
+    def _api_caller_identity(self, request: Request) -> str:
+        token = self._bearer_token(request)
+        if token:
+            digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+            return f"token:{digest}"
+        return f"ip:{self._client_ip(request)}"
+
     async def dispatch(self, request: Request, call_next):
-        path = request.url.path
+        caller_context_token = _API_CALLER_CONTEXT.set(self._api_caller_identity(request))
+        try:
+            path = request.url.path
 
-        if path == "/mcp" and request.method == "GET":
-            return RedirectResponse(url="/sse")
+            if path == "/mcp" and request.method == "GET":
+                return RedirectResponse(url="/sse")
 
-        if (
-            path.startswith("/sse")
-            or path.startswith("/messages")
-            or path.startswith("/mcp")
-            or path.startswith("/data-model-analysis")
-            or path.startswith("/data-model-identifiers")
-            or path.startswith("/data-model-relationships")
-        ):
-            rate_ok, retry_after = _rate_limit_check(self._rate_limit_client_key(request))
-            if not rate_ok:
-                logger.warning(
-                    "security_event=rate_limited ip=%s path=%s retry_after=%s",
-                    self._client_ip(request),
-                    path,
-                    retry_after,
-                )
-                response = JSONResponse(
-                    {"detail": "Rate limit exceeded. Try again later."},
-                    status_code=429,
-                )
-                if retry_after is not None:
-                    response.headers["Retry-After"] = str(retry_after)
-                return response
-
-            if SETTINGS.auth_type == "apikey":
-                token = None
-                auth_header = request.headers.get("Authorization", "")
-                if auth_header:
-                    parts = auth_header.split(" ", 1)
-                    if len(parts) == 2 and parts[0].lower() == "bearer":
-                        token = parts[1].strip()
-                if token is None and SETTINGS.allow_query_token_auth:
-                    token = request.query_params.get("token") or request.query_params.get("api_key")
-                elif token is None and (request.query_params.get("token") or request.query_params.get("api_key")):
+            if (
+                path.startswith("/sse")
+                or path.startswith("/messages")
+                or path.startswith("/mcp")
+                or path.startswith("/data-model-analysis")
+                or path.startswith("/data-model-identifiers")
+                or path.startswith("/data-model-relationships")
+            ):
+                rate_ok, retry_after = _rate_limit_check(self._rate_limit_client_key(request))
+                if not rate_ok:
                     logger.warning(
-                        "security_event=apikey_query_token_rejected ip=%s path=%s",
+                        "security_event=rate_limited ip=%s path=%s retry_after=%s",
                         self._client_ip(request),
                         path,
+                        retry_after,
                     )
+                    response = JSONResponse(
+                        {"detail": "Rate limit exceeded. Try again later."},
+                        status_code=429,
+                    )
+                    if retry_after is not None:
+                        response.headers["Retry-After"] = str(retry_after)
+                    return response
 
-                if not SETTINGS.api_key:
-                    logger.error("security_event=apikey_not_configured ip=%s path=%s", self._client_ip(request), path)
-                    return JSONResponse({"detail": "Server API key is not configured."}, status_code=500)
-                if not token:
-                    logger.warning("security_event=apikey_missing_token ip=%s path=%s", self._client_ip(request), path)
-                    return JSONResponse({"detail": "Missing Authorization token."}, status_code=401)
-                if not hmac.compare_digest(token, SETTINGS.api_key):
-                    logger.warning("security_event=apikey_invalid_token ip=%s path=%s", self._client_ip(request), path)
-                    return JSONResponse({"detail": "Invalid API key."}, status_code=403)
+                if SETTINGS.auth_type == "apikey":
+                    token = None
+                    auth_header = request.headers.get("Authorization", "")
+                    if auth_header:
+                        parts = auth_header.split(" ", 1)
+                        if len(parts) == 2 and parts[0].lower() == "bearer":
+                            token = parts[1].strip()
+                    if token is None and SETTINGS.allow_query_token_auth:
+                        token = request.query_params.get("token") or request.query_params.get("api_key")
+                    elif token is None and (request.query_params.get("token") or request.query_params.get("api_key")):
+                        logger.warning(
+                            "security_event=apikey_query_token_rejected ip=%s path=%s",
+                            self._client_ip(request),
+                            path,
+                        )
 
-        return await call_next(request)
+                    if not SETTINGS.api_key:
+                        logger.error("security_event=apikey_not_configured ip=%s path=%s", self._client_ip(request), path)
+                        return JSONResponse({"detail": "Server API key is not configured."}, status_code=500)
+                    if not token:
+                        logger.warning("security_event=apikey_missing_token ip=%s path=%s", self._client_ip(request), path)
+                        return JSONResponse({"detail": "Missing Authorization token."}, status_code=401)
+                    if not hmac.compare_digest(token, SETTINGS.api_key):
+                        logger.warning("security_event=apikey_invalid_token ip=%s path=%s", self._client_ip(request), path)
+                        return JSONResponse({"detail": "Invalid API key."}, status_code=403)
+
+            return await call_next(request)
+        finally:
+            _API_CALLER_CONTEXT.reset(caller_context_token)
 
 
 class BrowserFriendlyMiddleware(BaseHTTPMiddleware):
@@ -2353,12 +2465,15 @@ def db_sql2019_generate_ddl(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Generate CREATE script for table/view/procedure/function/trigger object."""
-    if object_type.lower() == "table":
-        _enforce_table_scope_for_ident("dbo", object_name)
+    object_type_norm = object_type.lower()
+    table_schema = "dbo"
+    table_name = object_name
+    if object_type_norm == "table":
+        table_schema, table_name = _parse_schema_qualified_name(object_name, default_schema="dbo")
+        _enforce_table_scope_for_ident(table_schema, table_name)
     conn = get_connection(database_name)
     try:
         cur = conn.cursor()
-        object_type_norm = object_type.lower()
 
         if object_type_norm == "table":
             _execute_safe(
@@ -2374,10 +2489,11 @@ def db_sql2019_generate_ddl(
                 FROM sys.columns c
                 JOIN sys.types ty ON c.user_type_id = ty.user_type_id
                 JOIN sys.tables t ON c.object_id = t.object_id
-                WHERE t.name = ?
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                WHERE t.name = ? AND s.name = ?
                 ORDER BY c.column_id
                 """,
-                [object_name],
+                [table_name, table_schema],
             )
             cols = _rows_to_dicts(cur, cur.fetchall())
             if not cols:
@@ -2414,7 +2530,7 @@ def db_sql2019_generate_ddl(
                 data_type = _render_type(col)
                 nullable = "NULL" if col.get("is_nullable") else "NOT NULL"
                 col_lines.append(f"    [{col['column_name']}] {data_type} {nullable}")
-            ddl = f"CREATE TABLE [dbo].[{object_name}] (\n" + ",\n".join(col_lines) + "\n);"
+            ddl = f"CREATE TABLE [{table_schema}].[{table_name}] (\n" + ",\n".join(col_lines) + "\n);"
 
             result = {
                 "database_name": database_name,

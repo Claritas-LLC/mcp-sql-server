@@ -181,7 +181,7 @@ All tools successfully registered with @mcp.tool decorator:
 ```env
 DB_SERVER=localhost
 DB_PORT=14333
-DB_USER=SA
+DB_USER=readonly_user
 DB_PASSWORD=McpTestPassword123!
 DB_NAME=TEST_DB
 DB_DRIVER=ODBC Driver 17 for SQL Server

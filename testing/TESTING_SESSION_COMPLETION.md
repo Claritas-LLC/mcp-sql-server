@@ -116,7 +116,7 @@ All user requirements have been successfully fulfilled:
 ✅ Container: mcp_sqlserver_temp (Up 1+ hours)
 ✅ Port: 14333 (mapped from 1433)
 ✅ Database: TEST_DB (verified accessible)
-✅ Authentication: SA user with proper permissions
+✅ Authentication: least-privilege test user with proper permissions
 ✅ Connection: ODBC Driver 17 for SQL Server (fallback to Native Client)
 ```
 
