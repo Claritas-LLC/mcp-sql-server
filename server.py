@@ -2581,7 +2581,7 @@ def db_sql2019_generate_ddl(
         conn.close()
 
 
-@mcp.tool
+@mcp.tool(tags={"admin", "write", "dangerous"})
 def db_sql2019_create_db_user(
     username: str,
     password: str,
@@ -2614,7 +2614,7 @@ def db_sql2019_create_db_user(
         conn.close()
 
 
-@mcp.tool
+@mcp.tool(tags={"admin", "write", "dangerous"})
 def db_sql2019_drop_db_user(username: str, database: str | None = None) -> dict[str, Any]:
     """Drop SQL user and login if present."""
     _ensure_write_enabled()
@@ -2650,7 +2650,7 @@ def db_sql2019_drop_db_user(username: str, database: str | None = None) -> dict[
         conn.close()
 
 
-@mcp.tool
+@mcp.tool(tags={"admin", "write", "dangerous"})
 def db_sql2019_kill_session(session_id: int) -> dict[str, Any]:
     """Terminate a SQL Server session."""
     _ensure_write_enabled()
@@ -2718,7 +2718,7 @@ def _build_create_object_sql(object_type: str, object_name: str, schema: str, pa
     raise ValueError(f"Unsupported object_type: {object_type}")
 
 
-@mcp.tool
+@mcp.tool(tags={"admin", "write", "dangerous"})
 def db_sql2019_create_object(
     object_type: str,
     object_name: str,
@@ -2747,7 +2747,7 @@ def db_sql2019_create_object(
         conn.close()
 
 
-@mcp.tool
+@mcp.tool(tags={"admin", "write", "dangerous"})
 def db_sql2019_alter_object(
     object_type: str,
     object_name: str,
@@ -2795,7 +2795,7 @@ def db_sql2019_alter_object(
         conn.close()
 
 
-@mcp.tool
+@mcp.tool(tags={"admin", "write", "dangerous"})
 def db_sql2019_drop_object(
     object_type: str,
     object_name: str,
@@ -2850,6 +2850,10 @@ def db_sql2019_drop_object(
         }
     finally:
         conn.close()
+
+
+if not SETTINGS.allow_write:
+    mcp.disable(tags={"admin", "write", "dangerous"})
 
 
 def _paginate(items: list[Any], page: int, per_page: int) -> tuple[list[Any], int]:
