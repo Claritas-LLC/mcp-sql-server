@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from typing import Any
 
@@ -10,8 +11,13 @@ pytestmark = pytest.mark.integration
 def _call_tool(tool, *args, **kwargs) -> Any:
     fn = getattr(tool, "fn", None)
     if callable(fn):
-        return fn(*args, **kwargs)
-    return tool(*args, **kwargs)
+        result = fn(*args, **kwargs)
+    else:
+        result = tool(*args, **kwargs)
+
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
 
 
 @pytest.fixture(autouse=True, scope="module")

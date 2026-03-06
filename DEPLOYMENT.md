@@ -197,6 +197,28 @@ Key environment variables supported by the server:
 - `MCP_HOST` Host for HTTP transport, default `0.0.0.0`.
 - `MCP_PORT` Port for HTTP transport, default `8000` (Container internal).
 - `MCP_ALLOW_WRITE` Allow write operations, default `false`.
+
+### Optional: FastMCP Skills Provider
+
+If you want to expose local skill directories as MCP resources (separate from SQL tools), configure a FastMCP Skills Provider in your server code.
+
+```python
+from fastmcp import FastMCP
+from fastmcp.server.providers.skills import VSCodeSkillsProvider
+
+mcp = FastMCP("SQL Server MCP")
+mcp.add_provider(
+    VSCodeSkillsProvider(
+        supporting_files="template",  # production default: compact list_resources()
+        reload=False,                  # production default: avoid per-request directory re-scan
+    )
+)
+```
+
+Deployment guidance:
+- Use `supporting_files="template"` for production to reduce resource listing size.
+- Use `reload=True` only while actively editing skills during development.
+- Keep Skills Provider behavior separate from SQL audit logging (`MCP_AUDIT_LOG_*`).
 ---
 
 ## ✅ Production Readiness Checklist
@@ -249,19 +271,20 @@ Minimal privileges for safe querying.
 ```sql
 USE [master];
 CREATE LOGIN [mcp_readonly] WITH PASSWORD = 'StrongPassword123!';
-
-USE [YourDatabase];
-CREATE USER [mcp_readonly] FOR LOGIN [mcp_readonly];
-
--- Add to db_datareader role
-ALTER ROLE [db_datareader] ADD MEMBER [mcp_readonly];
-
--- Grant VIEW DEFINITION to see object metadata
-GRANT VIEW DEFINITION TO [mcp_readonly];
-
--- Grant VIEW SERVER STATE for dynamic management views (DMVs) - Server Level
-USE [master];
 GRANT VIEW SERVER STATE TO [mcp_readonly];
+
+DECLARE @sql NVARCHAR(MAX) = N'';
+
+SELECT @sql += '
+USE [' + name + '];
+CREATE USER mcp_readonly FOR LOGIN mcp_readonly;
+ALTER ROLE db_datareader ADD MEMBER mcp_readonly;
+GRANT VIEW DEFINITION TO mcp_readonly;'
+FROM sys.databases
+WHERE database_id > 4  -- skips master, model, msdb, tempdb
+  AND state_desc = 'ONLINE';
+
+EXEC sp_executesql @sql;
 ```
 
 ### Read/Write User
@@ -270,21 +293,23 @@ Full DML privileges and ability to create objects.
 ```sql
 USE [master];
 CREATE LOGIN [mcp_rw] WITH PASSWORD = 'StrongPassword123!';
-
-USE [YourDatabase];
-CREATE USER [mcp_rw] FOR LOGIN [mcp_rw];
-
--- Add to db_datareader and db_datawriter
-ALTER ROLE [db_datareader] ADD MEMBER [mcp_rw];
-ALTER ROLE [db_datawriter] ADD MEMBER [mcp_rw];
-
--- Grant DDL permissions if needed
-GRANT CREATE TABLE TO [mcp_rw];
-GRANT CREATE VIEW TO [mcp_rw];
-GRANT CREATE PROCEDURE TO [mcp_rw];
-GRANT CREATE FUNCTION TO [mcp_rw];
-
--- Grant VIEW SERVER STATE for DMVs
-USE [master];
 GRANT VIEW SERVER STATE TO [mcp_rw];
+
+DECLARE @sql NVARCHAR(MAX) = N'';
+
+SELECT @sql += '
+USE [' + name + '];
+CREATE USER mcp_readonly FOR LOGIN mcp_rw;
+ALTER ROLE db_datareader ADD MEMBER mcp_rw;
+ALTER ROLE db_writer ADD MEMBER mcp_rw;
+GRANT VIEW DEFINITION TO mcp_rw;
+GRANT CREATE TABLE TO mcp_rw;
+GRANT CREATE VIEW TO mcp_rw;
+GRANT CREATE PROCEDURE TO mcp_rw;
+GRANT CREATE FUNCTION TO mcp_rw;'
+FROM sys.databases
+WHERE database_id > 4  -- skips master, model, msdb, tempdb
+  AND state_desc = 'ONLINE';
+
+EXEC sp_executesql @sql;
 ```

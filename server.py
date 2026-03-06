@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sys
+import asyncio
 import uuid
 import hmac
 import time
@@ -1643,8 +1644,7 @@ def db_sql2019_server_info_mcp() -> dict[str, Any]:
         conn.close()
 
 
-@mcp.tool
-def db_sql2019_show_top_queries(
+def _db_sql2019_show_top_queries_impl(
     database_name: str,
     view: Literal["summary", "standard", "full"] = "standard",
     fields: str | None = None,
@@ -1770,6 +1770,27 @@ def db_sql2019_show_top_queries(
         return _paginate_tool_result(projected, page=page, page_size=page_size)
     finally:
         conn.close()
+
+
+@mcp.tool(task=True)
+async def db_sql2019_show_top_queries(
+    database_name: str,
+    view: Literal["summary", "standard", "full"] = "standard",
+    fields: str | None = None,
+    token_budget: int | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    """Query Store summary for high-cost queries."""
+    return await asyncio.to_thread(
+        _db_sql2019_show_top_queries_impl,
+        database_name,
+        view,
+        fields,
+        token_budget,
+        page,
+        page_size,
+    )
 
 
 @mcp.tool
