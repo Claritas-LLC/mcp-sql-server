@@ -10,6 +10,7 @@ import uuid
 import hmac
 import time
 import hashlib
+import base64
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -143,7 +144,8 @@ SETTINGS = _load_settings()
 _PYODBC_CONNECT_LOCK = Lock() if sys.platform == "win32" else None
 _AUDIT_LOG_LOCK = Lock()
 _RATE_LIMIT_LOCK = Lock()
-_API_CALLER_CONTEXT: ContextVar[str] = ContextVar("api_caller", default="unknown")
+_DEFAULT_API_CALLER = "system:local"
+_API_CALLER_CONTEXT: ContextVar[str] = ContextVar("api_caller", default=_DEFAULT_API_CALLER)
 _RATE_LIMIT_REQUESTS: dict[str, list[float]] = {}
 _RATE_LIMIT_VIOLATIONS: dict[str, int] = {}
 _RATE_LIMIT_BLOCKED_UNTIL: dict[str, float] = {}
@@ -292,7 +294,27 @@ def _parse_schema_qualified_name(object_name: str, default_schema: str = "dbo") 
 
 
 def _current_api_caller() -> str:
-    return _API_CALLER_CONTEXT.get()
+    caller = (_API_CALLER_CONTEXT.get() or "").strip()
+    if not caller or caller.lower() == "unknown":
+        return _DEFAULT_API_CALLER
+    return caller
+
+
+def _extract_jwt_subject(token: str) -> str | None:
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    payload_part = parts[1]
+    padding = "=" * ((4 - len(payload_part) % 4) % 4)
+    try:
+        payload_bytes = base64.urlsafe_b64decode((payload_part + padding).encode("ascii"))
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except Exception:
+        return None
+    subject = payload.get("sub")
+    if not isinstance(subject, str) or not subject.strip():
+        return None
+    return subject.strip()
 
 
 def _write_query_audit_record(
@@ -310,17 +332,22 @@ def _write_query_audit_record(
     if prompt_context:
         prompt_redaction_token, prompt_sha256 = sanitize_prompt(prompt_context)
 
+    sql_sha256 = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    prompt_storage_mode = "raw_opt_in" if SETTINGS.allow_raw_prompts else "hashed_redacted"
+    redacted_sql = f"[REDACTED_SQL:{sql_sha256[:12]}]"
+
     payload: dict[str, Any] = {
         "timestamp": _now_utc_iso(),
         "event": "query_execution",
         "tool": tool_name,
         "database": database_name,
         "api_caller": _current_api_caller(),
-        "sql": sql,
-        "sql_sha256": hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+        "redacted_sql": redacted_sql,
+        "sql_sha256": sql_sha256,
+        "sql_anonymized_hash": f"sha256:{sql_sha256}",
         "prompt_sha256": prompt_sha256,
         "prompt_redaction_token": prompt_redaction_token,
-        "prompt_storage_mode": "raw_opt_in" if SETTINGS.allow_raw_prompts else "hashed_redacted",
+        "prompt_storage_mode": prompt_storage_mode,
         "db_user": SETTINGS.db_user,
     }
     if SETTINGS.allow_raw_prompts and prompt_context:
@@ -861,6 +888,9 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
     def _api_caller_identity(self, request: Request) -> str:
         token = self._bearer_token(request)
         if token:
+            subject = _extract_jwt_subject(token)
+            if subject:
+                return f"sub:{subject}"
             digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
             return f"token:{digest}"
         return f"ip:{self._client_ip(request)}"

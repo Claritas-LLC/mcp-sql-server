@@ -475,7 +475,9 @@ To access a database behind a bastion host, configure the following SSH variable
 This server implements strict security practices for logging:
 
 - **Sanitized service logs**: Standard logger output avoids raw SQL and params by default.
-- **Optional audit log**: If `MCP_AUDIT_LOG_QUERIES=true`, query tools append JSONL records with `sql`, `sql_sha256`, `prompt_sha256`, and a redaction token.
+- **Optional audit log**: If `MCP_AUDIT_LOG_QUERIES=true`, query tools append JSONL records with `redacted_sql`, `sql_sha256`, `sql_anonymized_hash`, `prompt_sha256`, and a redaction token.
+- **SQL redaction policy**: Raw SQL text is never persisted in audit logs; use `sql_sha256` / `sql_anonymized_hash` for deterministic correlation.
+- **Caller attribution**: Audit records include `api_caller` from request context (JWT subject/token/IP); when no request context exists, fallback is deterministic (`system:local`), never `unknown`.
 - **Prompt provenance**: Raw `prompt_context` is never persisted unless `MCP_ALLOW_RAW_PROMPTS=true` is explicitly enabled.
 - **Safe defaults**: Query audit logging is disabled by default.
 
