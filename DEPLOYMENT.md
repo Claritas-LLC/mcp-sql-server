@@ -276,10 +276,10 @@ GRANT VIEW SERVER STATE TO [mcp_readonly];
 DECLARE @sql NVARCHAR(MAX) = N'';
 
 SELECT @sql += '
-USE [' + name + '];
+EXEC(N''USE ' + QUOTENAME(name) + ';
 CREATE USER mcp_readonly FOR LOGIN mcp_readonly;
 ALTER ROLE db_datareader ADD MEMBER mcp_readonly;
-GRANT VIEW DEFINITION TO mcp_readonly;'
+GRANT VIEW DEFINITION TO mcp_readonly;'');'
 FROM sys.databases
 WHERE database_id > 4  -- skips master, model, msdb, tempdb
   AND state_desc = 'ONLINE';
@@ -298,15 +298,15 @@ GRANT VIEW SERVER STATE TO [mcp_rw];
 DECLARE @sql NVARCHAR(MAX) = N'';
 
 SELECT @sql += '
-USE [' + name + '];
-CREATE USER mcp_readonly FOR LOGIN mcp_rw;
+EXEC(N''USE ' + QUOTENAME(name) + ';
+CREATE USER mcp_rw FOR LOGIN mcp_rw;
 ALTER ROLE db_datareader ADD MEMBER mcp_rw;
-ALTER ROLE db_writer ADD MEMBER mcp_rw;
+ALTER ROLE db_datawriter ADD MEMBER mcp_rw;
 GRANT VIEW DEFINITION TO mcp_rw;
 GRANT CREATE TABLE TO mcp_rw;
 GRANT CREATE VIEW TO mcp_rw;
 GRANT CREATE PROCEDURE TO mcp_rw;
-GRANT CREATE FUNCTION TO mcp_rw;'
+GRANT CREATE FUNCTION TO mcp_rw;'');'
 FROM sys.databases
 WHERE database_id > 4  -- skips master, model, msdb, tempdb
   AND state_desc = 'ONLINE';
