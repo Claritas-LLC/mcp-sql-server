@@ -236,9 +236,12 @@ def _extract_referenced_tables(sql: str) -> list[tuple[str, str]]:
     object_ref = rf"(?:{ident}\s*\.\s*{ident}|{ident})"
     patterns = [
         re.compile(rf"\b(?:from|join)\s+({object_ref})", flags=re.I),
-        re.compile(rf"\b(?:insert(?:\s+into)?|update|delete(?:\s+from)?|merge(?:\s+into)?)\s+({object_ref})", flags=re.I),
-        re.compile(rf"\bwith\s+({ident})\s+as\s*\(\s*select\b", flags=re.I),
-        re.compile(rf",\s*({ident})\s+as\s*\(\s*select\b", flags=re.I),
+        re.compile(rf"\b(?:insert(?:\s+into)?|update|merge(?:\s+into)?)\s+({object_ref})", flags=re.I),
+        # DELETE supports alias form: DELETE t FROM dbo.Table t ...
+        re.compile(rf"\bdelete\s+from\s+({object_ref})", flags=re.I),
+        # CTE declarations can include an optional column list before AS.
+        re.compile(rf"\bwith\s+({ident})(?:\s*\([^\)]*\))?\s+as\s*\(", flags=re.I),
+        re.compile(rf",\s*({ident})(?:\s*\([^\)]*\))?\s+as\s*\(", flags=re.I),
     ]
     references: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()

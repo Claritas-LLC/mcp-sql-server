@@ -46,6 +46,25 @@ def test_extract_referenced_tables_includes_cte_names_and_defaults_schema():
     assert ("dbo", "regions") in refs
 
 
+def test_extract_referenced_tables_handles_delete_alias_form():
+    sql = "DELETE t FROM dbo.TargetTable t JOIN dbo.OtherTable o ON o.Id = t.Id"
+
+    refs = server._extract_referenced_tables(sql)
+
+    assert ("dbo", "targettable") in refs
+    assert ("dbo", "othertable") in refs
+    assert ("dbo", "t") not in refs
+
+
+def test_extract_referenced_tables_handles_cte_column_list():
+    sql = "WITH SalesCte(OrderId) AS (SELECT OrderId FROM sales.Orders) SELECT * FROM SalesCte"
+
+    refs = server._extract_referenced_tables(sql)
+
+    assert ("dbo", "salescte") in refs
+    assert ("sales", "orders") in refs
+
+
 def test_rate_limiter_trips_breaker(monkeypatch):
     monkeypatch.setattr(server.SETTINGS, "rate_limit_enabled", True)
     monkeypatch.setattr(server.SETTINGS, "rate_limit_window_seconds", 60)
