@@ -514,6 +514,8 @@ This server implements strict security practices for logging:
   - Example: `db_sql2019_generate_ddl("SalesDb", "sales.Customers", "table")`
 
 ### 🔧 Write/Admin (Requires `MCP_ALLOW_WRITE=true` and `MCP_CONFIRM_WRITE=true`)
+
+When `MCP_ALLOW_WRITE=false`, write/admin components are hidden from MCP listings via FastMCP visibility controls.
 - `db_sql2019_create_db_user(username: str, password: str, privileges: str = "read", database: str | None = None)`
 - `db_sql2019_drop_db_user(username: str, database: str | None = None)`
 - `db_sql2019_kill_session(session_id: int)`
