@@ -16,6 +16,12 @@ def _call_tool(tool, *args, **kwargs):
         result = tool(*args, **kwargs)
 
     if asyncio.iscoroutine(result):
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return asyncio.run(result)
+        if loop.is_running():
+            return asyncio.run_coroutine_threadsafe(result, loop).result()
         return asyncio.run(result)
     return result
 
