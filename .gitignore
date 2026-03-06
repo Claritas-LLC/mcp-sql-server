@@ -7,4 +7,3 @@ env/
 venv/
 .vscode/
 *.log
-logs/
