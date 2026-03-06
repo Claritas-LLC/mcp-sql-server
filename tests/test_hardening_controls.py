@@ -1,5 +1,6 @@
 import json
 import hashlib
+from starlette.requests import Request
 
 import server
 
@@ -124,10 +125,11 @@ def test_audit_log_redacts_prompt_by_default(tmp_path, monkeypatch):
     monkeypatch.setattr(server.SETTINGS, "allow_raw_prompts", False)
 
     prompt = "User asked for latest customer row"
+    sql = "SELECT TOP 1 * FROM dbo.Customers"
     server._write_query_audit_record(
         tool_name="db_sql2019_run_query",
         database_name="TEST_DB",
-        sql="SELECT TOP 1 * FROM dbo.Customers",
+        sql=sql,
         params_json=None,
         prompt_context=prompt,
     )
@@ -137,7 +139,10 @@ def test_audit_log_redacts_prompt_by_default(tmp_path, monkeypatch):
 
     assert payload["tool"] == "db_sql2019_run_query"
     assert payload["database"] == "TEST_DB"
-    assert payload["sql"] == "SELECT TOP 1 * FROM dbo.Customers"
+    assert "sql" not in payload
+    assert payload["redacted_sql"].startswith("[REDACTED_SQL:")
+    assert payload["sql_sha256"] == hashlib.sha256(sql.encode("utf-8")).hexdigest()
+    assert payload["sql_anonymized_hash"] == f"sha256:{payload['sql_sha256']}"
     assert "prompt" not in payload
     assert payload.get("prompt_sha256") == hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     assert payload.get("prompt_redaction_token", "").startswith("[REDACTED_PROMPT:")
@@ -167,6 +172,31 @@ def test_audit_log_allows_raw_prompt_when_explicitly_enabled(tmp_path, monkeypat
     assert payload.get("prompt_sha256") == hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     assert payload.get("prompt_storage_mode") == "raw_opt_in"
     assert payload.get("raw_prompt_storage_enabled") is True
+    assert "sql" not in payload
+
+
+def test_audit_log_never_persists_plaintext_sql(tmp_path, monkeypatch):
+    audit_file = tmp_path / "query_audit_sql_redacted.jsonl"
+
+    monkeypatch.setattr(server.SETTINGS, "audit_log_queries", True)
+    monkeypatch.setattr(server.SETTINGS, "audit_log_file", str(audit_file))
+    monkeypatch.setattr(server.SETTINGS, "audit_log_include_params", False)
+    monkeypatch.setattr(server.SETTINGS, "allow_raw_prompts", False)
+
+    sql = "SELECT TOP 1 * FROM dbo.Customers"
+    server._write_query_audit_record(
+        tool_name="db_sql2019_run_query",
+        database_name="TEST_DB",
+        sql=sql,
+        params_json=None,
+        prompt_context=None,
+    )
+
+    payload = json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])
+    assert payload.get("prompt_storage_mode") == "hashed_redacted"
+    assert "sql" not in payload
+    assert payload.get("redacted_sql") == f"[REDACTED_SQL:{payload['sql_sha256'][:12]}]"
+    assert payload.get("sql_sha256") == hashlib.sha256(sql.encode("utf-8")).hexdigest()
 
 
 def test_audit_log_includes_api_caller_identity(tmp_path, monkeypatch):
@@ -188,6 +218,47 @@ def test_audit_log_includes_api_caller_identity(tmp_path, monkeypatch):
     payload = json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])
     assert payload.get("api_caller") == "token:abc123def456"
     assert payload.get("db_user") == server.SETTINGS.db_user
+
+
+def test_audit_log_api_caller_fallback_is_deterministic_non_unknown(tmp_path, monkeypatch):
+    audit_file = tmp_path / "query_audit_fallback.jsonl"
+
+    monkeypatch.setattr(server.SETTINGS, "audit_log_queries", True)
+    monkeypatch.setattr(server.SETTINGS, "audit_log_file", str(audit_file))
+    monkeypatch.setattr(server.SETTINGS, "audit_log_include_params", False)
+
+    token = server._API_CALLER_CONTEXT.set("unknown")
+    try:
+        server._write_query_audit_record(
+            tool_name="db_sql2019_run_query",
+            database_name="TEST_DB",
+            sql="SELECT 1",
+            params_json=None,
+            prompt_context=None,
+        )
+    finally:
+        server._API_CALLER_CONTEXT.reset(token)
+
+    payload = json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])
+    assert payload.get("api_caller") == "system:local"
+    assert payload.get("api_caller") != "unknown"
+
+
+def test_api_key_middleware_uses_jwt_subject_for_authenticated_caller(monkeypatch):
+    async def _noop_app(_scope, _receive, _send):
+        return None
+
+    middleware = server.APIKeyMiddleware(app=_noop_app)
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/mcp",
+            "headers": [(b"authorization", b"Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJzdmMtbWNwLXVzZXIifQ.")],
+            "client": ("127.0.0.1", 9999),
+        }
+    )
+    assert middleware._api_caller_identity(request) == "sub:svc-mcp-user"
 
 
 def test_parse_schema_qualified_name_supports_explicit_and_default_schema():
