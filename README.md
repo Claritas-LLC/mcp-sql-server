@@ -286,6 +286,8 @@ To prevent the MCP server from becoming unresponsive or overloading the database
     *   **Configuration**: Set `MCP_MAX_ROWS` to adjust.
 *   **Rate Limiting + Circuit Breaker**: HTTP clients can be throttled per window and temporarily blocked after repeated violations.
   *   **Configuration**: `MCP_RATE_LIMIT_ENABLED`, `MCP_RATE_LIMIT_WINDOW_SECONDS`, `MCP_RATE_LIMIT_MAX_REQUESTS`, `MCP_RATE_LIMIT_BREAKER_VIOLATIONS`, `MCP_RATE_LIMIT_BREAKER_SECONDS`.
+*   **Background Tasks (FastMCP)**: Long-running tools can run as MCP background tasks when the client supports tasks.
+  *   **Configuration**: `FASTMCP_DOCKET_URL` (e.g., `memory://` for default single-process, `redis://host:6379/0` for shared workers).
 
 ### Core Connection
 | Variable | Description | Default |
@@ -422,6 +424,28 @@ The server is fully compatible with n8n workflows.
 2. Create an **OAuth2 API** credential in n8n.
 3. Use the **HTTP Request** node with that credential to call tools via JSON-RPC.
 
+### Optional: FastMCP Skills Provider
+
+If you want to expose local agent skills (for example `~/.copilot/skills`) as MCP resources, add a Skills Provider to your FastMCP server. This is separate from SQL tool execution and is most useful for cross-client skill discovery/sync.
+
+```python
+from fastmcp import FastMCP
+from fastmcp.server.providers.skills import VSCodeSkillsProvider
+
+mcp = FastMCP("SQL Server MCP")
+mcp.add_provider(
+  VSCodeSkillsProvider(
+    supporting_files="template",  # recommended for production: compact list_resources()
+    reload=False,                  # recommended for production: lower request overhead
+  )
+)
+```
+
+Recommendations:
+- Use `supporting_files="template"` in production to keep resource listings compact.
+- Use `reload=True` only during active skill authoring/development.
+- Keep skills provider concerns separate from SQL audit logging (`MCP_AUDIT_LOG_*`).
+
 ### HTTPS / SSL
 To enable HTTPS, provide both the certificate and key files.
 
@@ -479,7 +503,7 @@ This server implements strict security practices for logging:
 - `db_sql2019_analyze_index_health(...)`: Severity summary over fragmented indexes.
 - `db_sql2019_check_fragmentation(database_name: str, min_fragmentation: float = 10.0, min_page_count: int = 100, include_recommendations: bool = True)`: Maintenance-focused fragmentation report.
 - `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Table size, indexes, FKs, stats, and recommendations with token-aware response shaping, field projection, and budgeted truncation.
-- `db_sql2019_show_top_queries(database_name: str, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Query Store top-query analysis (requires Query Store enabled) with summary/standard/full payload options plus field projection and budgeted truncation.
+- `db_sql2019_show_top_queries(database_name: str, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Query Store top-query analysis (requires Query Store enabled) with summary/standard/full payload options plus field projection and budgeted truncation. Supports MCP background task execution for long-running analysis.
 - `db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: XML execution plan.
 - `db_sql2019_db_sec_perf_metrics(profile: str = "oltp")`: Security + performance audit snapshot.
 
@@ -544,7 +568,7 @@ Here are concise examples of calling the most-used tools from an MCP client.
 ```
 
 ### 2. Query Store Performance Analysis
-**Prompt:** `using sqlserver_readonly, call db_sql2019_show_top_queries(database='USGISPRO_800') and display results`
+**Prompt:** `using sqlserver_readonly, call db_sql2019_show_top_queries(database_name='USGISPRO_800') and display results`
 
 **Result:**
 ```json

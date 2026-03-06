@@ -1,3 +1,4 @@
+import asyncio
 import concurrent.futures
 import os
 import sys
@@ -10,8 +11,13 @@ import server
 def _call_tool(tool, *args, **kwargs):
     fn = getattr(tool, "fn", None)
     if callable(fn):
-        return fn(*args, **kwargs)
-    return tool(*args, **kwargs)
+        result = fn(*args, **kwargs)
+    else:
+        result = tool(*args, **kwargs)
+
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
 
 
 def _run_query():
