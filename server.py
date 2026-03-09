@@ -22,6 +22,7 @@ from urllib.parse import quote
 import pyodbc
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from fastmcp.dependencies import CurrentFastMCP, CurrentHeaders, Progress
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -74,6 +75,7 @@ class Settings:
     audit_log_file: str
     audit_log_include_params: bool
     allow_raw_prompts: bool
+    list_page_size: int | None
 
 
 def _env(name: str, default: str = "") -> str:
@@ -85,6 +87,19 @@ def _env_int(name: str, default: int) -> int:
     if not value:
         return default
     return int(value)
+
+
+def _env_optional_int(name: str) -> int | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    value = value.strip()
+    if value == "":
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        return None
+    return parsed
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -136,6 +151,7 @@ def _load_settings() -> Settings:
         audit_log_file=_env("MCP_AUDIT_LOG_FILE", "mcp_query_audit.jsonl").strip() or "mcp_query_audit.jsonl",
         audit_log_include_params=_env_bool("MCP_AUDIT_LOG_INCLUDE_PARAMS", False),
         allow_raw_prompts=_env_bool("MCP_ALLOW_RAW_PROMPTS", _env_bool("ALLOW_RAW_PROMPTS", False)),
+        list_page_size=_env_optional_int("MCP_LIST_PAGE_SIZE"),
     )
 
 
@@ -234,14 +250,25 @@ def _extract_referenced_tables(sql: str) -> list[tuple[str, str]]:
     cleaned = _strip_sql_comments_and_literals(sql)
     ident = r"(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)"
     object_ref = rf"(?:{ident}\s*\.\s*{ident}|{ident})"
-    patterns = [
-        re.compile(rf"\b(?:from|join)\s+({object_ref})", flags=re.I),
-        re.compile(rf"\b(?:insert(?:\s+into)?|update|merge(?:\s+into)?)\s+({object_ref})", flags=re.I),
-        # DELETE supports alias form: DELETE t FROM dbo.Table t ...
-        re.compile(rf"\bdelete\s+from\s+({object_ref})", flags=re.I),
+    cte_patterns = [
         # CTE declarations can include an optional column list before AS.
         re.compile(rf"\bwith\s+({ident})(?:\s*\([^\)]*\))?\s+as\s*\(", flags=re.I),
         re.compile(rf",\s*({ident})(?:\s*\([^\)]*\))?\s+as\s*\(", flags=re.I),
+    ]
+
+    cte_aliases: set[str] = set()
+    for pattern in cte_patterns:
+        for match in pattern.finditer(cleaned):
+            cte_alias = _strip_identifier_quotes(match.group(1).strip())
+            if cte_alias:
+                cte_aliases.add(cte_alias)
+
+    patterns = [
+        re.compile(rf"\b(?:from|join)\s+({object_ref})", flags=re.I),
+        re.compile(rf"\b(?:insert(?:\s+into)?|update|merge(?:\s+into)?)\s+({object_ref})", flags=re.I),
+        # This matches only DELETE FROM <table>; alias forms (DELETE t FROM ...)
+        # are resolved by the separate FROM/JOIN extraction pattern above.
+        re.compile(rf"\bdelete\s+from\s+({object_ref})", flags=re.I),
     ]
     references: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -257,6 +284,11 @@ def _extract_referenced_tables(sql: str) -> list[tuple[str, str]]:
             else:
                 schema_name = "dbo"
                 table_name = _strip_identifier_quotes(parts[0])
+
+            # Ignore CTE aliases when they appear as FROM/JOIN targets.
+            if len(parts) == 1 and table_name in cte_aliases:
+                continue
+
             if table_name:
                 entry = (schema_name, table_name)
                 if entry not in seen:
@@ -619,7 +651,7 @@ def _apply_token_budget(result: Any, token_budget: int | None) -> Any:
             if key in result:
                 fallback[key] = result.get(key)
         if "summary" in result and isinstance(result.get("summary"), dict):
-            fallback["summary"] = result.get("summary")
+            fallback["original_summary"] = result.get("summary")
     return fallback
 
 
@@ -857,7 +889,12 @@ def _ensure_write_enabled() -> None:
 
 
 # FastMCP app initialization
-mcp = FastMCP(name=os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server"))
+mcp_kwargs: dict[str, Any] = {
+    "name": os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server"),
+}
+if SETTINGS.list_page_size is not None:
+    mcp_kwargs["list_page_size"] = SETTINGS.list_page_size
+mcp = FastMCP(**mcp_kwargs)
 app = mcp
 
 
@@ -1243,49 +1280,160 @@ def db_sql2019_list_objects(
     try:
         cur = conn.cursor()
         object_type_norm = object_type.strip().upper()
+        requested_page, requested_page_size = _normalize_tool_pagination(page, page_size)
+        max_items = max(1, limit)
+
+        def _build_table_scope_sql(schema_col: str, table_col: str) -> tuple[str, list[Any]]:
+            if not SETTINGS.table_scope_enforced:
+                return "", []
+
+            if not _TABLE_SCOPE_PATTERNS:
+                return " AND 1 = 0", []
+
+            clauses: list[str] = []
+            params_local: list[Any] = []
+            for pattern in _TABLE_SCOPE_PATTERNS:
+                pattern_schema, pattern_table = pattern.split(".", 1)
+                if pattern_schema == "*" and pattern_table == "*":
+                    return "", []
+                if pattern_schema == "*":
+                    clauses.append(f"LOWER({table_col}) = ?")
+                    params_local.append(pattern_table)
+                elif pattern_table == "*":
+                    clauses.append(f"LOWER({schema_col}) = ?")
+                    params_local.append(pattern_schema)
+                else:
+                    clauses.append(f"(LOWER({schema_col}) = ? AND LOWER({table_col}) = ?)")
+                    params_local.extend([pattern_schema, pattern_table])
+
+            if not clauses:
+                return " AND 1 = 0", []
+            return " AND (" + " OR ".join(clauses) + ")", params_local
+
+        def _paginate_query(
+            count_sql: str,
+            count_params: list[Any],
+            data_sql: str,
+            data_params: list[Any],
+            row_mapper,
+        ) -> dict[str, Any]:
+            _execute_safe(cur, count_sql, count_params)
+            count_row = cur.fetchone()
+            total_count = int(count_row[0]) if count_row and count_row[0] is not None else 0
+            capped_total = min(total_count, max_items)
+            total_pages = max(1, (capped_total + requested_page_size - 1) // requested_page_size)
+            safe_page = min(requested_page, total_pages)
+            offset = (safe_page - 1) * requested_page_size
+
+            if capped_total == 0 or offset >= capped_total:
+                return {
+                    "items": [],
+                    "pagination": {
+                        "page": safe_page,
+                        "page_size": requested_page_size,
+                        "total_items": capped_total,
+                        "total_pages": total_pages,
+                    },
+                }
+
+            fetch_size = min(requested_page_size, capped_total - offset)
+            paged_sql = data_sql + " OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
+            _execute_safe(cur, paged_sql, data_params + [offset, fetch_size])
+            rows = cur.fetchall()
+            return {
+                "items": row_mapper(rows),
+                "pagination": {
+                    "page": safe_page,
+                    "page_size": requested_page_size,
+                    "total_items": capped_total,
+                    "total_pages": total_pages,
+                },
+            }
 
         if object_type_norm in {"DATABASE", "DATABASES"}:
-            _execute_safe(
-                cur,
-                """
+            count_sql = """
+                SELECT COUNT(*)
+                FROM sys.databases
+                WHERE state_desc = 'ONLINE'
+            """
+            data_sql = """
                 SELECT name
                 FROM sys.databases
                 WHERE state_desc = 'ONLINE'
                 ORDER BY name
-                """,
+            """
+            return _paginate_query(
+                count_sql=count_sql,
+                count_params=[],
+                data_sql=data_sql,
+                data_params=[],
+                row_mapper=lambda rows: [row[0] for row in rows],
             )
-            return _paginate_tool_result([row[0] for row in cur.fetchall()], page=page, page_size=page_size)
 
         if object_type_norm in {"SCHEMA", "SCHEMAS"}:
-            _execute_safe(cur, "SELECT name FROM sys.schemas ORDER BY name")
-            return _paginate_tool_result([row[0] for row in cur.fetchall()], page=page, page_size=page_size)
+            count_sql = "SELECT COUNT(*) FROM sys.schemas"
+            data_sql = "SELECT name FROM sys.schemas ORDER BY name"
+            return _paginate_query(
+                count_sql=count_sql,
+                count_params=[],
+                data_sql=data_sql,
+                data_params=[],
+                row_mapper=lambda rows: [row[0] for row in rows],
+            )
 
         if object_type_norm in {"TABLE", "VIEW"}:
             table_type = "BASE TABLE" if object_type_norm == "TABLE" else "VIEW"
-            sql = (
-                "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE "
-                "FROM INFORMATION_SCHEMA.TABLES "
-                "WHERE TABLE_TYPE = ?"
-            )
+            where_sql = "WHERE TABLE_TYPE = ?"
             params: list[Any] = [table_type]
             if schema:
-                sql += " AND TABLE_SCHEMA = ?"
+                where_sql += " AND TABLE_SCHEMA = ?"
                 params.append(schema)
             if object_name:
-                sql += " AND TABLE_NAME LIKE ?"
+                where_sql += " AND TABLE_NAME LIKE ?"
                 params.append(object_name)
-            sql += " ORDER BY TABLE_SCHEMA, TABLE_NAME"
-            _execute_safe(cur, sql, params)
-            rows = _fetch_limited(cur, max(1, limit))
-            scoped_rows = [
-                row
-                for row in _rows_to_dicts(cur, rows)
-                if _is_table_allowed(str(row.get("TABLE_SCHEMA") or "dbo"), str(row.get("TABLE_NAME") or ""))
-            ]
-            return _paginate_tool_result(scoped_rows, page=page, page_size=page_size)
+            scope_sql, scope_params = _build_table_scope_sql("TABLE_SCHEMA", "TABLE_NAME")
+            where_sql += scope_sql
+            query_params = params + scope_params
+
+            count_sql = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES " + where_sql
+            data_sql = (
+                "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE "
+                "FROM INFORMATION_SCHEMA.TABLES "
+                + where_sql
+                + " ORDER BY TABLE_SCHEMA, TABLE_NAME"
+            )
+            return _paginate_query(
+                count_sql=count_sql,
+                count_params=query_params,
+                data_sql=data_sql,
+                data_params=query_params,
+                row_mapper=lambda rows: _rows_to_dicts(cur, rows),
+            )
 
         if object_type_norm == "INDEX":
-            sql = """
+            where_sql = """
+            WHERE i.name IS NOT NULL
+            """
+            params: list[Any] = []
+            if schema:
+                where_sql += " AND s.name = ?"
+                params.append(schema)
+            if object_name:
+                where_sql += " AND i.name LIKE ?"
+                params.append(object_name)
+
+            scope_sql, scope_params = _build_table_scope_sql("s.name", "t.name")
+            where_sql += scope_sql
+            params.extend(scope_params)
+
+            count_sql = """
+            SELECT COUNT(*)
+            FROM sys.indexes i
+            JOIN sys.tables t ON i.object_id = t.object_id
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            """ + where_sql
+
+            data_sql = """
             SELECT
                 s.name AS schema_name,
                 t.name AS table_name,
@@ -1295,49 +1443,45 @@ def db_sql2019_list_objects(
             FROM sys.indexes i
             JOIN sys.tables t ON i.object_id = t.object_id
             JOIN sys.schemas s ON t.schema_id = s.schema_id
-            WHERE i.name IS NOT NULL
-            """
-            params = []
-            if schema:
-                sql += " AND s.name = ?"
-                params.append(schema)
-            if object_name:
-                sql += " AND i.name LIKE ?"
-                params.append(object_name)
-            sql += " ORDER BY s.name, t.name, i.name"
-            _execute_safe(cur, sql, params)
-            scoped_rows = [
-                row
-                for row in _rows_to_dicts(cur, _fetch_limited(cur, max(1, limit)))
-                if _is_table_allowed(str(row.get("schema_name") or "dbo"), str(row.get("table_name") or ""))
-            ]
-            return _paginate_tool_result(
-                scoped_rows,
-                page=page,
-                page_size=page_size,
+            """ + where_sql + " ORDER BY s.name, t.name, i.name"
+            return _paginate_query(
+                count_sql=count_sql,
+                count_params=params,
+                data_sql=data_sql,
+                data_params=params,
+                row_mapper=lambda rows: _rows_to_dicts(cur, rows),
             )
 
         if object_type_norm in {"FUNCTION", "PROCEDURE", "TRIGGER"}:
             code = {"FUNCTION": "FN", "PROCEDURE": "P", "TRIGGER": "TR"}[object_type_norm]
-            sql = """
-            SELECT s.name AS schema_name, o.name AS object_name, o.type_desc
-            FROM sys.objects o
-            JOIN sys.schemas s ON o.schema_id = s.schema_id
+            where_sql = """
             WHERE o.type = ?
             """
             params = [code]
             if schema:
-                sql += " AND s.name = ?"
+                where_sql += " AND s.name = ?"
                 params.append(schema)
             if object_name:
-                sql += " AND o.name LIKE ?"
+                where_sql += " AND o.name LIKE ?"
                 params.append(object_name)
-            sql += " ORDER BY s.name, o.name"
-            _execute_safe(cur, sql, params)
-            return _paginate_tool_result(
-                _rows_to_dicts(cur, _fetch_limited(cur, max(1, limit))),
-                page=page,
-                page_size=page_size,
+
+            count_sql = """
+            SELECT COUNT(*)
+            FROM sys.objects o
+            JOIN sys.schemas s ON o.schema_id = s.schema_id
+            """ + where_sql
+
+            data_sql = """
+            SELECT s.name AS schema_name, o.name AS object_name, o.type_desc
+            FROM sys.objects o
+            JOIN sys.schemas s ON o.schema_id = s.schema_id
+            """ + where_sql + " ORDER BY s.name, o.name"
+            return _paginate_query(
+                count_sql=count_sql,
+                count_params=params,
+                data_sql=data_sql,
+                data_params=params,
+                row_mapper=lambda rows: _rows_to_dicts(cur, rows),
             )
 
         raise ValueError(f"Unsupported object_type: {object_type}")
@@ -1640,7 +1784,10 @@ def db_sql2019_db_stats(database: str | None = None) -> dict[str, Any]:
 
 
 @mcp.tool
-def db_sql2019_server_info_mcp() -> dict[str, Any]:
+def db_sql2019_server_info_mcp(
+    server: FastMCP = CurrentFastMCP(),
+    headers: dict[str, str] = CurrentHeaders(),
+) -> dict[str, Any]:
     """Get SQL Server and MCP runtime information."""
     conn = get_connection("master")
     try:
@@ -1672,6 +1819,8 @@ def db_sql2019_server_info_mcp() -> dict[str, Any]:
             "mcp_transport": SETTINGS.transport,
             "mcp_max_rows": SETTINGS.max_rows,
             "mcp_allow_write": SETTINGS.allow_write,
+            "mcp_server_name": server.name,
+            "http_user_agent": headers.get("user-agent", ""),
         }
     finally:
         conn.close()
@@ -1813,9 +1962,15 @@ async def db_sql2019_show_top_queries(
     token_budget: int | None = None,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+    progress: Progress = Progress(),
 ) -> dict[str, Any]:
     """Query Store summary for high-cost queries."""
-    return await asyncio.to_thread(
+    await progress.set_total(3)
+    await progress.set_message("Validating request")
+    await progress.increment()
+
+    await progress.set_message("Running Query Store analysis")
+    result = await asyncio.to_thread(
         _db_sql2019_show_top_queries_impl,
         database_name,
         view,
@@ -1824,6 +1979,11 @@ async def db_sql2019_show_top_queries(
         page,
         page_size,
     )
+    await progress.increment()
+
+    await progress.set_message("Packaging response")
+    await progress.increment()
+    return result
 
 
 @mcp.tool
