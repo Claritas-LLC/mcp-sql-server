@@ -96,7 +96,11 @@ def _env_optional_int(name: str) -> int | None:
     value = value.strip()
     if value == "":
         return None
-    parsed = int(value)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid integer value for %s: %r", name, value)
+        return None
     if parsed <= 0:
         return None
     return parsed
