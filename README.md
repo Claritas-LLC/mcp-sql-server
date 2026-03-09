@@ -485,6 +485,22 @@ This server implements strict security practices for logging:
 
 ## 🛠️ Tools Reference
 
+### View Parameter
+
+Several analysis tools support a `view` argument so you can control output size and detail level for token/verbosity needs:
+
+- `summary`: Minimal payload with key metrics/fields only.
+- `standard`: Default balanced output with core analysis and recommendations.
+- `full`: Comprehensive output including all available details, statistics, and extended metadata.
+
+Tools using `view` include:
+- `db_sql2019_analyze_table_health(...)`
+- `db_sql2019_show_top_queries(...)`
+- `db_sql2019_analyze_logical_data_model(...)`
+
+Related note:
+- `db_sql2019_explain_query(...)` does not use `view`; use `analyze` and `output_format` to control plan behavior and payload shape.
+
 ### 🏥 Health & Info (Always Available)
 - `db_sql2019_ping()`: Basic connectivity probe with server/database metadata.
 - `db_sql2019_server_info_mcp()`: SQL Server version/edition + MCP runtime settings.
@@ -619,6 +635,33 @@ Here are concise examples of calling the most-used tools from an MCP client.
       }
     ],
     "index_issues": []
+  },
+  "recommendations": [
+    {
+      "severity": "Medium",
+      "recommendation": "Create an index on column 'CompanyID' to support the foreign key 'FK_Account_Company'."
+    }
+  ]
+}
+```
+
+### 3a. Analyze Table Health (Summary View)
+**Prompt:** `using sqlserver_readonly, call db_sql2019_analyze_table_health(database_name='USGISPRO_800', schema='dbo', table_name='Account', view='summary') and display results`
+
+**Result (summary-level fields only):**
+```json
+{
+  "table_info": {
+    "TableName": "Account",
+    "SchemaName": "dbo",
+    "RowCounts": 3199
+  },
+  "health_summary": {
+    "indexes_count": 5,
+    "foreign_keys_count": 1,
+    "statistics_count": 8,
+    "constraint_issues_count": 1,
+    "recommendations_count": 1
   },
   "recommendations": [
     {

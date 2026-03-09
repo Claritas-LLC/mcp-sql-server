@@ -40,8 +40,8 @@ def test_extract_referenced_tables_includes_cte_names_and_defaults_schema():
 
     refs = server._extract_referenced_tables(sql)
 
-    assert ("dbo", "salescte") in refs
-    assert ("dbo", "regioncte") in refs
+    assert ("dbo", "salescte") not in refs
+    assert ("dbo", "regioncte") not in refs
     assert ("sales", "orders") in refs
     assert ("dbo", "regions") in refs
 
@@ -61,8 +61,18 @@ def test_extract_referenced_tables_handles_cte_column_list():
 
     refs = server._extract_referenced_tables(sql)
 
-    assert ("dbo", "salescte") in refs
+    assert ("dbo", "salescte") not in refs
     assert ("sales", "orders") in refs
+
+
+def test_table_scope_allows_query_using_cte_alias(monkeypatch):
+    monkeypatch.setattr(server.SETTINGS, "table_scope_enforced", True)
+    monkeypatch.setattr(server, "_TABLE_SCOPE_PATTERNS", {"sales.*"})
+
+    sql = "WITH SalesCte AS (SELECT * FROM sales.Orders) SELECT * FROM SalesCte"
+
+    # Should not fail on SalesCte alias; only sales.Orders is enforced.
+    server._enforce_table_scope_for_sql(sql)
 
 
 def test_rate_limiter_trips_breaker(monkeypatch):
