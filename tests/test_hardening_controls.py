@@ -35,7 +35,7 @@ def test_extract_referenced_tables_includes_dml_targets():
     assert ("dbo", "inventory") in refs
 
 
-def test_extract_referenced_tables_includes_cte_names_and_defaults_schema():
+def test_extract_referenced_tables_excludes_cte_names_and_uses_default_schema():
     sql = "WITH SalesCte AS (SELECT * FROM sales.Orders), RegionCte AS (SELECT * FROM dbo.Regions) SELECT * FROM SalesCte JOIN RegionCte ON 1 = 1"
 
     refs = server._extract_referenced_tables(sql)
