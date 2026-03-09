@@ -76,6 +76,12 @@ class Settings:
     audit_log_include_params: bool
     allow_raw_prompts: bool
     list_page_size: int | None
+    tool_search_enabled: bool
+    tool_search_strategy: str
+    tool_search_max_results: int | None
+    tool_search_always_visible: str
+    tool_search_tool_name: str
+    tool_call_tool_name: str
 
 
 def _env(name: str, default: str = "") -> str:
@@ -156,6 +162,12 @@ def _load_settings() -> Settings:
         audit_log_include_params=_env_bool("MCP_AUDIT_LOG_INCLUDE_PARAMS", False),
         allow_raw_prompts=_env_bool("MCP_ALLOW_RAW_PROMPTS", _env_bool("ALLOW_RAW_PROMPTS", False)),
         list_page_size=_env_optional_int("MCP_LIST_PAGE_SIZE"),
+        tool_search_enabled=_env_bool("MCP_TOOL_SEARCH_ENABLED", False),
+        tool_search_strategy=_env("MCP_TOOL_SEARCH_STRATEGY", "regex").strip().lower(),
+        tool_search_max_results=_env_optional_int("MCP_TOOL_SEARCH_MAX_RESULTS"),
+        tool_search_always_visible=_env("MCP_TOOL_SEARCH_ALWAYS_VISIBLE", "").strip(),
+        tool_search_tool_name=_env("MCP_TOOL_SEARCH_TOOL_NAME", "search_tools").strip(),
+        tool_call_tool_name=_env("MCP_TOOL_CALL_TOOL_NAME", "call_tool").strip(),
     )
 
 
@@ -213,6 +225,8 @@ def _validate_runtime_guards() -> None:
         raise RuntimeError("MCP_RATE_LIMIT_BREAKER_SECONDS must be > 0.")
     if SETTINGS.rate_limit_breaker_violations <= 0:
         raise RuntimeError("MCP_RATE_LIMIT_BREAKER_VIOLATIONS must be > 0.")
+    if SETTINGS.tool_search_enabled and SETTINGS.tool_search_strategy not in {"regex", "bm25"}:
+        raise RuntimeError("MCP_TOOL_SEARCH_STRATEGY must be 'regex' or 'bm25'.")
 
 
 _validate_runtime_guards()
@@ -899,6 +913,43 @@ mcp_kwargs: dict[str, Any] = {
 if SETTINGS.list_page_size is not None:
     mcp_kwargs["list_page_size"] = SETTINGS.list_page_size
 mcp = FastMCP(**mcp_kwargs)
+
+
+def _configure_tool_search_transform() -> None:
+    if not SETTINGS.tool_search_enabled:
+        return
+
+    strategy = SETTINGS.tool_search_strategy
+    kwargs: dict[str, Any] = {}
+    if SETTINGS.tool_search_max_results is not None:
+        kwargs["max_results"] = SETTINGS.tool_search_max_results
+
+    always_visible = [name.strip() for name in SETTINGS.tool_search_always_visible.split(",") if name.strip()]
+    if always_visible:
+        kwargs["always_visible"] = always_visible
+
+    if SETTINGS.tool_search_tool_name:
+        kwargs["search_tool_name"] = SETTINGS.tool_search_tool_name
+    if SETTINGS.tool_call_tool_name:
+        kwargs["call_tool_name"] = SETTINGS.tool_call_tool_name
+
+    try:
+        if strategy == "bm25":
+            from fastmcp.server.transforms.search import BM25SearchTransform as SearchTransform
+        else:
+            from fastmcp.server.transforms.search import RegexSearchTransform as SearchTransform
+    except Exception as exc:
+        logger.warning(
+            "Tool search transform requested but unavailable in current FastMCP runtime: %s",
+            exc,
+        )
+        return
+
+    mcp.add_transform(SearchTransform(**kwargs))
+    logger.info("Enabled FastMCP tool search transform", extra={"strategy": strategy, **kwargs})
+
+
+_configure_tool_search_transform()
 app = mcp
 
 
