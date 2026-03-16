@@ -44,7 +44,7 @@ from urllib.parse import quote
 import pyodbc
 from dotenv import load_dotenv
 from fastmcp import FastMCP
-from fastmcp.dependencies import CurrentFastMCP, CurrentHeaders, Progress
+from fastmcp.dependencies import CurrentFastMCP, Progress
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -97,7 +97,6 @@ class Settings:
     audit_log_file: str
     audit_log_include_params: bool
     allow_raw_prompts: bool
-    list_page_size: int | None
     tool_search_enabled: bool
     tool_search_strategy: str
     tool_search_max_results: int | None
@@ -932,8 +931,7 @@ def _ensure_write_enabled() -> None:
 mcp_kwargs: dict[str, Any] = {
     "name": os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server"),
 }
-if SETTINGS.list_page_size is not None:
-    mcp_kwargs["list_page_size"] = SETTINGS.list_page_size
+mcp = FastMCP(**mcp_kwargs)
 mcp = FastMCP(**mcp_kwargs)
 
 
@@ -1863,7 +1861,7 @@ def db_sql2019_db_stats(database: str | None = None) -> dict[str, Any]:
 @mcp.tool
 def db_sql2019_server_info_mcp(
     server: FastMCP = CurrentFastMCP(),
-    headers: dict[str, str] = CurrentHeaders(),
+    headers: dict[str, str] = {},
 ) -> dict[str, Any]:
     """Get SQL Server and MCP runtime information."""
     conn = get_connection("master")
