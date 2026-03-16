@@ -1,4 +1,26 @@
+# Move __future__ import to the very top
 from __future__ import annotations
+# --- Secure .env loader: decrypt .env.enc at runtime ---
+import os
+from cryptography.fernet import Fernet
+
+def load_encrypted_env(enc_path=".env.enc", key_path="env.key"):
+    if not os.path.exists(enc_path) or not os.path.exists(key_path):
+        return  # Fallback: nothing to load
+    with open(key_path, "rb") as key_file:
+        key = key_file.read()
+    fernet = Fernet(key)
+    with open(enc_path, "rb") as enc_file:
+        decrypted = fernet.decrypt(enc_file.read())
+    # Parse and set environment variables
+    for line in decrypted.decode().splitlines():
+        if line.strip() and not line.strip().startswith("#"):
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
+# Call this before any code that loads env vars
+
+load_encrypted_env()
 
 import json
 import logging
