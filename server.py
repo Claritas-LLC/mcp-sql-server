@@ -2,20 +2,33 @@
 from __future__ import annotations
 # --- Secure .env loader: decrypt .env.enc at runtime ---
 import os
-from cryptography.fernet import Fernet
+import sys
+import logging
+from cryptography.fernet import Fernet, InvalidToken
 
 def load_encrypted_env(enc_path=".env.enc", key_path="env.key"):
     if not os.path.exists(enc_path) or not os.path.exists(key_path):
         return  # Fallback: nothing to load
-    with open(key_path, "rb") as key_file:
-        key = key_file.read()
-    fernet = Fernet(key)
-    with open(enc_path, "rb") as enc_file:
-        decrypted = fernet.decrypt(enc_file.read())
+    try:
+        with open(key_path, "rb") as key_file:
+            key = key_file.read()
+        fernet = Fernet(key)
+        with open(enc_path, "rb") as enc_file:
+            encrypted_data = enc_file.read()
+        decrypted = fernet.decrypt(encrypted_data)
+    except (InvalidToken, ValueError) as e:
+        logging.error(f"Failed to decrypt env file '{enc_path}' with key '{key_path}': {e}")
+        sys.exit(1)
+    except (IOError, OSError) as e:
+        logging.error(f"Failed to read env file or key file ('{enc_path}' or '{key_path}'): {e}")
+        sys.exit(1)
     # Parse and set environment variables
     for line in decrypted.decode().splitlines():
-        if line.strip() and not line.strip().startswith("#"):
-            k, v = line.split("=", 1)
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        k, sep, v = line.partition("=")
+        if sep and k.strip():
             os.environ.setdefault(k.strip(), v.strip())
 
 # Call this before any code that loads env vars
@@ -182,7 +195,6 @@ def _load_settings() -> Settings:
         audit_log_file=_env("MCP_AUDIT_LOG_FILE", "mcp_query_audit.jsonl").strip() or "mcp_query_audit.jsonl",
         audit_log_include_params=_env_bool("MCP_AUDIT_LOG_INCLUDE_PARAMS", False),
         allow_raw_prompts=_env_bool("MCP_ALLOW_RAW_PROMPTS", _env_bool("ALLOW_RAW_PROMPTS", False)),
-        list_page_size=_env_optional_int("MCP_LIST_PAGE_SIZE"),
         tool_search_enabled=_env_bool("MCP_TOOL_SEARCH_ENABLED", False),
         tool_search_strategy=_env("MCP_TOOL_SEARCH_STRATEGY", "regex").strip().lower(),
         tool_search_max_results=_env_optional_int("MCP_TOOL_SEARCH_MAX_RESULTS"),
@@ -931,7 +943,6 @@ def _ensure_write_enabled() -> None:
 mcp_kwargs: dict[str, Any] = {
     "name": os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server"),
 }
-mcp = FastMCP(**mcp_kwargs)
 mcp = FastMCP(**mcp_kwargs)
 
 
