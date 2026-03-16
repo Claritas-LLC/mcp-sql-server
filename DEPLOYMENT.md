@@ -272,6 +272,9 @@ Minimal privileges for safe querying.
 USE [master];
 CREATE LOGIN [mcp_readonly] WITH PASSWORD = 'StrongPassword123!';
 GRANT VIEW SERVER STATE TO [mcp_readonly];
+GRANT VIEW ANY DATABASE TO [mcp_readonly];
+GRANT VIEW ANY definition to [mcp_readonly];
+GRANT view server state to [mcp_readonly];
 
 DECLARE @sql NVARCHAR(MAX) = N'';
 
@@ -281,8 +284,7 @@ CREATE USER mcp_readonly FOR LOGIN mcp_readonly;
 ALTER ROLE db_datareader ADD MEMBER mcp_readonly;
 GRANT VIEW DEFINITION TO mcp_readonly;'');'
 FROM sys.databases
-WHERE database_id > 4  -- skips master, model, msdb, tempdb
-  AND state_desc = 'ONLINE';
+WHERE state_desc = 'ONLINE';
 
 EXEC sp_executesql @sql;
 ```
@@ -306,9 +308,12 @@ GRANT VIEW DEFINITION TO mcp_rw;
 GRANT CREATE TABLE TO mcp_rw;
 GRANT CREATE VIEW TO mcp_rw;
 GRANT CREATE PROCEDURE TO mcp_rw;
-GRANT CREATE FUNCTION TO mcp_rw;'');'
+GRANT CREATE FUNCTION TO mcp_rw;
+GRANT VIEW ANY DATABASE TO mcp_rw;
+GRANT VIEW ANY definition to mcp_rw;
+GRANT view server state to mcp_rw;'');'
 FROM sys.databases
-WHERE database_id > 4  -- skips master, model, msdb, tempdb
+WHERE database_id > 0  -- skips master, model, msdb, tempdb
   AND state_desc = 'ONLINE';
 
 EXEC sp_executesql @sql;
