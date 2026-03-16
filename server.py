@@ -940,10 +940,22 @@ def _ensure_write_enabled() -> None:
 
 
 # FastMCP app initialization
-mcp_kwargs: dict[str, Any] = {
-    "name": os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server"),
-}
-mcp = FastMCP(**mcp_kwargs)
+MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server")
+mcp = FastMCP(name=MCP_SERVER_NAME)
+
+# At the end of your main/startup logic, replace your previous server start with:
+from typing import cast
+MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "http").lower()
+MCP_HOST = os.getenv("MCP_HOST", "0.0.0.0")
+MCP_PORT = int(os.getenv("MCP_PORT", "8085"))
+if MCP_TRANSPORT == "stdio":
+    mcp.run(transport="stdio", host=MCP_HOST, port=MCP_PORT)
+elif MCP_TRANSPORT == "sse":
+    mcp.run(transport="sse", host=MCP_HOST, port=MCP_PORT)
+elif MCP_TRANSPORT == "streamable-http":
+    mcp.run(transport="streamable-http", host=MCP_HOST, port=MCP_PORT)
+else:
+    mcp.run(transport="http", host=MCP_HOST, port=MCP_PORT)
 
 
 def _configure_tool_search_transform() -> None:
