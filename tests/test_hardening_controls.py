@@ -156,7 +156,7 @@ def test_audit_log_redacts_prompt_by_default(tmp_path, monkeypatch):
     prompt = "User asked for latest customer row"
     sql = "SELECT TOP 1 * FROM dbo.Customers"
     server._write_query_audit_record(
-        tool_name="db_sql2019_run_query",
+        tool_name="db_01_sql2019_run_query",
         database_name="TEST_DB",
         sql=sql,
         params_json=None,
@@ -166,7 +166,7 @@ def test_audit_log_redacts_prompt_by_default(tmp_path, monkeypatch):
     assert audit_file.exists()
     payload = json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])
 
-    assert payload["tool"] == "db_sql2019_run_query"
+    assert payload["tool"] == "db_01_sql2019_run_query"
     assert payload["database"] == "TEST_DB"
     assert "sql" not in payload
     assert payload["redacted_sql"].startswith("[REDACTED_SQL:")
@@ -188,7 +188,7 @@ def test_audit_log_allows_raw_prompt_when_explicitly_enabled(tmp_path, monkeypat
 
     prompt = "User asked for latest customer row"
     server._write_query_audit_record(
-        tool_name="db_sql2019_run_query",
+        tool_name="db_01_sql2019_run_query",
         database_name="TEST_DB",
         sql="SELECT TOP 1 * FROM dbo.Customers",
         params_json=None,
@@ -214,7 +214,7 @@ def test_audit_log_never_persists_plaintext_sql(tmp_path, monkeypatch):
 
     sql = "SELECT TOP 1 * FROM dbo.Customers"
     server._write_query_audit_record(
-        tool_name="db_sql2019_run_query",
+        tool_name="db_01_sql2019_run_query",
         database_name="TEST_DB",
         sql=sql,
         params_json=None,
@@ -237,7 +237,7 @@ def test_audit_log_includes_api_caller_identity(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_current_api_caller", lambda: "token:abc123def456")
 
     server._write_query_audit_record(
-        tool_name="db_sql2019_run_query",
+        tool_name="db_01_sql2019_run_query",
         database_name="TEST_DB",
         sql="SELECT 1",
         params_json=None,
@@ -246,7 +246,7 @@ def test_audit_log_includes_api_caller_identity(tmp_path, monkeypatch):
 
     payload = json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])
     assert payload.get("api_caller") == "token:abc123def456"
-    assert payload.get("db_user") == server.SETTINGS.db_user
+    assert payload.get("db_user") == server.SETTINGS.db_01_user
 
 
 def test_audit_log_api_caller_fallback_is_deterministic_non_unknown(tmp_path, monkeypatch):
@@ -259,7 +259,7 @@ def test_audit_log_api_caller_fallback_is_deterministic_non_unknown(tmp_path, mo
     token = server._API_CALLER_CONTEXT.set("unknown")
     try:
         server._write_query_audit_record(
-            tool_name="db_sql2019_run_query",
+            tool_name="db_01_sql2019_run_query",
             database_name="TEST_DB",
             sql="SELECT 1",
             params_json=None,
@@ -315,7 +315,7 @@ def test_generate_ddl_enforces_table_scope_with_parsed_schema(monkeypatch):
     monkeypatch.setattr(server, "_enforce_table_scope_for_ident", _capture_enforce)
 
     try:
-        server.db_sql2019_generate_ddl(
+        server.db_01_sql2019_generate_ddl.fn(
             database_name="TEST_DB",
             object_name="sales.Customers",
             object_type="table",

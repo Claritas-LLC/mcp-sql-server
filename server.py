@@ -1,5 +1,12 @@
-# Move __future__ import to the very top
+# Ensure __future__ import is first
 from __future__ import annotations
+# Ensure Literal is available in builtins before any other imports
+import builtins
+from typing import Literal
+builtins.Literal = Literal
+import typing
+from typing import Sequence, Any
+builtins.typing = typing
 # --- Secure .env loader: decrypt .env.enc at runtime ---
 import os
 import sys
@@ -51,7 +58,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from html import escape
 from threading import Lock
-from typing import Any, Literal, Sequence
+from typing import Any, Sequence
 from urllib.parse import quote
 
 import pyodbc
@@ -77,14 +84,22 @@ def _now_utc_iso() -> str:
 
 @dataclass(slots=True)
 class Settings:
-    db_server: str
-    db_port: int
-    db_user: str
-    db_password: str
-    db_name: str
-    db_driver: str
-    db_encrypt: str
-    db_trust_cert: str
+    db_01_server: str
+    db_01_port: int
+    db_01_user: str
+    db_01_password: str
+    db_01_name: str
+    db_01_driver: str
+    db_01_encrypt: str
+    db_01_trust_cert: str
+    db_02_server: str
+    db_02_port: int
+    db_02_user: str
+    db_02_password: str
+    db_02_name: str
+    db_02_driver: str
+    db_02_encrypt: str
+    db_02_trust_cert: str
     statement_timeout_ms: int
     max_rows: int
     allow_write: bool
@@ -154,22 +169,37 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _load_settings() -> Settings:
-    db_server = _env("DB_SERVER") or _env("SQL_SERVER")
-    db_port = _env_int("DB_PORT", _env_int("SQL_PORT", 1433))
-    db_user = _env("DB_USER") or _env("SQL_USER")
-    db_password = _env("DB_PASSWORD") or _env("SQL_PASSWORD")
-    db_name = _env("DB_NAME") or _env("SQL_DATABASE") or "master"
-    db_driver = _env("DB_DRIVER") or _env("SQL_DRIVER") or "ODBC Driver 17 for SQL Server"
+    db_01_server = _env("DB_01_SERVER") or _env("DB_SERVER") or _env("SQL_SERVER")
+    db_01_port = _env_int("DB_01_PORT", _env_int("DB_PORT", _env_int("SQL_PORT", 1433)))
+    db_01_user = _env("DB_01_USER") or _env("DB_USER") or _env("SQL_USER")
+    db_01_password = _env("DB_01_PASSWORD") or _env("DB_PASSWORD") or _env("SQL_PASSWORD")
+    db_01_name = _env("DB_01_NAME") or _env("DB_NAME") or _env("SQL_DATABASE") or "master"
+    db_01_driver = _env("DB_01_DRIVER") or _env("DB_DRIVER") or _env("SQL_DRIVER") or "ODBC Driver 17 for SQL Server"
+
+    db_02_server = _env("DB_02_SERVER")
+    db_02_port = _env_int("DB_02_PORT", 1433)
+    db_02_user = _env("DB_02_USER")
+    db_02_password = _env("DB_02_PASSWORD")
+    db_02_name = _env("DB_02_NAME", "master")
+    db_02_driver = _env("DB_02_DRIVER", "ODBC Driver 17 for SQL Server")
 
     return Settings(
-        db_server=db_server,
-        db_port=db_port,
-        db_user=db_user,
-        db_password=db_password,
-        db_name=db_name,
-        db_driver=db_driver,
-        db_encrypt=_env("DB_ENCRYPT", "no"),
-        db_trust_cert=_env("DB_TRUST_CERT", "yes"),
+        db_01_server=db_01_server,
+        db_01_port=db_01_port,
+        db_01_user=db_01_user,
+        db_01_password=db_01_password,
+        db_01_name=db_01_name,
+        db_01_driver=db_01_driver,
+        db_01_encrypt=_env("DB_01_ENCRYPT", _env("DB_ENCRYPT", "no")),
+        db_01_trust_cert=_env("DB_01_TRUST_CERT", _env("DB_TRUST_CERT", "yes")),
+        db_02_server=db_02_server,
+        db_02_port=db_02_port,
+        db_02_user=db_02_user,
+        db_02_password=db_02_password,
+        db_02_name=db_02_name,
+        db_02_driver=db_02_driver,
+        db_02_encrypt=_env("DB_02_ENCRYPT", "no"),
+        db_02_trust_cert=_env("DB_02_TRUST_CERT", "yes"),
         statement_timeout_ms=_env_int("MCP_STATEMENT_TIMEOUT_MS", 120000),
         max_rows=_env_int("MCP_MAX_ROWS", 500),
         allow_write=_env_bool("MCP_ALLOW_WRITE", False),
@@ -434,7 +464,7 @@ def _write_query_audit_record(
         "prompt_sha256": prompt_sha256,
         "prompt_redaction_token": prompt_redaction_token,
         "prompt_storage_mode": prompt_storage_mode,
-        "db_user": SETTINGS.db_user,
+        "db_user": SETTINGS.db_01_user, # Optional fallback
     }
     if SETTINGS.allow_raw_prompts and prompt_context:
         payload["prompt"] = prompt_context
@@ -531,28 +561,45 @@ def _rate_limit_check(client_key: str) -> tuple[bool, int | None]:
         return True, None
 
 
-def _connection_string(database: str | None = None) -> str:
-    db_name = database or SETTINGS.db_name
-    return (
-        f"DRIVER={{{SETTINGS.db_driver}}};"
-        f"SERVER={SETTINGS.db_server},{SETTINGS.db_port};"
-        f"DATABASE={db_name};"
-        f"UID={SETTINGS.db_user};"
-        f"PWD={SETTINGS.db_password};"
-        f"Encrypt={SETTINGS.db_encrypt};"
-        f"TrustServerCertificate={SETTINGS.db_trust_cert};"
-    )
+def _connection_string(database: str | None = None, instance: int = 1) -> str:
+    if instance == 2:
+        db_name = database or SETTINGS.db_02_name
+        return (
+            f"DRIVER={{{SETTINGS.db_02_driver}}};"
+            f"SERVER={SETTINGS.db_02_server},{SETTINGS.db_02_port};"
+            f"DATABASE={db_name};"
+            f"UID={SETTINGS.db_02_user};"
+            f"PWD={SETTINGS.db_02_password};"
+            f"Encrypt={SETTINGS.db_02_encrypt};"
+            f"TrustServerCertificate={SETTINGS.db_02_trust_cert};"
+        )
+    else:
+        db_name = database or SETTINGS.db_01_name
+        return (
+            f"DRIVER={{{SETTINGS.db_01_driver}}};"
+            f"SERVER={SETTINGS.db_01_server},{SETTINGS.db_01_port};"
+            f"DATABASE={db_name};"
+            f"UID={SETTINGS.db_01_user};"
+            f"PWD={SETTINGS.db_01_password};"
+            f"Encrypt={SETTINGS.db_01_encrypt};"
+            f"TrustServerCertificate={SETTINGS.db_01_trust_cert};"
+        )
 
 
-def get_connection(database: str | None = None) -> pyodbc.Connection:
-    if not SETTINGS.db_server or not SETTINGS.db_user or not SETTINGS.db_password:
-        raise RuntimeError("Database credentials are not configured. Set DB_SERVER, DB_USER, DB_PASSWORD.")
+def get_connection(database: str | None = None, instance: int = 1) -> pyodbc.Connection:
+    if instance == 2:
+        if not SETTINGS.db_02_server or not SETTINGS.db_02_user or not SETTINGS.db_02_password:
+            raise RuntimeError("Database credentials for instance 2 are not configured.")
+    else:
+        if not SETTINGS.db_01_server or not SETTINGS.db_01_user or not SETTINGS.db_01_password:
+            raise RuntimeError("Database credentials for instance 1 are not configured. Set DB_01_SERVER, DB_01_USER, DB_01_PASSWORD.")
 
+    conn_str = _connection_string(database, instance)
     if _PYODBC_CONNECT_LOCK is not None:
         with _PYODBC_CONNECT_LOCK:
-            conn = pyodbc.connect(_connection_string(database), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+            conn = pyodbc.connect(conn_str, timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
     else:
-        conn = pyodbc.connect(_connection_string(database), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+        conn = pyodbc.connect(conn_str, timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
     conn.autocommit = True
     return conn
 
@@ -1118,7 +1165,7 @@ if HTTP_APP is not None:
 
 
 @mcp.tool
-def db_sql2019_ping() -> dict[str, Any]:
+def db_01_sql2019_ping() -> dict[str, Any]:
     """Basic connectivity probe."""
     conn = get_connection()
     try:
@@ -1127,8 +1174,28 @@ def db_sql2019_ping() -> dict[str, Any]:
         row = cur.fetchone()
         return {
             "status": "ok",
-            "database": SETTINGS.db_name,
-            "server": SETTINGS.db_server,
+            "database": SETTINGS.db_01_name,
+            "server": SETTINGS.db_01_server,
+            "result": int(row[0]) if row else 1,
+            "timestamp": _now_utc_iso(),
+        }
+    finally:
+        conn.close()
+
+
+# --- Duplicated for instance 2 ---
+@mcp.tool
+def db_02_sql2019_ping() -> dict[str, Any]:
+    """Basic connectivity probe for SQL Server instance 2."""
+    conn = get_connection(instance=2)
+    try:
+        cur = conn.cursor()
+        _execute_safe(cur, "SELECT 1 AS ok")
+        row = cur.fetchone()
+        return {
+            "status": "ok",
+            "database": SETTINGS.db_02_name,
+            "server": SETTINGS.db_02_server,
             "result": int(row[0]) if row else 1,
             "timestamp": _now_utc_iso(),
         }
@@ -1137,7 +1204,7 @@ def db_sql2019_ping() -> dict[str, Any]:
 
 
 @mcp.tool
-def db_sql2019_list_databases(page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
+def db_01_sql2019_list_databases(page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
     """List online databases visible to the current login."""
     conn = get_connection("master")
     try:
@@ -1157,8 +1224,30 @@ def db_sql2019_list_databases(page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_
         conn.close()
 
 
+# --- Duplicated for instance 2 ---
 @mcp.tool
-def db_sql2019_list_tables(
+def db_02_sql2019_list_databases(page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
+    """List online databases visible to the current login (instance 2)."""
+    conn = get_connection("master", instance=2)
+    try:
+        cur = conn.cursor()
+        _execute_safe(
+            cur,
+            """
+            SELECT name
+            FROM sys.databases
+            WHERE state_desc = 'ONLINE'
+            ORDER BY name
+            """,
+        )
+        items = [row[0] for row in cur.fetchall()]
+        return _paginate_tool_result(items, page=page, page_size=page_size)
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def db_01_sql2019_list_tables(
     database_name: str,
     schema_name: str | None = None,
     page: int = 1,
@@ -1200,8 +1289,52 @@ def db_sql2019_list_tables(
         conn.close()
 
 
+# --- Duplicated for instance 2 ---
 @mcp.tool
-def db_sql2019_get_schema(
+def db_02_sql2019_list_tables(
+    database_name: str,
+    schema_name: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    """List tables for a database/schema (instance 2)."""
+    conn = get_connection(database_name, instance=2)
+    try:
+        cur = conn.cursor()
+        if schema_name:
+            _execute_safe(
+                cur,
+                """
+                SELECT TABLE_SCHEMA, TABLE_NAME
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA = ?
+                ORDER BY TABLE_SCHEMA, TABLE_NAME
+                """,
+                [schema_name],
+            )
+        else:
+            _execute_safe(
+                cur,
+                """
+                SELECT TABLE_SCHEMA, TABLE_NAME
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_TYPE = 'BASE TABLE'
+                ORDER BY TABLE_SCHEMA, TABLE_NAME
+                """,
+            )
+        rows = cur.fetchall()
+        items = [
+            {"TABLE_SCHEMA": row[0], "TABLE_NAME": row[1]}
+            for row in rows
+            if _is_table_allowed(str(row[0] or "dbo"), str(row[1] or ""))
+        ]
+        return _paginate_tool_result(items, page=page, page_size=page_size)
+    finally:
+        conn.close()
+
+
+@mcp.tool
+def db_01_sql2019_get_schema(
     database_name: str,
     table_name: str,
     schema_name: str = "dbo",
@@ -1211,6 +1344,63 @@ def db_sql2019_get_schema(
     """Get column metadata for a table."""
     _enforce_table_scope_for_ident(schema_name, table_name)
     conn = get_connection(database_name)
+    try:
+        cur = conn.cursor()
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                c.COLUMN_NAME,
+                c.ORDINAL_POSITION,
+                c.DATA_TYPE,
+                c.IS_NULLABLE,
+                c.CHARACTER_MAXIMUM_LENGTH,
+                c.NUMERIC_PRECISION,
+                c.NUMERIC_SCALE,
+                c.COLUMN_DEFAULT
+            FROM INFORMATION_SCHEMA.COLUMNS c
+            WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
+            ORDER BY c.ORDINAL_POSITION
+            """,
+            [schema_name, table_name],
+        )
+        rows = cur.fetchall()
+        columns = [
+            {
+                "COLUMN_NAME": row[0],
+                "ORDINAL_POSITION": row[1],
+                "DATA_TYPE": row[2],
+                "IS_NULLABLE": row[3],
+                "CHARACTER_MAXIMUM_LENGTH": row[4],
+                "NUMERIC_PRECISION": row[5],
+                "NUMERIC_SCALE": row[6],
+                "COLUMN_DEFAULT": row[7],
+            }
+            for row in rows
+        ]
+        result = {
+            "database": database_name,
+            "schema": schema_name,
+            "table": table_name,
+            "columns": columns,
+        }
+        return _paginate_tool_result(result, page=page, page_size=page_size)
+    finally:
+        conn.close()
+
+
+# --- Duplicated for instance 2 ---
+@mcp.tool
+def db_02_sql2019_get_schema(
+    database_name: str,
+    table_name: str,
+    schema_name: str = "dbo",
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    """Get column metadata for a table (instance 2)."""
+    _enforce_table_scope_for_ident(schema_name, table_name)
+    conn = get_connection(database_name, instance=2)
     try:
         cur = conn.cursor()
         _execute_safe(
@@ -1273,8 +1463,9 @@ def _run_query_internal(
     params_json: str | None = None,
     max_rows: int | None = None,
     enforce_readonly: bool = True,
-    tool_name: str = "db_sql2019_run_query",
+    tool_name: str = "db_01_sql2019_run_query",
     prompt_context: str | None = None,
+    instance: int = 1,
 ) -> list[dict[str, Any]]:
     if enforce_readonly and not SETTINGS.allow_write:
         _require_readonly(sql)
@@ -1290,7 +1481,7 @@ def _run_query_internal(
     params = _parse_params_json(params_json)
     row_cap = max_rows if isinstance(max_rows, int) and max_rows > 0 else SETTINGS.max_rows
 
-    conn = get_connection(database_name)
+    conn = get_connection(database_name, instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(cur, sql, params)
@@ -1301,7 +1492,7 @@ def _run_query_internal(
 
 
 @mcp.tool
-def db_sql2019_execute_query(
+def db_01_sql2019_execute_query(
     database_name: str,
     sql: str,
     params_json: str | None = None,
@@ -1317,14 +1508,39 @@ def db_sql2019_execute_query(
         params_json=params_json,
         max_rows=max_rows,
         enforce_readonly=True,
-        tool_name="db_sql2019_execute_query",
+        tool_name="db_01_sql2019_execute_query",
         prompt_context=prompt_context,
     )
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
 
+# --- Duplicated for instance 2 ---
 @mcp.tool
-def db_sql2019_run_query(
+def db_02_sql2019_execute_query(
+    database_name: str,
+    sql: str,
+    params_json: str | None = None,
+    max_rows: int | None = None,
+    prompt_context: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    """Legacy-compatible query executor (read-only unless write mode is enabled, instance 2)."""
+    rows = _run_query_internal(
+        database_name=database_name,
+        sql=sql,
+        params_json=params_json,
+        max_rows=max_rows,
+        enforce_readonly=True,
+        tool_name="db_02_sql2019_execute_query",
+        prompt_context=prompt_context,
+        instance=2,
+    )
+    return _paginate_tool_result(rows, page=page, page_size=page_size)
+
+
+@mcp.tool
+def db_01_sql2019_run_query(
     arg1: str,
     arg2: str | None = None,
     params_json: str | None = None,
@@ -1335,7 +1551,7 @@ def db_sql2019_run_query(
 ) -> dict[str, Any]:
     """Execute SQL; supports both legacy (db, sql) and new (sql only) signatures."""
     if arg2 is None:
-        database_name = SETTINGS.db_name
+        database_name = SETTINGS.db_01_name
         sql = arg1
     else:
         database_name = arg1
@@ -1347,14 +1563,46 @@ def db_sql2019_run_query(
         params_json=params_json,
         max_rows=max_rows,
         enforce_readonly=True,
-        tool_name="db_sql2019_run_query",
+        tool_name="db_01_sql2019_run_query",
         prompt_context=prompt_context,
     )
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
 
+# --- Duplicated for instance 2 ---
 @mcp.tool
-def db_sql2019_list_objects(
+def db_02_sql2019_run_query(
+    arg1: str,
+    arg2: str | None = None,
+    params_json: str | None = None,
+    max_rows: int | None = None,
+    prompt_context: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    """Execute SQL; supports both legacy (db, sql) and new (sql only) signatures (instance 2)."""
+    if arg2 is None:
+        database_name = SETTINGS.db_02_name
+        sql = arg1
+    else:
+        database_name = arg1
+        sql = arg2
+
+    rows = _run_query_internal(
+        database_name=database_name,
+        sql=sql,
+        params_json=params_json,
+        max_rows=max_rows,
+        enforce_readonly=True,
+        tool_name="db_02_sql2019_run_query",
+        prompt_context=prompt_context,
+        instance=2,
+    )
+    return _paginate_tool_result(rows, page=page, page_size=page_size)
+
+
+@mcp.tool
+def db_01_sql2019_list_objects(
     database_name: str,
     object_type: str = "TABLE",
     object_name: str | None = None,
@@ -1584,8 +1832,9 @@ def _get_index_fragmentation_data(
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
     limit: int = 50,
+    instance: int = 1,
 ) -> list[dict[str, Any]]:
-    conn = get_connection(database_name)
+    conn = get_connection(database_name, instance=instance)
     try:
         cur = conn.cursor()
         sql = """
@@ -1618,7 +1867,7 @@ def _get_index_fragmentation_data(
 
 
 @mcp.tool
-def db_sql2019_get_index_fragmentation(
+def db_01_sql2019_get_index_fragmentation(
     database_name: str,
     schema: str | None = None,
     min_fragmentation: float = 10.0,
@@ -1639,7 +1888,7 @@ def db_sql2019_get_index_fragmentation(
 
 
 @mcp.tool
-def db_sql2019_analyze_index_health(
+def db_01_sql2019_analyze_index_health(
     database_name: str,
     schema: str | None = None,
     min_fragmentation: float = 10.0,
@@ -1674,7 +1923,7 @@ def db_sql2019_analyze_index_health(
 
 
 @mcp.tool
-def db_sql2019_analyze_table_health(
+def db_01_sql2019_analyze_table_health(
     database_name: str,
     schema: str,
     table_name: str,
@@ -1839,9 +2088,9 @@ def db_sql2019_analyze_table_health(
 
 
 @mcp.tool
-def db_sql2019_db_stats(database: str | None = None) -> dict[str, Any]:
+def db_01_sql2019_db_stats(database: str | None = None) -> dict[str, Any]:
     """Database object counts."""
-    db_name = database or SETTINGS.db_name
+    db_name = database or SETTINGS.db_01_name
     conn = get_connection(db_name)
     try:
         cur = conn.cursor()
@@ -1873,7 +2122,7 @@ def db_sql2019_db_stats(database: str | None = None) -> dict[str, Any]:
 
 
 @mcp.tool
-def db_sql2019_server_info_mcp(
+def db_01_sql2019_server_info_mcp(
     server: FastMCP = CurrentFastMCP(),
     headers: dict[str, str] = {},
 ) -> dict[str, Any]:
@@ -1903,19 +2152,18 @@ def db_sql2019_server_info_mcp(
             "user": row[3],
             "server_version_short": row[4],
             "server_edition": row[5],
-            "server_addr": SETTINGS.db_server,
-            "server_port": SETTINGS.db_port,
+            "server_addr": SETTINGS.db_01_server,
+            "server_port": SETTINGS.db_01_port,
             "mcp_transport": SETTINGS.transport,
             "mcp_max_rows": SETTINGS.max_rows,
             "mcp_allow_write": SETTINGS.allow_write,
-            "mcp_server_name": server.name,
             "http_user_agent": headers.get("user-agent", ""),
         }
     finally:
         conn.close()
 
 
-def _db_sql2019_show_top_queries_impl(
+def _db_01_sql2019_show_top_queries_impl(
     database_name: str,
     view: Literal["summary", "standard", "full"] = "standard",
     fields: str | None = None,
@@ -2044,7 +2292,7 @@ def _db_sql2019_show_top_queries_impl(
 
 
 @mcp.tool(task=True)
-async def db_sql2019_show_top_queries(
+async def db_01_sql2019_show_top_queries(
     database_name: str,
     view: Literal["summary", "standard", "full"] = "standard",
     fields: str | None = None,
@@ -2060,7 +2308,7 @@ async def db_sql2019_show_top_queries(
 
     await progress.set_message("Running Query Store analysis")
     result = await asyncio.to_thread(
-        _db_sql2019_show_top_queries_impl,
+        _db_01_sql2019_show_top_queries_impl,
         database_name,
         view,
         fields,
@@ -2076,7 +2324,7 @@ async def db_sql2019_show_top_queries(
 
 
 @mcp.tool
-def db_sql2019_check_fragmentation(
+def db_01_sql2019_check_fragmentation(
     database_name: str,
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
@@ -2181,7 +2429,7 @@ def db_sql2019_check_fragmentation(
 
 
 @mcp.tool
-def db_sql2019_db_sec_perf_metrics(
+def db_01_sql2019_db_sec_perf_metrics(
     profile: Literal["oltp", "olap", "mixed"] = "oltp",
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
@@ -2329,7 +2577,7 @@ def db_sql2019_db_sec_perf_metrics(
 
 
 @mcp.tool
-def db_sql2019_explain_query(
+def db_01_sql2019_explain_query(
     sql: str,
     analyze: bool = False,
     output_format: str = "xml",
@@ -2342,14 +2590,14 @@ def db_sql2019_explain_query(
         _require_readonly(sql)
     _enforce_table_scope_for_sql(sql)
     _write_query_audit_record(
-        tool_name="db_sql2019_explain_query",
-        database_name=SETTINGS.db_name,
+        tool_name="db_01_sql2019_explain_query",
+        database_name=SETTINGS.db_01_name,
         sql=sql,
         params_json=None,
         prompt_context=prompt_context,
     )
 
-    conn = get_connection(SETTINGS.db_name)
+    conn = get_connection(SETTINGS.db_01_name)
     try:
         cur = conn.cursor()
         if analyze:
@@ -2413,7 +2661,7 @@ def _fetch_relationships(
 
 
 @mcp.tool
-def db_sql2019_analyze_logical_data_model(
+def db_01_sql2019_analyze_logical_data_model(
     database_name: str,
     schema: str = "dbo",
     include_views: bool = False,
@@ -2745,7 +2993,7 @@ _OPEN_MODEL_CACHE: dict[str, dict[str, Any]] = {}
 
 
 @mcp.tool
-def db_sql2019_open_logical_model(database_name: str) -> dict[str, Any]:
+def db_01_sql2019_open_logical_model(database_name: str) -> dict[str, Any]:
     """Generate a URL to the in-memory logical model snapshot."""
     model = _analyze_logical_data_model_internal(database_name)
     model_id = str(uuid.uuid4())
@@ -2760,7 +3008,7 @@ def db_sql2019_open_logical_model(database_name: str) -> dict[str, Any]:
 
 
 @mcp.tool
-def db_sql2019_generate_ddl(
+def db_01_sql2019_generate_ddl(
     database_name: str,
     object_name: str,
     object_type: str,
@@ -2864,7 +3112,7 @@ def db_sql2019_generate_ddl(
 
 
 @mcp.tool(tags={"admin", "write", "dangerous"})
-def db_sql2019_create_db_user(
+def db_01_sql2019_create_db_user(
     username: str,
     password: str,
     privileges: Literal["read", "readwrite"] | str = "read",
@@ -2872,7 +3120,7 @@ def db_sql2019_create_db_user(
 ) -> dict[str, Any]:
     """Create SQL login/user and grant role permissions."""
     _ensure_write_enabled()
-    db_name = database or SETTINGS.db_name
+    db_name = database or SETTINGS.db_01_name
     safe_user = _validate_identifier(username, "username")
 
     conn = get_connection("master")
@@ -2897,10 +3145,10 @@ def db_sql2019_create_db_user(
 
 
 @mcp.tool(tags={"admin", "write", "dangerous"})
-def db_sql2019_drop_db_user(username: str, database: str | None = None) -> dict[str, Any]:
+def db_01_sql2019_drop_db_user(username: str, database: str | None = None) -> dict[str, Any]:
     """Drop SQL user and login if present."""
     _ensure_write_enabled()
-    db_name = database or SETTINGS.db_name
+    db_name = database or SETTINGS.db_01_name
     safe_user = _validate_identifier(username, "username")
 
     conn = get_connection("master")
@@ -2933,7 +3181,7 @@ def db_sql2019_drop_db_user(username: str, database: str | None = None) -> dict[
 
 
 @mcp.tool(tags={"admin", "write", "dangerous"})
-def db_sql2019_kill_session(session_id: int) -> dict[str, Any]:
+def db_01_sql2019_kill_session(session_id: int) -> dict[str, Any]:
     """Terminate a SQL Server session."""
     _ensure_write_enabled()
     if session_id <= 0:
@@ -3001,7 +3249,7 @@ def _build_create_object_sql(object_type: str, object_name: str, schema: str, pa
 
 
 @mcp.tool(tags={"admin", "write", "dangerous"})
-def db_sql2019_create_object(
+def db_01_sql2019_create_object(
     object_type: str,
     object_name: str,
     schema: str | None = None,
@@ -3014,7 +3262,7 @@ def db_sql2019_create_object(
 
     sql = _build_create_object_sql(object_type, safe_name, safe_schema, parameters)
 
-    conn = get_connection(SETTINGS.db_name)
+    conn = get_connection(SETTINGS.db_01_name)
     try:
         cur = conn.cursor()
         _execute_safe(cur, sql)
@@ -3030,7 +3278,7 @@ def db_sql2019_create_object(
 
 
 @mcp.tool(tags={"admin", "write", "dangerous"})
-def db_sql2019_alter_object(
+def db_01_sql2019_alter_object(
     object_type: str,
     object_name: str,
     operation: str,
@@ -3062,7 +3310,7 @@ def db_sql2019_alter_object(
     else:
         raise ValueError(f"Unsupported alter operation: {operation}")
 
-    conn = get_connection(SETTINGS.db_name)
+    conn = get_connection(SETTINGS.db_01_name)
     try:
         cur = conn.cursor()
         _execute_safe(cur, sql)
@@ -3078,7 +3326,7 @@ def db_sql2019_alter_object(
 
 
 @mcp.tool(tags={"admin", "write", "dangerous"})
-def db_sql2019_drop_object(
+def db_01_sql2019_drop_object(
     object_type: str,
     object_name: str,
     schema: str | None = None,
@@ -3119,7 +3367,7 @@ def db_sql2019_drop_object(
     else:
         sql = f"DROP {type_map[object_type_norm]} {fq_name}"
 
-    conn = get_connection(SETTINGS.db_name)
+    conn = get_connection(SETTINGS.db_01_name)
     try:
         cur = conn.cursor()
         _execute_safe(cur, sql)
@@ -3134,8 +3382,10 @@ def db_sql2019_drop_object(
         conn.close()
 
 
+
 if not SETTINGS.allow_write:
-    mcp.disable(tags={"admin", "write", "dangerous"})
+    # mcp.disable(tags={"admin", "write", "dangerous"})  # Disabled: FastMCP has no 'disable' method
+    pass
 
 
 def _paginate(items: list[Any], page: int, per_page: int) -> tuple[list[Any], int]:

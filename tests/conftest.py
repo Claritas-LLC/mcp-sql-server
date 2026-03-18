@@ -10,7 +10,7 @@ def pytest_configure(config):
 @pytest.fixture(scope="session")
 def db_available():
     try:
-        result = server.db_sql2019_ping()
+        result = server.db_01_sql2019_ping()
         if isinstance(result, dict) and result.get("status") == "ok":
             return True
         pytest.skip(f"Integration DB ping returned unexpected payload: {result}")

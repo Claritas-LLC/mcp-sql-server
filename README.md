@@ -43,7 +43,7 @@ Spin up a complete environment with **SQL Server**, **MCP Server**, and **n8n** 
     *   Add an **MCP Tool** to the agent.
     *   Set **Source** to `Remote (SSE)`.
     *   Set **URL** to `http://mcp-sqlserver:8085/sse` (Note: use container name and port 8085).
-    *   **Execute!** You can now ask the AI agent to use tools like `db_sql2019_list_tables`, `db_sql2019_execute_query`, or `db_sql2019_check_fragmentation`.
+    *   **Execute!** You can now ask the AI agent to use tools like `db_01_sql2019_list_tables`, `db_01_sql2019_execute_query`, or `db_01_sql2019_check_fragmentation`.
 
 ---
 
@@ -93,11 +93,11 @@ If you prefer running the Python code directly and have `uv` installed:
       "command": "uv",
       "args": ["run", "mcp-sql-server"],
       "env": {
-        "DB_SERVER": "localhost",
-        "DB_USER": "sa",
-        "DB_PASSWORD": "YourPassword123",
-        "DB_NAME": "master",
-        "DB_DRIVER": "ODBC Driver 17 for SQL Server"
+        "DB_01_SERVER": "localhost",
+        "DB_01_USER": "sa",
+        "DB_01_PASSWORD": "YourPassword123",
+        "DB_01_NAME": "master",
+        "DB_01_DRIVER": "ODBC Driver 17 for SQL Server"
       }
     }
   }
@@ -162,10 +162,10 @@ docker compose up -d
 
 ```bash
 # Set connection variables
-export DB_SERVER=localhost
-export DB_USER=sa
-export DB_PASSWORD=YourPassword123
-export DB_NAME=master
+export DB_01_SERVER=localhost
+export DB_01_USER=sa
+export DB_01_PASSWORD=YourPassword123
+export DB_01_NAME=master
 
 # Run in HTTP Mode (SSE)
 export MCP_TRANSPORT=http
@@ -184,10 +184,10 @@ uv run .
 
 ```bash
 # Set connection variables
-export DB_SERVER=localhost
-export DB_USER=sa
-export DB_PASSWORD=YourPassword123
-export DB_NAME=master
+export DB_01_SERVER=localhost
+export DB_01_USER=sa
+export DB_01_PASSWORD=YourPassword123
+export DB_01_NAME=master
 
 # Run in HTTP Mode (SSE)
 export MCP_TRANSPORT=http
@@ -215,7 +215,7 @@ You can use this MCP server as a "Remote Tool" in n8n to empower AI agents with 
     *   Open the **AI Agent** node.
     *   Set your **OpenAI** credentials.
     *   If your MCP server is protected, open the **SQL Server MCP** node and update the `Authorization` header in "Header Parameters".
-4.  **Run**: Click "Execute Workflow" to test the connection (defaults to `db_sql2019_ping`).
+4.  **Run**: Click "Execute Workflow" to test the connection (defaults to `db_01_sql2019_ping`).
 
 ### Troubleshooting n8n Connection
 
@@ -292,18 +292,18 @@ To prevent the MCP server from becoming unresponsive or overloading the database
 ### Core Connection
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DB_SERVER` | SQL Server hostname or IP (also `SQL_SERVER`) | *Required* |
-| `DB_PORT` | SQL Server port (also `SQL_PORT`) | `1433` |
-| `DB_USER` | SQL User (also `SQL_USER`) | *Required* |
-| `DB_PASSWORD` | SQL Password (also `SQL_PASSWORD`) | *Required* |
-| `DB_NAME` | Target Database (also `SQL_DATABASE`) | *Required* |
-| `DB_DRIVER` | ODBC Driver name (also `SQL_DRIVER`) | `ODBC Driver 17 for SQL Server` |
-| `DB_ENCRYPT` | Enable encryption (`yes`/`no`) | `no` |
-| `DB_TRUST_CERT` | Trust server certificate (`yes`/`no`) | `yes` |
+| `DB_01_SERVER` | SQL Server hostname or IP (also `SQL_SERVER`) | *Required* |
+| `DB_01_PORT` | SQL Server port (also `SQL_PORT`) | `1433` |
+| `DB_01_USER` | SQL User (also `SQL_USER`) | *Required* |
+| `DB_01_PASSWORD` | SQL Password (also `SQL_PASSWORD`) | *Required* |
+| `DB_01_NAME` | Target Database (also `SQL_DATABASE`) | *Required* |
+| `DB_01_DRIVER` | ODBC Driver name (also `SQL_DRIVER`) | `ODBC Driver 17 for SQL Server` |
+| `DB_01_ENCRYPT` | Enable encryption (`yes`/`no`) | `no` |
+| `DB_01_TRUST_CERT` | Trust server certificate (`yes`/`no`) | `yes` |
 | `MCP_HOST` | Host to bind the server to | `0.0.0.0` |
 | `MCP_PORT` | Internal container port. The host port is typically mapped to this (e.g., 8085 -> 8000). | `8000` (Docker default) |
 | `MCP_TRANSPORT` | Transport mode: `sse`, `http` (uses SSE), or `stdio` | `http` |
-| `MCP_ALLOW_WRITE` | Enable write tools (`db_sql2019_create_db_user`, etc.) | `false` |
+| `MCP_ALLOW_WRITE` | Enable write tools (`db_01_sql2019_create_db_user`, etc.) | `false` |
 | `MCP_CONFIRM_WRITE` | **Required if ALLOW_WRITE=true**. Safety latch to confirm write mode. | `false` |
 | `MCP_STATEMENT_TIMEOUT_MS` | Max execution time per query in milliseconds | `120000` (2 minutes) |
 | `MCP_TABLE_SCOPE_ENFORCED` | Enforce table access policy against configured allowlist | `false` |
@@ -494,52 +494,52 @@ Several analysis tools support a `view` argument so you can control output size 
 - `full`: Comprehensive output including all available details, statistics, and extended metadata.
 
 Tools using `view` include:
-- `db_sql2019_analyze_table_health(...)`
-- `db_sql2019_show_top_queries(...)`
-- `db_sql2019_analyze_logical_data_model(...)`
+- `db_01_sql2019_analyze_table_health(...)`
+- `db_01_sql2019_show_top_queries(...)`
+- `db_01_sql2019_analyze_logical_data_model(...)`
 
 Related note:
-- `db_sql2019_explain_query(...)` does not use `view`; use `analyze` and `output_format` to control plan behavior and payload shape.
+- `db_01_sql2019_explain_query(...)` does not use `view`; use `analyze` and `output_format` to control plan behavior and payload shape.
 
 ### 🏥 Health & Info (Always Available)
-- `db_sql2019_ping()`: Basic connectivity probe with server/database metadata.
-- `db_sql2019_server_info_mcp()`: SQL Server version/edition + MCP runtime settings.
-- `db_sql2019_db_stats(database: str | None = None)`: Core object counts for a database.
+- `db_01_sql2019_ping()`: Basic connectivity probe with server/database metadata.
+- `db_01_sql2019_server_info_mcp()`: SQL Server version/edition + MCP runtime settings.
+- `db_01_sql2019_db_stats(database: str | None = None)`: Core object counts for a database.
 
 ### 🔍 Discovery & Query (Always Available)
-- `db_sql2019_list_databases()`: List online databases visible to the current login.
-- `db_sql2019_list_tables(database_name: str, schema_name: str | None = None)`: List base tables.
-- `db_sql2019_get_schema(database_name: str, table_name: str, schema_name: str = "dbo")`: Column metadata.
-- `db_sql2019_list_objects(database_name: str, object_type: str = "TABLE", object_name: str | None = None, schema: str | None = None, order_by: str | None = None, limit: int = 50)`: Unified object listing for database/schema/table/view/index/function/procedure/trigger.
-- `db_sql2019_execute_query(database_name: str, sql: str, params_json: str | None = None, max_rows: int | None = None, prompt_context: str | None = None)`: Legacy-compatible read/query tool with optional prompt audit context.
-- `db_sql2019_run_query(...)`: Supports both signatures:
-  - `db_sql2019_run_query(database_name, sql, params_json=None, max_rows=None, prompt_context=None)`
-  - `db_sql2019_run_query(sql, params_json=None, max_rows=None, prompt_context=None)` (uses default `DB_NAME`)
+- `db_01_sql2019_list_databases()`: List online databases visible to the current login.
+- `db_01_sql2019_list_tables(database_name: str, schema_name: str | None = None)`: List base tables.
+- `db_01_sql2019_get_schema(database_name: str, table_name: str, schema_name: str = "dbo")`: Column metadata.
+- `db_01_sql2019_list_objects(database_name: str, object_type: str = "TABLE", object_name: str | None = None, schema: str | None = None, order_by: str | None = None, limit: int = 50)`: Unified object listing for database/schema/table/view/index/function/procedure/trigger.
+- `db_01_sql2019_execute_query(database_name: str, sql: str, params_json: str | None = None, max_rows: int | None = None, prompt_context: str | None = None)`: Legacy-compatible read/query tool with optional prompt audit context.
+- `db_01_sql2019_run_query(...)`: Supports both signatures:
+  - `db_01_sql2019_run_query(database_name, sql, params_json=None, max_rows=None, prompt_context=None)`
+  - `db_01_sql2019_run_query(sql, params_json=None, max_rows=None, prompt_context=None)` (uses default `DB_01_NAME`)
 
 ### ⚡ Analysis & Performance (Always Available)
-- `db_sql2019_get_index_fragmentation(database_name: str, schema: str | None = None, min_fragmentation: float = 10.0, min_page_count: int = 100, limit: int = 50)`: Raw fragmentation rows.
-- `db_sql2019_analyze_index_health(...)`: Severity summary over fragmented indexes.
-- `db_sql2019_check_fragmentation(database_name: str, min_fragmentation: float = 10.0, min_page_count: int = 100, include_recommendations: bool = True)`: Maintenance-focused fragmentation report.
-- `db_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Table size, indexes, FKs, stats, and recommendations with token-aware response shaping, field projection, and budgeted truncation.
-- `db_sql2019_show_top_queries(database_name: str, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Query Store top-query analysis (requires Query Store enabled) with summary/standard/full payload options plus field projection and budgeted truncation. Supports MCP background task execution for long-running analysis.
-- `db_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: XML execution plan.
-- `db_sql2019_db_sec_perf_metrics(profile: str = "oltp")`: Security + performance audit snapshot.
+- `db_01_sql2019_get_index_fragmentation(database_name: str, schema: str | None = None, min_fragmentation: float = 10.0, min_page_count: int = 100, limit: int = 50)`: Raw fragmentation rows.
+- `db_01_sql2019_analyze_index_health(...)`: Severity summary over fragmented indexes.
+- `db_01_sql2019_check_fragmentation(database_name: str, min_fragmentation: float = 10.0, min_page_count: int = 100, include_recommendations: bool = True)`: Maintenance-focused fragmentation report.
+- `db_01_sql2019_analyze_table_health(database_name: str, schema: str, table_name: str, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Table size, indexes, FKs, stats, and recommendations with token-aware response shaping, field projection, and budgeted truncation.
+- `db_01_sql2019_show_top_queries(database_name: str, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Query Store top-query analysis (requires Query Store enabled) with summary/standard/full payload options plus field projection and budgeted truncation. Supports MCP background task execution for long-running analysis.
+- `db_01_sql2019_explain_query(sql: str, analyze: bool = False, output_format: str = "xml")`: XML execution plan.
+- `db_01_sql2019_db_sec_perf_metrics(profile: str = "oltp")`: Security + performance audit snapshot.
 
 ### 🧠 Data Model (Always Available)
-- `db_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int | None = None, include_attributes: bool = True, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Entity/relationship model analysis with response shaping for context-window efficiency, field projection, and budgeted truncation.
-- `db_sql2019_open_logical_model(database_name: str)`: Generates a shareable data model report URL.
-- `db_sql2019_generate_ddl(database_name: str, object_name: str, object_type: str)`: DDL extraction/generation for supported objects. For `object_type="table"`, `object_name` may be `schema.table` (or `[schema].[table]`); when schema is omitted, `dbo` is used.
-  - Example: `db_sql2019_generate_ddl("SalesDb", "sales.Customers", "table")`
+- `db_01_sql2019_analyze_logical_data_model(database_name: str, schema: str = "dbo", include_views: bool = False, max_entities: int | None = None, include_attributes: bool = True, view: Literal["summary", "standard", "full"] = "standard", fields: str | None = None, token_budget: int | None = None)`: Entity/relationship model analysis with response shaping for context-window efficiency, field projection, and budgeted truncation.
+- `db_01_sql2019_open_logical_model(database_name: str)`: Generates a shareable data model report URL.
+- `db_01_sql2019_generate_ddl(database_name: str, object_name: str, object_type: str)`: DDL extraction/generation for supported objects. For `object_type="table"`, `object_name` may be `schema.table` (or `[schema].[table]`); when schema is omitted, `dbo` is used.
+  - Example: `db_01_sql2019_generate_ddl("SalesDb", "sales.Customers", "table")`
 
 ### 🔧 Write/Admin (Requires `MCP_ALLOW_WRITE=true` and `MCP_CONFIRM_WRITE=true`)
 
 When `MCP_ALLOW_WRITE=false`, write/admin components are hidden from MCP listings via FastMCP visibility controls.
-- `db_sql2019_create_db_user(username: str, password: str, privileges: str = "read", database: str | None = None)`
-- `db_sql2019_drop_db_user(username: str, database: str | None = None)`
-- `db_sql2019_kill_session(session_id: int)`
-- `db_sql2019_create_object(object_type: str, object_name: str, schema: str | None = None, parameters: dict | None = None)`
-- `db_sql2019_alter_object(object_type: str, object_name: str, operation: str, schema: str | None = None, parameters: dict | None = None)`
-- `db_sql2019_drop_object(object_type: str, object_name: str, schema: str | None = None, parameters: dict | None = None)`
+- `db_01_sql2019_create_db_user(username: str, password: str, privileges: str = "read", database: str | None = None)`
+- `db_01_sql2019_drop_db_user(username: str, database: str | None = None)`
+- `db_01_sql2019_kill_session(session_id: int)`
+- `db_01_sql2019_create_object(object_type: str, object_name: str, schema: str | None = None, parameters: dict | None = None)`
+- `db_01_sql2019_alter_object(object_type: str, object_name: str, operation: str, schema: str | None = None, parameters: dict | None = None)`
+- `db_01_sql2019_drop_object(object_type: str, object_name: str, schema: str | None = None, parameters: dict | None = None)`
 
 ---
 
@@ -558,7 +558,7 @@ When `MCP_ALLOW_WRITE=false`, write/admin components are hidden from MCP listing
  - **Session Stats**: Instant view of Active, Idle, and Total connections.
  
  ### 2. Logical Data Model Report
- Generated on-demand via the `db_sql2019_analyze_logical_data_model` tool.
+ Generated on-demand via the `db_01_sql2019_analyze_logical_data_model` tool.
  
  **Access**: `http://localhost:8085/data-model-analysis?id=<UUID>`
  
@@ -574,7 +574,7 @@ When `MCP_ALLOW_WRITE=false`, write/admin components are hidden from MCP listing
 Here are concise examples of calling the most-used tools from an MCP client.
 
 ### 1. Check MCP Server Info
-**Prompt:** `using sqlserver, call db_sql2019_server_info_mcp() and display results`
+**Prompt:** `using sqlserver, call db_01_sql2019_server_info_mcp() and display results`
 
 **Result:**
 ```json
@@ -588,7 +588,7 @@ Here are concise examples of calling the most-used tools from an MCP client.
 ```
 
 ### 2. Query Store Performance Analysis
-**Prompt:** `using sqlserver_readonly, call db_sql2019_show_top_queries(database_name='USGISPRO_800') and display results`
+**Prompt:** `using sqlserver_readonly, call db_01_sql2019_show_top_queries(database_name='USGISPRO_800') and display results`
 
 **Result:**
 ```json
@@ -614,7 +614,7 @@ Here are concise examples of calling the most-used tools from an MCP client.
 ```
 
 ### 3. Analyze Table Health
-**Prompt:** `using sqlserver_readonly, call db_sql2019_analyze_table_health(database_name='USGISPRO_800', schema='dbo', table_name='Account') and display results`
+**Prompt:** `using sqlserver_readonly, call db_01_sql2019_analyze_table_health(database_name='USGISPRO_800', schema='dbo', table_name='Account') and display results`
 
 **Result:**
 ```json
@@ -646,7 +646,7 @@ Here are concise examples of calling the most-used tools from an MCP client.
 ```
 
 ### 3a. Analyze Table Health (Summary View)
-**Prompt:** `using sqlserver_readonly, call db_sql2019_analyze_table_health(database_name='USGISPRO_800', schema='dbo', table_name='Account', view='summary') and display results`
+**Prompt:** `using sqlserver_readonly, call db_01_sql2019_analyze_table_health(database_name='USGISPRO_800', schema='dbo', table_name='Account', view='summary') and display results`
 
 **Result (summary-level fields only):**
 ```json
@@ -673,7 +673,7 @@ Here are concise examples of calling the most-used tools from an MCP client.
 ```
 
 ### 4. Fragmentation Report
-**Prompt:** `using sqlserver, call db_sql2019_check_fragmentation(database_name='USGISPRO_800') and display results`
+**Prompt:** `using sqlserver, call db_01_sql2019_check_fragmentation(database_name='USGISPRO_800') and display results`
 
 **Result:**
 ```json
@@ -699,7 +699,7 @@ Here are concise examples of calling the most-used tools from an MCP client.
 ```
 
 ### 5. Interactive ERD Generation
-**Prompt:** `using sqlserver, call db_sql2019_open_logical_model(database_name='USGISPRO_800') and display results`
+**Prompt:** `using sqlserver, call db_01_sql2019_open_logical_model(database_name='USGISPRO_800') and display results`
 
 **Result:**
 ```json
@@ -724,7 +724,7 @@ Use these patterns to keep MCP responses compact in long agent sessions.
 
 **A. Summary-first response:**
 ```text
-using sqlserver_readonly, call db_sql2019_show_top_queries(
+using sqlserver_readonly, call db_01_sql2019_show_top_queries(
   database_name='USGISPRO_800',
   view='summary'
 )
@@ -732,7 +732,7 @@ using sqlserver_readonly, call db_sql2019_show_top_queries(
 
 **B. Project only required fields:**
 ```text
-using sqlserver_readonly, call db_sql2019_show_top_queries(
+using sqlserver_readonly, call db_01_sql2019_show_top_queries(
   database_name='USGISPRO_800',
   view='standard',
   fields='database,summary,long_running_queries.query_id,long_running_queries.avg_duration_ms'
@@ -741,7 +741,7 @@ using sqlserver_readonly, call db_sql2019_show_top_queries(
 
 **C. Enforce a token budget:**
 ```text
-using sqlserver_readonly, call db_sql2019_analyze_logical_data_model(
+using sqlserver_readonly, call db_01_sql2019_analyze_logical_data_model(
   database_name='USGISPRO_800',
   view='standard',
   token_budget=1200
@@ -799,7 +799,7 @@ The MCP server includes comprehensive test coverage:
 
 ### Frequently Asked Questions
 
-**Q: Why is everything prefixed with `db_sql2019_`?**
+**Q: Why is everything prefixed with `db_01_sql2019_`?**
 A: This server is explicitly versioned for SQL Server 2019+ compatibility. This avoids naming conflicts if you run multiple MCP servers for different database versions.
 
 **Q: Can I use this with Azure SQL Database?**

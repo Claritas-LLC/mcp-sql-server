@@ -92,11 +92,11 @@ Schema: 3 schemas (sales, hr, inventory) with FK relationships, indexes, views, 
   3. db_get_schema()
   4. db_execute_query()
   5. db_get_index_fragmentation()
-  6. db_sql2019_check_fragmentation()
-  7. db_sql2019_analyze_logical_data_model()
-  8. db_sql2019_analyze_sessions()
-  9. db_sql2019_db_sec_perf_metrics()
-  10. db_sql2019_rec_indexes()
+  6. db_01_sql2019_check_fragmentation()
+  7. db_01_sql2019_analyze_logical_data_model()
+  8. db_01_sql2019_analyze_sessions()
+  9. db_01_sql2019_db_sec_perf_metrics()
+  10. db_01_sql2019_rec_indexes()
   11. Additional utility functions
   ```
 

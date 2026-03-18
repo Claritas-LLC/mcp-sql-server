@@ -11,7 +11,7 @@ GO
 USE TEST_DB;
 GO
 
--- Enable Query Store for testing db_sql2019_show_top_queries
+-- Enable Query Store for testing db_01_sql2019_show_top_queries
 ALTER DATABASE TEST_DB SET QUERY_STORE = ON;
 ALTER DATABASE TEST_DB SET QUERY_STORE (OPERATION_MODE = READ_WRITE, CLEANUP_POLICY = (STALE_QUERY_THRESHOLD_DAYS = 30));
 GO
@@ -124,7 +124,7 @@ CREATE TABLE inventory.StockMovements (
     FOREIGN KEY (WarehouseID) REFERENCES inventory.Warehouses(WarehouseID)
 );
 
--- Create indexes (some with fragmentation for testing db_sql2019_check_fragmentation)
+-- Create indexes (some with fragmentation for testing db_01_sql2019_check_fragmentation)
 CREATE INDEX IX_Customers_Email ON sales.Customers(Email);
 CREATE INDEX IX_Customers_City_State ON sales.Customers(City, State);
 CREATE INDEX IX_Products_Category ON sales.Products(Category);
@@ -312,7 +312,7 @@ BEGIN
 END;
 GO
 
--- Enable some security features for testing db_sql2019_db_sec_perf_metrics
+-- Enable some security features for testing db_01_sql2019_db_sec_perf_metrics
 -- Enable TDE (if Enterprise edition)
 IF EXISTS (SELECT 1 FROM sys.dm_db_persisted_sku_features WHERE feature_name = 'TransparentDatabaseEncryption')
 BEGIN

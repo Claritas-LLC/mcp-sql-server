@@ -43,10 +43,10 @@ Comprehensive testing of the MCP SQL Server has been conducted including unit te
 - ✓ Stored procedures and views
 
 **Tools Tested:**
-- `db_sql2019_list_databases()` → ✓ Working
-- `db_sql2019_list_tables()` → ✓ Working  
-- `db_sql2019_get_schema()` → ✓ Working
-- `db_sql2019_execute_query()` → ✓ Working (readonly mode enforced)
+- `db_01_sql2019_list_databases()` → ✓ Working
+- `db_01_sql2019_list_tables()` → ✓ Working  
+- `db_01_sql2019_get_schema()` → ✓ Working
+- `db_01_sql2019_execute_query()` → ✓ Working (readonly mode enforced)
 - `db_get_index_fragmentation()` → ✓ Working
 - Tool registration with @mcp.tool → ✓ 11 tools registered
 
@@ -162,16 +162,16 @@ Total: 8 tables, 2 views, 3 indexes, 1 stored procedure
 
 All tools successfully registered with @mcp.tool decorator:
 
-1. `db_sql2019_list_databases()` - List all databases
-2. `db_sql2019_list_tables()` - List tables in schema
-3. `db_sql2019_get_schema()` - Get full table schema with columns/keys/FKs
-4. `db_sql2019_execute_query()` - Execute SELECT or DML queries
+1. `db_01_sql2019_list_databases()` - List all databases
+2. `db_01_sql2019_list_tables()` - List tables in schema
+3. `db_01_sql2019_get_schema()` - Get full table schema with columns/keys/FKs
+4. `db_01_sql2019_execute_query()` - Execute SELECT or DML queries
 5. `db_get_index_fragmentation()` - Analyze index health
-6. `db_sql2019_check_fragmentation()` - Index fragmentation check
-7. `db_sql2019_analyze_logical_data_model()` - Foreign key analysis
-8. `db_sql2019_analyze_sessions()` - Session monitoring
-9. `db_sql2019_db_sec_perf_metrics()` - Security & performance metrics
-10. `db_sql2019_rec_indexes()` - Recommend missing indexes
+6. `db_01_sql2019_check_fragmentation()` - Index fragmentation check
+7. `db_01_sql2019_analyze_logical_data_model()` - Foreign key analysis
+8. `db_01_sql2019_analyze_sessions()` - Session monitoring
+9. `db_01_sql2019_db_sec_perf_metrics()` - Security & performance metrics
+10. `db_01_sql2019_rec_indexes()` - Recommend missing indexes
 11. Plus additional utility functions
 
 ---
