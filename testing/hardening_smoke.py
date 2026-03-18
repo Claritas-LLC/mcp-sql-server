@@ -51,7 +51,7 @@ def main() -> None:
     s.SETTINGS.allow_raw_prompts = True
     s.SETTINGS.db_user = "readonly_user"
     s._write_query_audit_record(
-        tool_name="db_sql2019_run_query",
+        tool_name="db_01_sql2019_run_query",
         database_name="TEST_DB",
         sql="SELECT TOP 1 * FROM sales.Customers ORDER BY CreatedDate DESC, CustomerID DESC",
         params_json=None,

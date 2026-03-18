@@ -8,26 +8,26 @@ This document outlines the comprehensive test plan for the MCP server, focusing 
 
 Based on the code review of `server.py`, the following tools have been identified as readonly and will be the focus of this test plan:
 
-- `db_sql2019_check_fragmentation`
-- `db_sql2019_db_stats`
-- `db_sql2019_db_analyze_query_store`
+- `db_01_sql2019_check_fragmentation`
+- `db_01_sql2019_db_stats`
+- `db_01_sql2019_db_analyze_query_store`
 - `temp_analyze_query_store_wrapper`
-- `db_sql2019_analyze_index_health`
-- `db_sql2019_sec_perf_metrics`
-- `db_sql2019_recommend_partitioning`
-- `db_sql2019_analyze_sessions`
-- `db_sql2019_server_info`
-- `db_sql2019_get_db_parameters`
-- `db_sql2019_list_objects`
-- `db_sql2019_analyze_indexes`
-- `db_sql2019_analyze_table_health`
-- `db_sql2019_db_sec_perf_metrics`
-- `db_sql2019_analyze_logical_data_model`
-- `db_sql2019_describe_table`
-- `db_sql2019_run_query`
-- `db_sql2019_explain_query`
+- `db_01_sql2019_analyze_index_health`
+- `db_01_sql2019_sec_perf_metrics`
+- `db_01_sql2019_recommend_partitioning`
+- `db_01_sql2019_analyze_sessions`
+- `db_01_sql2019_server_info`
+- `db_01_sql2019_get_db_parameters`
+- `db_01_sql2019_list_objects`
+- `db_01_sql2019_analyze_indexes`
+- `db_01_sql2019_analyze_table_health`
+- `db_01_sql2019_db_sec_perf_metrics`
+- `db_01_sql2019_analyze_logical_data_model`
+- `db_01_sql2019_describe_table`
+- `db_01_sql2019_run_query`
+- `db_01_sql2019_explain_query`
 - `ping`
-- `db_sql2019_server_info_mcp`
+- `db_01_sql2019_server_info_mcp`
 - `server_info_mcp`
 - `monitor_sessions`
 

@@ -10,31 +10,31 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     print("Attempting to import server module...")
     import server
-    print("✓ Server module imported successfully")
+    print("PASS Server module imported successfully")
     
-    print("Checking for function db_sql2019_list_objects...")
-    if hasattr(server, 'db_sql2019_list_objects'):
-        print("✓ db_sql2019_list_objects function exists")
+    print("Checking for function db_01_sql2019_list_objects...")
+    if hasattr(server, 'db_01_sql2019_list_objects'):
+        print("PASS db_01_sql2019_list_objects function exists")
     else:
-        print("✗ db_sql2019_list_objects function not found")
+        print("FAIL db_01_sql2019_list_objects function not found")
         
     print("Checking for function get_connection...")
     if hasattr(server, 'get_connection'):
-        print("✓ get_connection function exists")
+        print("PASS get_connection function exists")
     else:
-        print("✗ get_connection function not found")
+        print("FAIL get_connection function not found")
         
     print("\nAll checks passed!")
     
 except SyntaxError as e:
-    print(f"✗ SyntaxError: {e}")
+    print(f"* SyntaxError: {e}")
     print(f"  File: {e.filename}, Line: {e.lineno}")
     sys.exit(1)
 except ImportError as e:
-    print(f"✗ ImportError: {e}")
+    print(f"* ImportError: {e}")
     sys.exit(1)
 except Exception as e:
-    print(f"✗ Unexpected error: {e}")
+    print(f"* Unexpected error: {e}")
     import traceback
     traceback.print_exc()
     sys.exit(1)
