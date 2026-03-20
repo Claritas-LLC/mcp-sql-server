@@ -3203,20 +3203,20 @@ def _register_dual_instance_tools():
     import types
     import sys
     thismod = sys.modules[__name__]
+    def make_tool_wrapper(f, default_instance):
+        @functools.wraps(f)
+        def wrapper(*args, instance=default_instance, **kwargs):
+            return f(*args, instance=instance, **kwargs)
+        return wrapper
+
     for suffix, func in _TOOL_REGISTRATION_LIST:
         for instance in (1, 2):
             if instance in SETTINGS.db_instances:
                 tool_name = f"db_{instance:02d}_sql2019_{suffix}"
                 sig = inspect.signature(func)
                 if 'instance' in sig.parameters:
-                    def make_tool_wrapper(f, default_instance):
-                        @functools.wraps(f)
-                        def wrapper(*args, instance=default_instance, **kwargs):
-                            return f(*args, instance=instance, **kwargs)
-                        return wrapper
                     tool_fn = make_tool_wrapper(func, instance)
                     mcp.tool(name=tool_name)(tool_fn)
-                    # FastMCP does not expose a public _get_component; fallback to getattr or the wrapper
                     setattr(thismod, tool_name, tool_fn)
                 else:
                     mcp.tool(name=tool_name)(func)
