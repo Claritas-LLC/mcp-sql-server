@@ -11,8 +11,7 @@ base_dir = Path(__file__).resolve().parent.parent
 server_path = base_dir / "server.py"
 module_name = "mcp_sqlserver.runtime_server"
 
-PUBLIC_API = ["main"]
-__all__ = list(PUBLIC_API)
+__all__ = ["main"]
 
 _server: ModuleType | None = None
 
