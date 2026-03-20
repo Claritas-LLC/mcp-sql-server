@@ -1,1 +1,1 @@
-# MCP SQL Server package
+from .server import *

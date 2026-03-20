@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch, MagicMock
 
-import server
+from mcp_sqlserver import server
 
 
 class TestExecuteInDatabase(unittest.TestCase):

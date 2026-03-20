@@ -1,4 +1,4 @@
-import server
+from mcp_sqlserver import server
 
 
 def test_apply_field_projection_selects_nested_fields():

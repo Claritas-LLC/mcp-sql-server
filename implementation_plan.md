@@ -5,8 +5,50 @@ The server needs to be modified to connect to two SQL Server instances simultane
 
 ## User Review Required
 > [!IMPORTANT]
-> - Do you want both databases to share the same rate limits and audit file settings, or should those also be duplicated per instance? The plan below assumes rate limits and global settings apply to *the whole MCP server*, but the database credentials are split.
-> - The new connection variables will use prefixes `DB_01_*` and `DB_02_*` instead of just `DB_*`. For backwards compatibility, if only `DB_*` is provided, we can map it to `DB_01_*`.
+> - Do you want both databases to share the same rate limits and audit file settings, or should those also be duplicated per instance? The plan below assumes rate limits and global settings apply to *the whole MCP server*, but the database credentials are split. - Answer is Yes
+> - The new connection variables will use prefixes `DB_01_*` and `DB_02_*` instead of just `DB_*`. For backwards compatibility, if only `DB_*` is provided, we can map it to `DB_01_*`. Answer is yes
+
+## Decisions
+
+- **Rate Limits & Audit/Global Settings Scope:**
+  - Rate limits and audit/global settings (such as logging, audit file, and global rate limiting) are **shared across the entire MCP server**. They are not duplicated per database instance. This ensures consistent enforcement and centralized auditing regardless of which SQL Server instance (db_01 or db_02) is being accessed.
+
+- **Environment Variable Mapping & Backward Compatibility:**
+  - The new environment variable prefixes are `DB_01_*` and `DB_02_*`, supporting configuration for two separate SQL Server instances.
+  - For backward compatibility, if only the legacy `DB_*` variables are provided, the MCP server will map them to `DB_01_*` automatically. This allows existing deployments to continue functioning without changes, while new deployments should use the explicit `DB_01_*` and `DB_02_*` prefixes.
+  - All references to `DB_01_*`, `DB_02_*`, and `DB_*` in configuration and documentation should make this mapping and intent clear.
+
+These decisions clarify the architecture intent for rate limiting, audit/global settings, and environment variable naming before implementation.
+
+## Operational and Architectural Considerations
+
+### Error Handling
+- On server startup, if one Settings-backed instance (e.g., DB_01_* or DB_02_*) is down or misconfigured, the server should start and serve tools for the available instance(s), but clearly log and surface errors for the unavailable instance.
+- Tool behavior must propagate instance-specific errors from functions using `get_connection(instance=1|2)` and `_connection_string`, so that failures are reported with the correct context (e.g., which instance failed and why).
+
+### Connection Pooling
+- Each database instance must have its own connection pool.
+- Pool sizes should be configurable per instance via Settings and `_load_settings`.
+- Use environment variables `DB_01_POOL_SIZE`, `DB_02_POOL_SIZE` (or `DB_<IDENTIFIER>_POOL_SIZE` for future instances) to set the pool size for each instance.
+- The `_load_settings` function should read these variables, map them to the correct instance, and apply a sensible default (e.g., 10) if a variable is missing or invalid.
+- The `Settings` class should include a `db_pool_sizes: dict[int, int]` field mapping instance numbers to pool sizes.
+- Example: set `DB_01_POOL_SIZE=15` and `DB_02_POOL_SIZE=20` in the environment to control pool sizes for each instance.
+- Sizing guidance: default pool size 10-20 per instance for typical workloads; allow tuning for high concurrency or resource-constrained environments.
+
+### Transaction Handling
+- Cross-instance transactions are **not supported**. Each tool (e.g., `db_01_sql2019_*` vs `db_02_sql2019_*`) must enforce that all operations within a transaction are scoped to a single instance.
+- **Enforcement by design:** All connection objects (e.g., Connection or DbClient) must be explicitly scoped to an instance (carry an `instanceId` or `instance_name`).
+- **Runtime safeguard:** The transaction orchestration code (e.g., `TransactionManager.beginTransaction` or `executeTransaction`) must validate that all operations/connections in a transaction share the same `instanceId`. If a mismatch is detected, raise a clear error indicating that cross-instance transactions are not allowed.
+- If cross-instance transactions are ever required, a distributed transaction coordinator or explicit two-phase commit strategy would be needed (not planned for initial implementation).
+
+### Monitoring/Observability
+- Add instance-specific health checks and metrics to surface per-instance connectivity and query errors.
+- Expose health endpoints and metrics that distinguish between DB_01 and DB_02 status, query error rates, and connection pool usage.
+
+### Security
+- Credentials for `db_01_user` and `db_02_user` should follow least privilege principles and be rotated regularly.
+- Store credentials in `.env` or a secrets manager; never hardcode in source.
+- Update `README.md` to document these operational requirements and best practices for secure credential management, monitoring, and error handling.
 
 ## Proposed Changes
 
@@ -21,8 +63,13 @@ The server needs to be modified to connect to two SQL Server instances simultane
 - Modify [_connection_string()](file:///c:/Users/HarryValdez/OneDrive/Documents/trae/mcp-sql-server/server.py#534-545) and [get_connection()](file:///c:/Users/HarryValdez/OneDrive/Documents/trae/mcp-sql-server/server.py#547-558) to accept a target instance parameter (e.g. `instance=1` and `instance=2`) so they connect to the appropriate server.
 
 ### Tool Registration (server.py)
-- All existing `db_01_sql2019_*` functions will explicitly pass `instance=1` to [get_connection(...)](file:///c:/Users/HarryValdez/OneDrive/Documents/trae/mcp-sql-server/server.py#547-558) and other internal helpers.
-- Use a Python AST script or text replacement script to duplicate all `db_01_sql2019_*` functions, renaming them to `db_02_sql2019_*`, and make them pass `instance=2` inside the tools.
+
+- Refactor all `db_01_sql2019_*` functions to accept an `instance` parameter and wire them to `get_connection(instance=...)` and all internal helpers.
+- Create a registrar (e.g., `register_tool(name, func)` and a dict of tools) and register partialized functions using `functools.partial`:
+    - Register `functools.partial(db_01_sql2019_x, instance=1)` as "db_01_sql2019_x"
+    - Register `functools.partial(db_01_sql2019_x, instance=2)` as "db_02_sql2019_x"
+- This ensures there is only one implementation per tool and explicit mapping for each instance/tool name.
+- Only use a decorator if you must infer instance solely from the function name; otherwise, prefer the explicit factory/registrar for clearer tests, easier debugging, and simpler registration logic.
 
 ### Testing and Documentation
 - Update [README.md](file:///c:/Users/HarryValdez/OneDrive/Documents/trae/mcp-sql-server/README.md) to document the new `DB_01_*` and `DB_02_*` environment variables and the availability of the `db_02_sql2019_*` tools.

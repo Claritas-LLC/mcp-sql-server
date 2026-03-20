@@ -14,8 +14,8 @@ from typing import Any, Dict, List
 # Add the current directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import server module (with FastMCP decorators commented out)
-import server
+# Import server module from package
+from mcp_sqlserver import server
 
 # Set up environment variables for testing
 os.environ['DB_SERVER'] = 'localhost'
@@ -70,7 +70,7 @@ def test_server_info():
     """Test db_01_sql2019_server_info_mcp tool"""
     print_test_header("db_01_sql2019_server_info_mcp")
     try:
-        result = server.db_01_sql2019_server_info_mcp.fn()
+        result = server.db_01_sql2019_server_info_mcp()
         print("Server Info Result:")
         print(safe_json_serialize(result))
         print_test_result("Server Info", True)
@@ -99,7 +99,7 @@ def test_list_objects():
     for object_type, schema in test_cases:
         total_tests += 1
         try:
-            result = server.db_01_sql2019_list_objects.fn(database_name="TEST_DB", object_type=object_type, schema=schema)
+            result = server.db_01_sql2019_list_objects(database_name="TEST_DB", object_type=object_type, schema=schema)
             print(f"\nObjects ({object_type}, schema={schema}):")
             print(safe_json_serialize(result))
             success_count += 1
@@ -125,7 +125,7 @@ def test_analyze_table_health():
     for database_name, schema, table_name in test_tables:
         total_tests += 1
         try:
-            result = server.db_01_sql2019_analyze_table_health.fn(database_name=database_name, schema=schema, table_name=table_name)
+            result = server.db_01_sql2019_analyze_table_health(database_name=database_name, schema=schema, table_name=table_name)
             print(f"\nTable Health ({database_name}.{schema}.{table_name}):")
             print(safe_json_serialize(result))
             success_count += 1

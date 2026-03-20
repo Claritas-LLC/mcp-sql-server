@@ -1,6 +1,6 @@
 import pytest
 
-import server
+from mcp_sqlserver import server
 
 
 def test_is_sql_readonly_allows_select():

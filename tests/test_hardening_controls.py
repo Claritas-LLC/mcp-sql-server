@@ -2,7 +2,7 @@ import json
 import hashlib
 from starlette.requests import Request
 
-import server
+from mcp_sqlserver import server
 
 
 def _reset_rate_limit_state() -> None:
