@@ -1,3 +1,81 @@
+# --- Email sending utility ---
+import smtplib
+from email.message import EmailMessage
+
+def _send_email_with_attachment(
+    smtp_server: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
+    use_tls: bool,
+    sender: str,
+    recipient: str,
+    subject: str,
+    body: str,
+    file_path: str,
+    file_name: str | None = None,
+) -> None:
+    msg = EmailMessage()
+    msg["From"] = sender
+    msg["To"] = recipient
+    msg["Subject"] = subject
+    msg.set_content(body or "")
+    # Attach file
+    with open(file_path, "rb") as f:
+        data = f.read()
+        fname = file_name or os.path.basename(file_path)
+        msg.add_attachment(data, maintype="application", subtype="octet-stream", filename=fname)
+    # Send
+    if use_tls:
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            if smtp_user:
+                server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            if smtp_user:
+                server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+
+# --- MCP tool: send file via email ---
+from fastmcp import mcp
+
+@mcp.tool
+def db_sql2019_send_file_via_email(
+    file_path: str,
+    recipient_email: str,
+    subject: str = "MCP SQL Server File",
+    body: str = "",
+    file_name: str = None,
+    instance: int = 1,
+) -> dict[str, str]:
+    """Send a file as an email attachment to the specified recipient. SMTP config is read from environment variables. Works for both instances."""
+    smtp_server = os.getenv("SMTP_SERVER")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "")
+    smtp_password = os.getenv("SMTP_PASSWORD", "")
+    smtp_sender = os.getenv("SMTP_SENDER", smtp_user)
+    smtp_tls = os.getenv("SMTP_TLS", "true").lower() in ("1", "true", "yes", "on", "y")
+    if not smtp_server or not smtp_sender:
+        raise ValueError("SMTP_SERVER and SMTP_SENDER (or SMTP_USER) must be set in environment.")
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+    _send_email_with_attachment(
+        smtp_server=smtp_server,
+        smtp_port=smtp_port,
+        smtp_user=smtp_user,
+        smtp_password=smtp_password,
+        use_tls=smtp_tls,
+        sender=smtp_sender,
+        recipient=recipient_email,
+        subject=subject,
+        body=body,
+        file_path=file_path,
+        file_name=file_name,
+    )
+    logger.info(f"Sent file '{file_path}' to '{recipient_email}' via email (instance={instance})")
+    return {"status": "success", "message": f"File '{file_path}' sent to '{recipient_email}'"}
 
 import os
 import functools
@@ -24,6 +102,15 @@ from urllib.parse import quote
 import logging
 import sys
 from functools import lru_cache
+
+# --- Logging setup: honor MCP_LOG_LEVEL ---
+_log_level = os.getenv("MCP_LOG_LEVEL", "INFO").upper()
+_log_level_value = getattr(logging, _log_level, logging.INFO)
+logging.basicConfig(
+    level=_log_level_value,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    stream=sys.stdout,
+)
 logger = logging.getLogger("mcp_sqlserver")
 try:
     from cachetools import LRUCache  # type: ignore
@@ -1908,6 +1995,8 @@ def db_sql2019_server_info_mcp(
     instance: int = 1,
 ) -> dict[str, Any]:
     """Get SQL Server and MCP runtime information."""
+    inst_cfg = get_instance_config(instance)
+    logger.info(f"[DEBUG] db_sql2019_server_info_mcp: instance={instance}, server={inst_cfg.get('db_server')}, user={inst_cfg.get('db_user')}, db={inst_cfg.get('db_name')}")
     conn = get_connection("master", instance=instance)
     try:
         cur = conn.cursor()
@@ -1934,8 +2023,8 @@ def db_sql2019_server_info_mcp(
             "user": row[3],
             "server_version_short": row[4],
             "server_edition": row[5],
-            "server_addr": str(get_instance_config(instance).get("db_server") or ""),
-            "server_port": int(get_instance_config(instance).get("db_port") or 1433),
+            "server_addr": str(inst_cfg.get("db_server") or ""),
+            "server_port": int(inst_cfg.get("db_port") or 1433),
             "mcp_transport": SETTINGS.transport,
             "mcp_max_rows": SETTINGS.max_rows,
             "mcp_allow_write": SETTINGS.allow_write,
