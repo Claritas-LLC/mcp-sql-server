@@ -38,8 +38,9 @@ def _send_email_with_attachment(
                 server.login(smtp_user, smtp_password)
             server.send_message(msg)
 
+
 # --- MCP tool: send file via email ---
-from fastmcp import mcp
+from fastmcp.server import mcp
 
 @mcp.tool
 def db_sql2019_send_file_via_email(
