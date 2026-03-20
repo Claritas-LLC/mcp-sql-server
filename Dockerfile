@@ -22,7 +22,7 @@ RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py .
+COPY mcp_sqlserver/ mcp_sqlserver/
 COPY README.md .
 COPY DEPLOYMENT.md .
 
@@ -36,4 +36,4 @@ ENV MCP_PORT=8000
 
 USER appuser
 
-CMD ["python", "server.py"]
+CMD ["python", "mcp_sqlserver/server.py"]

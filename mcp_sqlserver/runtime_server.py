@@ -1,29 +1,3 @@
-# This file has been renamed to runtime_server.py to avoid pytest picking it up as a test file.
-# Please refer to runtime_server.py for the server implementation.
-
-from __future__ import annotations
-
-import importlib.util
-import logging
-import sys
-from pathlib import Path
-from types import ModuleType
-from typing import Any
-
-base_dir = Path(__file__).resolve().parent.parent
-server_path = base_dir / "server.py"
-module_name = "mcp_sqlserver.runtime_server"
-
-PUBLIC_API = ["main"]
-__all__ = list(PUBLIC_API)
-
-_server: ModuleType | None = None
-
-def main() -> None:
-	pass  # Placeholder for the main function
-
-if __name__ == "__main__":
-	main()
 from __future__ import annotations
 
 import importlib.util
@@ -64,26 +38,16 @@ def _load_server() -> ModuleType:
 		return _server
 
 	if not server_path.is_file():
-		raise FileNotFoundError(f"server.py not found at {server_path} (base_dir: {base_dir})")
+		raise FileNotFoundError(f"Could not find server.py at {server_path}")
 
-	spec = importlib.util.spec_from_file_location(module_name, str(server_path))
+	spec = importlib.util.spec_from_file_location("mcp_sqlserver.server", str(server_path))
 	if spec is None or spec.loader is None:
-		raise ImportError(
-			f"Failed to load spec for server.py at {server_path}. "
-			f"spec={spec}, loader={getattr(spec, 'loader', None)}"
-		)
-
+		raise ImportError(f"Could not load server module from {server_path}")
 	module = importlib.util.module_from_spec(spec)
 	sys.modules[module_name] = module
-	try:
-		spec.loader.exec_module(module)
-	except Exception as exc:
-		sys.modules.pop(module_name, None)
-		logging.exception("Failed to exec server module at %s: %s", server_path, exc)
-		raise
-
-	_server = module
+	spec.loader.exec_module(module)
 	_sync_public_api(module)
+	_server = module
 	return module
 
 
@@ -120,17 +84,22 @@ def main() -> None:
 			)
 
 		try:
-			mcp.run(transport="http", host=settings.host, port=settings.port, **run_kwargs)
+			mcp.run(transport=transport, host=settings.host, port=settings.port, **run_kwargs)
 		except TypeError as exc:
 			if run_kwargs:
-				message = (
-					"Current FastMCP runtime does not accept SSL parameters. "
-					"Use a reverse proxy for HTTPS termination."
-				)
-				if settings.ssl_strict:
-					raise RuntimeError(message) from exc
-				logger.warning("%s Falling back to HTTP without native TLS.", message)
-				mcp.run(transport="http", host=settings.host, port=settings.port)
+				msg = str(exc.args[0]) if exc.args else ""
+				ssl_keys = set(run_kwargs.keys()) | {"ssl_certfile", "ssl_keyfile", "ssl_cert", "ssl_key"}
+				if any(k in msg for k in ssl_keys):
+					message = (
+						"Current FastMCP runtime does not accept SSL parameters. "
+						"Use a reverse proxy for HTTPS termination."
+					)
+					if settings.ssl_strict:
+						raise RuntimeError(message) from exc
+					logger.warning("%s Falling back to HTTP without native TLS.", message)
+					mcp.run(transport="http", host=settings.host, port=settings.port)
+				else:
+					raise
 			else:
 				raise
 	else:
@@ -139,4 +108,3 @@ def main() -> None:
 
 if __name__ == "__main__":
 	main()
-

@@ -1,8 +1,10 @@
 import pytest
 
 
+import logging
 from mcp_sqlserver import server
-print(f"[PYTEST DEBUG] server module loaded from: {getattr(server, '__file__', 'unknown')}")
+logger = logging.getLogger(__name__)
+logger.debug(f"server module loaded from: {getattr(server, '__file__', 'unknown')}")
 
 
 def pytest_configure(config):
