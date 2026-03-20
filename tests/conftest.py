@@ -1,6 +1,8 @@
 import pytest
 
-import server
+
+from mcp_sqlserver import server
+print(f"[PYTEST DEBUG] server module loaded from: {getattr(server, '__file__', 'unknown')}")
 
 
 def pytest_configure(config):

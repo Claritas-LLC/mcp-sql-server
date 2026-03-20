@@ -799,8 +799,55 @@ The MCP server includes comprehensive test coverage:
 
 ### Frequently Asked Questions
 
+
+## 🆕 Multi-Instance Tool Registration & Usage
+
+### Dual-Instance Support
+
+This MCP server now supports **multiple SQL Server instances** in a single deployment. All tools are registered twice:
+
+- `db_01_sql2019_*` — operates on the first configured instance (from `DB_01_*` environment variables)
+- `db_02_sql2019_*` — operates on the second configured instance (from `DB_02_*` environment variables)
+
+**Example tool names:**
+
+- `db_01_sql2019_list_tables` — List tables on instance 1
+- `db_02_sql2019_list_tables` — List tables on instance 2
+- `db_01_sql2019_analyze_table_health` — Analyze table health on instance 1
+- `db_02_sql2019_analyze_table_health` — Analyze table health on instance 2
+
+### How to Call Tools for Each Instance
+
+Just use the appropriate tool name for the target instance. For example:
+
+```json
+{
+  "tool": "db_01_sql2019_list_tables",
+  "args": { "database_name": "mydb" }
+}
+```
+
+or for the second instance:
+
+```json
+{
+  "tool": "db_02_sql2019_list_tables",
+  "args": { "database_name": "mydb" }
+}
+```
+
+All tools are parameterized and registered for both instances if configured. If only `DB_01_*` is set, only `db_01_sql2019_*` tools will be available.
+
+### Tool Registration Details
+
+- All tool functions are registered **without decorators** using a registrar/factory at the end of `server.py`.
+- Each tool is exposed as a module attribute (e.g., `db_01_sql2019_list_tables`) for direct import and testability.
+- The registration is dynamic: if you add a new tool to the registrar list, it will be available for both instances automatically.
+
+---
+
 **Q: Why is everything prefixed with `db_01_sql2019_`?**
-A: This server is explicitly versioned for SQL Server 2019+ compatibility. This avoids naming conflicts if you run multiple MCP servers for different database versions.
+A: This server is explicitly versioned for SQL Server 2019+ compatibility and now supports multi-instance operation. The prefix (`db_01_`, `db_02_`) indicates which database instance the tool operates on, avoiding naming conflicts and enabling robust multi-database management.
 
 **Q: Can I use this with Azure SQL Database?**
 A: Yes! It works with Azure SQL Database and Azure SQL Managed Instance.

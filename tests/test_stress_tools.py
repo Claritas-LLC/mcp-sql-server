@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-import server
+from mcp_sqlserver import server
 
 
 def _call_tool(tool, *args, **kwargs):

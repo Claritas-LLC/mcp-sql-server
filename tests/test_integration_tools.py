@@ -2,7 +2,7 @@ import asyncio
 import pytest
 from typing import Any
 
-import server
+from mcp_sqlserver import server
 
 
 pytestmark = pytest.mark.integration
