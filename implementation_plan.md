@@ -22,18 +22,24 @@ These decisions clarify the architecture intent for rate limiting, audit/global 
 
 ## Operational and Architectural Considerations
 
+
 ### Error Handling
-- On server startup, if one Settings-backed instance (e.g., DB_01_* or DB_02_*) is down or misconfigured, the server should start and serve tools for the available instance(s), but clearly log and surface errors for the unavailable instance.
-- Tool behavior must propagate instance-specific errors from functions using `get_connection(instance=1|2)` and `_connection_string`, so that failures are reported with the correct context (e.g., which instance failed and why).
+1. On server startup, the system attempts to initialize each instance via `get_connection(instance=1|2)` and `_connection_string`. Only instances that successfully initialize will have their tools registered. Any failing instances are recorded in a startup-warnings log.
+2. Any runtime call into functions that use `get_connection` or `_connection_string` must propagate a clear, instance-tagged error (including the instance id and underlying error) so failures always carry context.
+3. The system must provide a non-blocking health-surface (e.g., a health endpoint and startup warnings list) that reports unavailable instances and supports automatic recovery without requiring a server restart (by retrying initialization or re-checking connections periodically or on settings change).
+
 
 ### Connection Pooling
 - Each database instance must have its own connection pool.
-- Pool sizes should be configurable per instance via Settings and `_load_settings`.
-- Use environment variables `DB_01_POOL_SIZE`, `DB_02_POOL_SIZE` (or `DB_<IDENTIFIER>_POOL_SIZE` for future instances) to set the pool size for each instance.
-- The `_load_settings` function should read these variables, map them to the correct instance, and apply a sensible default (e.g., 10) if a variable is missing or invalid.
-- The `Settings` class should include a `db_pool_sizes: dict[int, int]` field mapping instance numbers to pool sizes.
-- Example: set `DB_01_POOL_SIZE=15` and `DB_02_POOL_SIZE=20` in the environment to control pool sizes for each instance.
+- Pool sizes are configurable per instance via Settings and `_load_settings`.
+- The `_load_settings` function must parse all environment variables matching `DB_<IDENTIFIER>_POOL_SIZE`, where `<IDENTIFIER>` can be a numeric suffix (e.g., `01`, `2`) or a string alias (e.g., `ANALYTICS`).
+  - Numeric suffixes like `01` or `1` are converted to integer instance keys (e.g., `DB_01_POOL_SIZE` → instance 1, `DB_2_POOL_SIZE` → instance 2).
+  - For non-numeric identifiers, a registry (mapping) is supported, allowing aliases like `DB_ANALYTICS_POOL_SIZE` to be mapped to a numeric instance id or named key. This registry can be provided to `_load_settings` or `Settings` for future extensibility.
+  - If a pool size value is invalid or missing, default to 10.
+- The `Settings` class includes a `db_pool_sizes: dict[int, int]` field mapping instance numbers to pool sizes.
+- Example: set `DB_01_POOL_SIZE=15` and `DB_02_POOL_SIZE=20` in the environment to control pool sizes for each instance. For a named instance, provide a registry mapping (e.g., `{"ANALYTICS": 3}`) so `DB_ANALYTICS_POOL_SIZE` → instance 3.
 - Sizing guidance: default pool size 10-20 per instance for typical workloads; allow tuning for high concurrency or resource-constrained environments.
+- Document this mapping and registry behavior so future DB_ANALYTICS_POOL_SIZE can be resolved consistently.
 
 ### Transaction Handling
 - Cross-instance transactions are **not supported**. Each tool (e.g., `db_01_sql2019_*` vs `db_02_sql2019_*`) must enforce that all operations within a transaction are scoped to a single instance.

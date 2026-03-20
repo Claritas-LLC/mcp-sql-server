@@ -1,3 +1,55 @@
+### Secondary Instance Connection (Optional)
+
+To enable a second SQL Server instance, set the following environment variables (mirroring the DB_01_* variables):
+
+| Variable           | Description                                 | Default                        |
+|--------------------|---------------------------------------------|--------------------------------|
+| `DB_02_SERVER`     | SQL Server hostname or IP                   | *Required if using instance 2* |
+| `DB_02_PORT`       | SQL Server port                             | `1433`                         |
+| `DB_02_USER`       | SQL User                                    | *Required if using instance 2* |
+| `DB_02_PASSWORD`   | SQL Password                                | *Required if using instance 2* |
+| `DB_02_NAME`       | Target Database                             | *Required if using instance 2* |
+| `DB_02_DRIVER`     | ODBC Driver name                            | `ODBC Driver 17 for SQL Server`|
+| `DB_02_ENCRYPT`    | Enable encryption (`yes`/`no`)              | `no`                           |
+| `DB_02_TRUST_CERT` | Trust server certificate (`yes`/`no`)       | `yes`                          |
+
+Setting any `DB_02_*` variable enables registration of all `db_02_sql2019_*` tools, allowing you to target the secondary instance. The `db_01_sql2019_*` tools remain available for the primary instance. If only `DB_01_*` is set, only the primary tools are registered. All configuration, connection, and pool settings for the secondary instance mirror those of the primary instance, with their own defaults as shown above.
+
+This makes it easy to manage and query two SQL Server instances from a single MCP server deployment.
+# 🆕 Multi-Instance Tool Usage
+
+This MCP server supports **multiple SQL Server instances** in a single deployment. All tools are registered twice:
+
+- `db_01_sql2019_*` — operates on the first configured instance (from `DB_01_*` environment variables)
+- `db_02_sql2019_*` — operates on the second configured instance (from `DB_02_*` environment variables)
+
+**How to call tools for each instance:**
+
+| Instance | Tool Prefix Example                | Description                      |
+|----------|------------------------------------|----------------------------------|
+| 1        | `db_01_sql2019_list_tables`        | List tables on instance 1        |
+| 2        | `db_02_sql2019_list_tables`        | List tables on instance 2        |
+| 1        | `db_01_sql2019_analyze_table_health` | Analyze table health on instance 1 |
+| 2        | `db_02_sql2019_analyze_table_health` | Analyze table health on instance 2 |
+
+**Example API call for instance 1:**
+```json
+{
+  "tool": "db_01_sql2019_list_tables",
+  "args": { "database_name": "mydb" }
+}
+```
+
+**Example API call for instance 2:**
+```json
+{
+  "tool": "db_02_sql2019_list_tables",
+  "args": { "database_name": "mydb" }
+}
+```
+
+All tools are parameterized and registered for both instances if configured. If only `DB_01_*` is set, only `db_01_sql2019_*` tools will be available.
+
 # SQL Server MCP Server
 
 A powerful Model Context Protocol (MCP) server for **SQL Server 2019+** database administration, designed for AI agents like **VS Code**, **Claude**, and **Codex**.

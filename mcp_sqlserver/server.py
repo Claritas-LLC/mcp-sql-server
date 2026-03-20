@@ -1,10 +1,17 @@
 
+import os
+import functools
+# ...existing code...
+
+# Place validate_instance after SETTINGS is initialized
+
+# ...existing code...
+
+# After SETTINGS = _load_settings()
+
 def validate_instance(instance: int) -> None:
     if instance not in SETTINGS.db_instances:
         raise ValueError(f"Invalid instance: {instance}. Available: {list(SETTINGS.db_instances.keys())}")
-# Standard library imports
-import os
-import os
 import re
 import json
 import time
@@ -144,7 +151,10 @@ def _load_settings() -> Settings:
         port_val = get("PORT") or get("SQL_PORT") or "1433"
         try:
             db_port = int(port_val)
-        except Exception:
+            # Optional: validate port range
+            if not (0 < db_port < 65536):
+                db_port = 1433
+        except (ValueError, TypeError):
             db_port = 1433
         return {
             "db_server": get("SERVER") or get("SQL_SERVER") or "",
@@ -439,7 +449,7 @@ def _write_query_audit_record(
         "prompt_redaction_token": prompt_redaction_token,
         "prompt_storage_mode": prompt_storage_mode,
         # Use db_user from instance config if available
-        "db_user": (get_instance_config().get("db_user") if callable(globals().get("get_instance_config", None)) else ""),
+        "db_user": (lambda: (get_instance_config().get("db_user") if "db_user" in get_instance_config() else ""))() if ("get_instance_config" in globals()) else "",
     }
     if SETTINGS.allow_raw_prompts and prompt_context:
         payload["prompt"] = prompt_context
@@ -1289,6 +1299,7 @@ def _run_query_internal(
     enforce_readonly: bool = True,
     tool_name: str = "db_sql2019_run_query",
     prompt_context: str | None = None,
+    instance: int = 1,
 ) -> list[dict[str, Any]]:
     if enforce_readonly and not SETTINGS.allow_write:
         _require_readonly(sql)
@@ -1304,7 +1315,7 @@ def _run_query_internal(
     params = _parse_params_json(params_json)
     row_cap = max_rows if isinstance(max_rows, int) and max_rows > 0 else SETTINGS.max_rows
 
-    conn = get_connection(database_name)
+    conn = get_connection(database_name, instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(cur, sql, params)
@@ -1365,6 +1376,7 @@ def db_sql2019_run_query(
         enforce_readonly=True,
         tool_name="db_sql2019_run_query",
         prompt_context=prompt_context,
+        instance=instance,
     )
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
@@ -3152,8 +3164,8 @@ def db_sql2019_drop_object(
         conn.close()
 
 
- # --- Tool Registrar for Multi-Instance Support ---
-import functools
+
+# --- Tool Registrar for Multi-Instance Support ---
 
 _TOOL_REGISTRATION_LIST = [
     ("ping", db_sql2019_ping),
@@ -3188,7 +3200,6 @@ def _register_dual_instance_tools():
     Register each db_sql2019_* tool twice: as db_01_sql2019_* (instance=1) and db_02_sql2019_* (instance=2).
     """
     import inspect
-    import functools
     import types
     import sys
     thismod = sys.modules[__name__]
@@ -4375,7 +4386,12 @@ async def sessions_monitor_page(request: Request):
     </body>
     </html>
     """
-    html = html.format(instance_selector_html=instance_selector_html)
+    # Escape all single braces for .format() except the {instance_selector_html} placeholder
+    # This is done by first replacing all { and } with doubled braces, then restoring the placeholder
+    html_escaped = html.replace('{', '{{').replace('}', '}}')
+    # Restore the placeholder for .format()
+    html_escaped = html_escaped.replace('{{instance_selector_html}}', '{instance_selector_html}')
+    html = html_escaped.format(instance_selector_html=instance_selector_html)
     return HTMLResponse(html)
 
 
