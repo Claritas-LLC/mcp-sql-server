@@ -28,7 +28,7 @@ def _call_tool(tool, *args, **kwargs):
 
 def _run_query():
     return _call_tool(
-        server.db_01_sql2019_execute_query,
+        server.db_sql2019_execute_query,
         "TEST_DB",
         "SELECT TOP 1 * FROM sales.Customers"
     )
