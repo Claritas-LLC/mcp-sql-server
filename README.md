@@ -1,162 +1,6 @@
 # 📦 File Save & Email Orchestration
 
-To send an email with an attachment, you must first save the file using either `db_sql2019_save_file` (for Azure Blob) or `db_sql2019_save_file_temp` (for temporary local storage). Only call `db_sql2019_send_email` if you want to send an attachment to a recipient.
 
-**Workflow:**
-1. If you need to send a file as an attachment:
-    - Call `db_sql2019_save_file` or `db_sql2019_save_file_temp` to save/generate the file.
-    - Use the resulting file path (or blob URL if supported) as the `file_path` argument to `db_sql2019_send_email`.
-2. If you do not need to send an attachment:
-    - Call `db_sql2019_send_email` with no `file_path` argument (or set it to empty).
-
-**Example: Save file to Azure Blob and send as attachment**
-```json
-{
-  "tool": "db_sql2019_save_file",
-  "args": {
-    "file_path": "/app/results.csv",
-    "blob_name": "results.csv",
-    "overwrite": true,
-    "instance": 1
-  }
-}
-```
-Then, if the save is successful:
-```json
-{
-  "tool": "db_sql2019_send_email",
-  "args": {
-    "recipient_email": "user@example.com",
-    "file_path": "/app/results.csv",
-    "subject": "Query Results",
-    "body": "See attached CSV.",
-    "file_name": "results.csv",
-    "instance": 1
-  }
-}
-```
-
-**Example: Save file temporarily and send as attachment**
-```json
-{
-  "tool": "db_sql2019_save_file_temp",
-  "args": {
-    "file_path": "/app/results.csv",
-    "temp_name": "results.csv",
-    "overwrite": true,
-    "instance": 1
-  }
-}
-```
-Then, if the save is successful:
-```json
-{
-  "tool": "db_sql2019_send_email",
-  "args": {
-    "recipient_email": "user@example.com",
-    "file_path": "/tmp/results.csv",
-    "subject": "Query Results",
-    "body": "See attached CSV.",
-    "file_name": "results.csv",
-    "instance": 1
-  }
-}
-```
-
-**Example: Send email without attachment**
-```json
-{
-  "tool": "db_sql2019_send_email",
-  "args": {
-    "recipient_email": "user@example.com",
-    "subject": "Hello from MCP",
-    "body": "This is a test email without attachment."
-  }
-}
-```
-### Secondary Instance Connection (Optional)
-
-To enable a second SQL Server instance, set the following environment variables (mirroring the DB_01_* variables):
-
-| Variable           | Description                                 | Default                        |
-|--------------------|---------------------------------------------|--------------------------------|
-| `DB_02_SERVER`     | SQL Server hostname or IP                   | *Required if using instance 2* |
-| `DB_02_PORT`       | SQL Server port                             | `1433`                         |
-| `DB_02_USER`       | SQL User                                    | *Required if using instance 2* |
-| `DB_02_PASSWORD`   | SQL Password                                | *Required if using instance 2* |
-| `DB_02_NAME`       | Target Database                             | *Required if using instance 2* |
-| `DB_02_DRIVER`     | ODBC Driver name                            | `ODBC Driver 17 for SQL Server`|
-| `DB_02_ENCRYPT`    | Enable encryption (`yes`/`no`)              | `no`                           |
-| `DB_02_TRUST_CERT` | Trust server certificate (`yes`/`no`)       | `yes`                          |
-
-Setting any `DB_02_*` variable enables registration of all `db_02_sql2019_*` tools, allowing you to target the secondary instance. The `db_01_sql2019_*` tools remain available for the primary instance. If only `DB_01_*` is set, only the primary tools are registered. All configuration, connection, and pool settings for the secondary instance mirror those of the primary instance, with their own defaults as shown above.
-
-
-# 📧 Send Email (MCP Tool)
-
-This MCP server includes a tool to send an email with or without a file attachment (such as CSV query results, logs, or exports) to a specified recipient at runtime.
-
-## How to Use
-
-- **Tool Name:** `db_sql2019_send_email` (available for both instance 1 and 2)
-- **Arguments:**
-  - `recipient_email` (str): Email address of the recipient (**required**)
-  - `file_path` (str, optional): Path to the file to send as an attachment (optional; omit or set to empty string to send email without attachment)
-  - `subject` (str, optional): Email subject (default: "MCP SQL Server File")
-  - `body` (str, optional): Email body (default: empty)
-  - `file_name` (str, optional): Override attachment filename (default: uses file's basename)
-  - `instance` (int, optional): 1 or 2 (default: 1)
-
-**Example: Send email with attachment**
-```json
-{
-  "tool": "db_sql2019_send_email",
-  "args": {
-    "recipient_email": "user@example.com",
-    "file_path": "/app/results.csv",
-    "subject": "Query Results",
-    "body": "See attached CSV.",
-    "file_name": "results.csv",
-    "instance": 1
-  }
-}
-```
-
-**Example: Send email without attachment**
-```json
-{
-  "tool": "db_sql2019_send_email",
-  "args": {
-    "recipient_email": "user@example.com",
-    "subject": "Hello from MCP",
-    "body": "This is a test email without attachment."
-  }
-}
-```
-
-## SMTP Configuration
-
-Set the following environment variables in your `.env` file:
-
-| Variable         | Description                        | Example                  |
-|------------------|------------------------------------|--------------------------|
-| `SMTP_SERVER`    | SMTP server hostname or IP         | `smtp.gmail.com`         |
-| `SMTP_PORT`      | SMTP server port                   | `587`                    |
-| `SMTP_USER`      | SMTP username                      | `your@email.com`         |
-| `SMTP_PASSWORD`  | SMTP password or app password      | `yourpassword`           |
-| `SMTP_SENDER`    | Sender email address (optional)    | `your@email.com`         |
-| `SMTP_TLS`       | Use TLS (`true`/`false`, default: true) | `true`              |
-
-- If `SMTP_SENDER` is not set, `SMTP_USER` is used as the sender.
-- If `file_path` is provided, the file must exist and be readable by the MCP server (use Docker volume mounts if needed).
-- If `file_path` is omitted or empty, the email will be sent without an attachment.
-
-## Security
-- The tool is available in both read-only and write modes.
-- SMTP credentials are required and should be kept secure.
-- Supports both instance 1 and 2 (set `instance` argument as needed).
-
----
 # 🆕 Multi-Instance Tool Usage
 
 This MCP server supports **multiple SQL Server instances** in a single deployment. All tools are registered twice:
@@ -238,7 +82,17 @@ Spin up a complete environment with **SQL Server**, **MCP Server**, and **n8n** 
     *   Set **URL** to `http://mcp-sqlserver:8085/sse` (Note: use container name and port 8085).
     *   **Execute!** You can now ask the AI agent to use tools like `db_01_sql2019_list_tables`, `db_01_sql2019_execute_query`, or `db_01_sql2019_check_fragmentation`.
 
+
 For detailed deployment instructions on **Azure Container Apps**, **AWS ECS**, and **Docker**, please see our **[Deployment Guide](DEPLOYMENT.md)**.
+
+---
+
+## 📦 Official Repositories
+
+- **GitHub:** [https://github.com/harryvaldez/mcp-sql-server](https://github.com/harryvaldez/mcp-sql-server)
+- **Docker Hub:** [https://hub.docker.com/r/harryvaldez/mcp-sql-server](https://hub.docker.com/r/harryvaldez/mcp-sql-server)
+
+Always use these official sources for the latest releases, documentation, and support.
 
 > **Note**: For details on the required database privileges for read-only and read-write modes, see the **[Database Privileges](DEPLOYMENT.md#database-privileges)** section in the Deployment Guide.
 
@@ -290,24 +144,32 @@ If you prefer running the Python code directly and have `uv` installed:
 
 ### Option 2: Docker (Recommended)
 
-The Docker image is available on Docker Hub at `harryvaldez/mcp-sql-server`.
-# 1. Pull the image
-docker pull harryvaldez/mcp-sql-server:latest
 
-# 2. Run in HTTP Mode (SSE)
+The Docker image is available on Docker Hub:
+
+    https://hub.docker.com/r/harryvaldez/mcp-sql-server
+
+### 1. Pull the image
+```bash
+docker pull harryvaldez/mcp-sql-server:latest
+```
+
+### 2. Run in HTTP Mode (SSE)
+```bash
 docker run -d \
   --name mcp-sqlserver-http \
   --env-file .env \
   -p 8085:8000 \
   harryvaldez/mcp-sql-server:latest
+```
 
-# 3. Run in Write Mode (HTTP - Secure)
+### 3. Run in Write Mode (HTTP - Secure)
+```bash
 docker run -d \
   --name mcp-sqlserver-write \
   --env-file .env \
   -e MCP_ALLOW_WRITE=true \
   -e MCP_CONFIRM_WRITE=true \
-  # ⚠️ Untested / Not Production Ready
   -e FASTMCP_AUTH_TYPE=azure-ad \
   -e FASTMCP_AZURE_AD_TENANT_ID=... \
   -e FASTMCP_AZURE_AD_CLIENT_ID=... \
@@ -1034,7 +896,9 @@ Check your firewall settings (port 1433).
 
 ## 📬 Contact & Support
 
+
 For comments, issues, or feature enhancements, please contact the maintainer or submit an issue to the repository:
 
-- **Repository**: https://github.com/harryvaldez/mcp-sql-server
-- **Maintainer**: Harry Valdez
+- **GitHub Repository:** [https://github.com/harryvaldez/mcp-sql-server](https://github.com/harryvaldez/mcp-sql-server)
+- **Docker Hub:** [https://hub.docker.com/r/harryvaldez/mcp-sql-server](https://hub.docker.com/r/harryvaldez/mcp-sql-server)
+- **Maintainer:** Harry Valdez

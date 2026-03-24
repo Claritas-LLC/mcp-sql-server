@@ -1750,7 +1750,8 @@ def db_sql2019_server_info_mcp(
             "mcp_transport": SETTINGS.transport,
             "mcp_max_rows": SETTINGS.max_rows,
             "mcp_allow_write": SETTINGS.allow_write,
-            "mcp_server_name": "stubbed_mcp_name",
+            # Use MCP_SERVER_NAME from env/config, fallback to empty string if unset
+            "mcp_server_name": os.getenv("MCP_SERVER_NAME", ""),
             "http_user_agent": headers.get("user-agent", ""),
         }
     finally:
