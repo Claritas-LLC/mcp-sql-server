@@ -8,7 +8,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-import server as s
+from mcp_sqlserver import server as s
 
 
 def main() -> None:
@@ -49,9 +49,13 @@ def main() -> None:
     s.SETTINGS.audit_log_file = audit_path
     s.SETTINGS.audit_log_include_params = False
     s.SETTINGS.allow_raw_prompts = True
-    s.SETTINGS.db_user = "readonly_user"
+    # Set db_user for instance 1 (if db_instances is configured)
+    if 1 in s.SETTINGS.db_instances:
+        s.SETTINGS.db_instances[1]["db_user"] = "readonly_user"
+    else:
+        s.SETTINGS.db_instances[1] = {"db_user": "readonly_user"}
     s._write_query_audit_record(
-        tool_name="db_01_sql2019_run_query",
+        tool_name="db_sql2019_run_query",
         database_name="TEST_DB",
         sql="SELECT TOP 1 * FROM sales.Customers ORDER BY CreatedDate DESC, CustomerID DESC",
         params_json=None,

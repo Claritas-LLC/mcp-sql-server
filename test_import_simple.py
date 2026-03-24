@@ -12,11 +12,11 @@ try:
     from mcp_sqlserver import server
     print("PASS server module imported successfully")
 
-    print("Checking for function db_01_sql2019_list_objects...")
-    if hasattr(server, 'db_01_sql2019_list_objects'):
-        print("PASS db_01_sql2019_list_objects function exists")
+    print("Checking for function db_sql2019_list_objects...")
+    if hasattr(server, 'db_sql2019_list_objects'):
+        print("PASS db_sql2019_list_objects function exists")
     else:
-        print("FAIL db_01_sql2019_list_objects function not found")
+        print("FAIL db_sql2019_list_objects function not found")
 
     print("Checking for function get_connection...")
     if hasattr(server, 'get_connection'):

@@ -19,27 +19,6 @@ __all__ = list(PUBLIC_API)
 
 _server: ModuleType | None = None
 
-def main() -> None:
-	pass  # Placeholder for the main function
-
-if __name__ == "__main__":
-	main()
-from __future__ import annotations
-
-import importlib.util
-import logging
-import sys
-from pathlib import Path
-from types import ModuleType
-from typing import Any
-
-base_dir = Path(__file__).resolve().parent.parent
-server_path = base_dir / "server.py"
-module_name = "mcp_sqlserver.runtime_server"
-
-PUBLIC_API = ["main"]
-__all__ = list(PUBLIC_API)
-
 _server: ModuleType | None = None
 
 
