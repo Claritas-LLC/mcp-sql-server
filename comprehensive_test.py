@@ -67,10 +67,10 @@ def safe_json_serialize(obj: Any) -> str:
         return f"JSON serialization error: {str(e)}"
 
 def test_server_info():
-    """Test db_01_sql2019_server_info_mcp tool"""
-    print_test_header("db_01_sql2019_server_info_mcp")
+    """Test db_sql2019_server_info_mcp tool"""
+    print_test_header("db_sql2019_server_info_mcp")
     try:
-        result = server.db_01_sql2019_server_info_mcp()
+        result = server.db_sql2019_server_info_mcp()
         print("Server Info Result:")
         print(safe_json_serialize(result))
         print_test_result("Server Info", True)
@@ -81,8 +81,8 @@ def test_server_info():
         assert False
 
 def test_list_objects():
-    """Test db_01_sql2019_list_objects tool with various parameters"""
-    print_test_header("db_01_sql2019_list_objects")
+    """Test db_sql2019_list_objects tool with various parameters"""
+    print_test_header("db_sql2019_list_objects")
     success_count = 0
     total_tests = 0
     
@@ -99,7 +99,7 @@ def test_list_objects():
     for object_type, schema in test_cases:
         total_tests += 1
         try:
-            result = server.db_01_sql2019_list_objects(database_name="TEST_DB", object_type=object_type, schema=schema)
+            result = server.db_sql2019_list_objects(database_name="TEST_DB", object_type=object_type, schema=schema)
             print(f"\nObjects ({object_type}, schema={schema}):")
             print(safe_json_serialize(result))
             success_count += 1
@@ -110,8 +110,8 @@ def test_list_objects():
     assert success_count == total_tests
 
 def test_analyze_table_health():
-    """Test db_01_sql2019_analyze_table_health tool"""
-    print_test_header("db_01_sql2019_analyze_table_health")
+    """Test db_sql2019_analyze_table_health tool"""
+    print_test_header("db_sql2019_analyze_table_health")
     success_count = 0
     total_tests = 0
     
@@ -125,7 +125,7 @@ def test_analyze_table_health():
     for database_name, schema, table_name in test_tables:
         total_tests += 1
         try:
-            result = server.db_01_sql2019_analyze_table_health(database_name=database_name, schema=schema, table_name=table_name)
+            result = server.db_sql2019_analyze_table_health(database_name=database_name, schema=schema, table_name=table_name)
             print(f"\nTable Health ({database_name}.{schema}.{table_name}):")
             print(safe_json_serialize(result))
             success_count += 1
@@ -136,10 +136,10 @@ def test_analyze_table_health():
     assert success_count == total_tests
 
 def test_check_fragmentation():
-    """Test db_01_sql2019_check_fragmentation tool"""
-    print_test_header("db_01_sql2019_check_fragmentation")
+    """Test db_sql2019_check_fragmentation tool"""
+    print_test_header("db_sql2019_check_fragmentation")
     try:
-        result = server.db_01_sql2019_check_fragmentation.fn(database_name="TEST_DB")
+        result = server.db_sql2019_check_fragmentation(database_name="TEST_DB")
         print("Fragmentation Analysis Result:")
         print(safe_json_serialize(result))
         print_test_result("Fragmentation Check", True)
@@ -150,10 +150,10 @@ def test_check_fragmentation():
         assert False
 
 def test_show_top_queries():
-    """Test db_01_sql2019_show_top_queries tool"""
-    print_test_header("db_01_sql2019_show_top_queries")
+    """Test db_sql2019_show_top_queries tool"""
+    print_test_header("db_sql2019_show_top_queries")
     try:
-        result = server.db_01_sql2019_show_top_queries.fn(database="TEST_DB")
+        result = server.db_sql2019_show_top_queries(database="TEST_DB")
         print("Top Queries Result:")
         print(safe_json_serialize(result))
         print_test_result("Top Queries", True)
@@ -164,8 +164,8 @@ def test_show_top_queries():
         assert False
 
 def test_db_sec_perf_metrics():
-    """Test db_01_sql2019_db_sec_perf_metrics tool with different profiles"""
-    print_test_header("db_01_sql2019_db_sec_perf_metrics")
+    """Test db_sql2019_db_sec_perf_metrics tool with different profiles"""
+    print_test_header("db_sql2019_db_sec_perf_metrics")
     success_count = 0
     total_tests = 0
     
@@ -174,7 +174,7 @@ def test_db_sec_perf_metrics():
     for profile in profiles:
         total_tests += 1
         try:
-            result = server.db_01_sql2019_db_sec_perf_metrics.fn(database_name="TEST_DB", profile=profile)
+            result = server.db_sql2019_db_sec_perf_metrics(database_name="TEST_DB", profile=profile)
             print(f"\nSecurity & Performance Metrics ({profile} profile):")
             print(safe_json_serialize(result))
             success_count += 1
@@ -185,10 +185,10 @@ def test_db_sec_perf_metrics():
     assert success_count == total_tests
 
 def test_analyze_logical_data_model():
-    """Test db_01_sql2019_analyze_logical_data_model tool"""
-    print_test_header("db_01_sql2019_analyze_logical_data_model")
+    """Test db_sql2019_analyze_logical_data_model tool"""
+    print_test_header("db_sql2019_analyze_logical_data_model")
     try:
-        result = server.db_01_sql2019_analyze_logical_data_model.fn(database_name="TEST_DB")
+        result = server.db_sql2019_analyze_logical_data_model(database_name="TEST_DB")
         print("Logical Data Model Analysis Result:")
         print(safe_json_serialize(result))
         print_test_result("Logical Data Model Analysis", True)
@@ -199,8 +199,8 @@ def test_analyze_logical_data_model():
         assert False
 
 def test_generate_ddl():
-    """Test db_01_sql2019_generate_ddl tool"""
-    print_test_header("db_01_sql2019_generate_ddl")
+    """Test db_sql2019_generate_ddl tool"""
+    print_test_header("db_sql2019_generate_ddl")
     success_count = 0
     total_tests = 0
     
@@ -212,7 +212,7 @@ def test_generate_ddl():
     for database_name, object_name, object_type in test_objects:
         total_tests += 1
         try:
-            result = server.db_01_sql2019_generate_ddl.fn(database_name=database_name, object_name=object_name, object_type=object_type)
+            result = server.db_sql2019_generate_ddl(database_name=database_name, object_name=object_name, object_type=object_type)
             print(f"\nDDL Generation ({database_name}.{object_name}):")
             print(safe_json_serialize(result))
             success_count += 1
@@ -223,8 +223,8 @@ def test_generate_ddl():
     assert success_count == total_tests
 
 def test_explain_query():
-    """Test db_01_sql2019_explain_query tool"""
-    print_test_header("db_01_sql2019_explain_query")
+    """Test db_sql2019_explain_query tool"""
+    print_test_header("db_sql2019_explain_query")
     success_count = 0
     total_tests = 0
     
@@ -237,7 +237,7 @@ def test_explain_query():
     for query in test_queries:
         total_tests += 1
         try:
-            result = server.db_01_sql2019_explain_query.fn(database_name="TEST_DB", query=query)
+            result = server.db_sql2019_explain_query(database_name="TEST_DB", query=query)
             print(f"\nQuery Explanation ({query[:50]}...):")
             print(safe_json_serialize(result))
             success_count += 1
@@ -248,8 +248,8 @@ def test_explain_query():
     assert success_count == total_tests
 
 def test_run_query():
-    """Test db_01_sql2019_run_query tool in read mode"""
-    print_test_header("db_01_sql2019_run_query (READ mode)")
+    """Test db_sql2019_run_query tool in read mode"""
+    print_test_header("db_sql2019_run_query (READ mode)")
     success_count = 0
     total_tests = 0
     
@@ -262,7 +262,7 @@ def test_run_query():
     for query in test_queries:
         total_tests += 1
         try:
-            result = server.db_01_sql2019_run_query.fn(database_name="TEST_DB", query=query, mode="read")
+            result = server.db_sql2019_run_query(database_name="TEST_DB", query=query, mode="read")
             print(f"\nQuery Result ({query[:50]}...):")
             print(safe_json_serialize(result))
             success_count += 1
@@ -281,7 +281,7 @@ def test_user_management():
     # Test create user
     total_tests += 1
     try:
-        result = server.create_db_user.fn(database_name="TEST_DB", username="test_user_2024", password="TestPass123!")
+        result = server.db_sql2019_create_db_user(database_name="TEST_DB", username="test_user_2024", password="TestPass123!")
         print("Create User Result:")
         print(safe_json_serialize(result))
         success_count += 1
@@ -291,7 +291,7 @@ def test_user_management():
     # Test drop user
     total_tests += 1
     try:
-        result = server.drop_db_user.fn(database_name="TEST_DB", username="test_user_2024")
+        result = server.db_sql2019_drop_db_user(database_name="TEST_DB", username="test_user_2024")
         print("Drop User Result:")
         print(safe_json_serialize(result))
         success_count += 1
