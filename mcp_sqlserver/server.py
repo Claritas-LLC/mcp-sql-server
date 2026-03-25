@@ -1,5 +1,8 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> parent of 8f07063 (Revert "Restore all files to state from commit b2cd7db")
 import logging
 import os
 import re
@@ -2391,6 +2394,7 @@ _register_dual_instance_tools()
 
 if __name__ == "__main__":
     mcp.run()
+<<<<<<< HEAD
 =======
 import logging
 import os
@@ -4784,6 +4788,8 @@ _register_dual_instance_tools()
 if __name__ == "__main__":
     mcp.run()
 >>>>>>> parent of 33b5446 (Revert "Merge branch 'main' of https://github.com/harryvaldez/mcp-sql-server")
+=======
+>>>>>>> parent of 8f07063 (Revert "Restore all files to state from commit b2cd7db")
 =======
 import logging
 import os
@@ -9233,7 +9239,12 @@ if __name__ == "__main__":
 >>>>>>> 26c0f30 (Restore and sync MCP tool registration, dual-instance support, and instance param propagation in server.py)
 >>>>>>> 111ddc3e0a5ba8a7aea559666b53c312ff980265
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> 3d62da7 (Restore all files to state from commit b2cd7db)
 =======
 >>>>>>> parent of 33b5446 (Revert "Merge branch 'main' of https://github.com/harryvaldez/mcp-sql-server")
+=======
+=======
+>>>>>>> 3d62da7 (Restore all files to state from commit b2cd7db)
+>>>>>>> parent of 8f07063 (Revert "Restore all files to state from commit b2cd7db")
