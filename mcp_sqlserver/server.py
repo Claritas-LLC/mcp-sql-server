@@ -10,16 +10,15 @@ import hmac
 import uuid
 import sys
 import functools
-import asyncio
 from datetime import datetime, timezone
 from threading import Lock
 from contextvars import ContextVar
-from typing import Any, Sequence, Literal, Annotated
+from typing import Any, Sequence
 from html import escape
 from urllib.parse import quote
-from functools import lru_cache, wraps
+from functools import lru_cache
 import pyodbc
-from fastmcp import FastMCP, Context
+from fastmcp import FastMCP
 
 logger = logging.getLogger("mcp_sqlserver")
 
@@ -424,8 +423,8 @@ def _write_query_audit_record(
         "prompt_sha256": prompt_sha256,
         "prompt_redaction_token": prompt_redaction_token,
         "prompt_storage_mode": prompt_storage_mode,
-        # Use db_user from instance 1 config if available
-        "db_user": get_instance_config(1).get("db_user", "") if 1 in SETTINGS.db_instances else "",
+        # Use db_user from instance config if available
+        "db_user": (lambda: (get_instance_config().get("db_user") if "db_user" in get_instance_config() else ""))() if ("get_instance_config" in globals()) else "",
     }
     if SETTINGS.allow_raw_prompts and prompt_context:
         payload["prompt"] = prompt_context
@@ -999,6 +998,7 @@ def db_sql2019_ping(instance: int = 1) -> dict[str, Any]:
         }
     finally:
         conn.close()
+<<<<<<< HEAD
 
 
 def db_sql2019_list_databases(instance: int = 1, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
@@ -6838,3 +6838,5 @@ if __name__ == "__main__":
 
 >>>>>>> 26c0f30 (Restore and sync MCP tool registration, dual-instance support, and instance param propagation in server.py)
 >>>>>>> 111ddc3e0a5ba8a7aea559666b53c312ff980265
+=======
+>>>>>>> 3d62da7 (Restore all files to state from commit b2cd7db)

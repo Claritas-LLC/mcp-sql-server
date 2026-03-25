@@ -41,13 +41,6 @@ A powerful Model Context Protocol (MCP) server for **SQL Server 2019+** database
 
 This server exposes a suite of DBA-grade tools to inspect schemas, analyze performance, check security, and troubleshoot issues—all through a safe, controlled interface.
 
-## Documentation
-
-For detailed guides on how to use and deploy this MCP server, please refer to:
-
--   **[User Guide](USERS_GUIDE.md)**: Integration with n8n, VS Code, and Cursor.
--   **[Azure Deployment Guide](AZURE_DEPLOYMENT_GUIDE.md)**: Deployment options, cost analysis, and Azure Entra ID (OAuth) integration.
-
 ## 🚀 Features
 
 - **Deep Inspection**: Discover schemas, tables, indexes, and their sizes.
