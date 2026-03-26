@@ -26,6 +26,9 @@ COPY mcp_sqlserver/ mcp_sqlserver/
 COPY README.md .
 COPY DEPLOYMENT.md .
 
+# Copy server_startup.py into the image
+COPY server_startup.py .
+
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app
 
@@ -36,4 +39,5 @@ ENV MCP_PORT=8000
 
 USER appuser
 
-CMD ["python", "mcp_sqlserver/server.py"]
+# Use server_startup.py as entrypoint to ensure connection pools are initialized
+CMD ["python", "server_startup.py"]

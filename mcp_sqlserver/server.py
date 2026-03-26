@@ -1,5 +1,24 @@
+class PooledConnection:
+    """Wraps a pyodbc.Connection to override close() for pooling."""
+    def __init__(self, conn, pool):
+        self._conn = conn
+        self._pool = pool
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+    def close(self):
+        try:
+            if self._pool.qsize() < self._pool.maxsize:
+                self._pool.put(self._conn, block=False)
+            else:
+                self._conn.close()
+        except Exception:
+            self._conn.close()
+
+import psutil
 import logging
+from logging.handlers import RotatingFileHandler
 import os
+import pathlib
 import re
 import json
 import time
@@ -67,12 +86,68 @@ def validate_instance(instance: int) -> None:
     if instance not in SETTINGS.db_instances:
         raise ValueError(f"Invalid instance: {instance}. Available: {list(SETTINGS.db_instances.keys())}")
 
-# --- Logging setup: honor MCP_LOG_LEVEL ---
+
+ # --- Logging setup: honor MCP_LOG_LEVEL and support log rotation ---
+
+# Ensure log directory exists if log file is specified
+_log_file = os.getenv("MCP_LOG_FILE", "server.log")
+if _log_file:
+    log_path = pathlib.Path(_log_file)
+    if log_path.parent and not log_path.parent.exists():
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+from logging.handlers import RotatingFileHandler
+
 _log_level = os.getenv("MCP_LOG_LEVEL", "INFO").upper()
 _log_level_value = getattr(logging, _log_level, logging.INFO)
-logging.basicConfig(level=_log_level_value)
+_log_file = os.getenv("MCP_LOG_FILE", "server.log")
+_log_rotate_enabled = os.getenv("MCP_LOG_ROTATE_ENABLED", "false").lower() in {"1", "true", "yes", "on", "y"}
+_log_rotate_max_bytes = int(os.getenv("MCP_LOG_ROTATE_MAX_BYTES", "10485760"))  # 10MB default
+_log_rotate_backup_count = int(os.getenv("MCP_LOG_ROTATE_BACKUP_COUNT", "5"))
 
-# Helper to get instance config (module level)
+if _log_file:
+    if _log_rotate_enabled:
+        handler = RotatingFileHandler(_log_file, maxBytes=_log_rotate_max_bytes, backupCount=_log_rotate_backup_count)
+    else:
+        handler = logging.FileHandler(_log_file)
+    handler.setLevel(_log_level_value)
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    handler.setFormatter(formatter)
+    logging.getLogger().handlers = [handler]
+    logging.getLogger().setLevel(_log_level_value)
+else:
+    logging.basicConfig(level=_log_level_value)
+
+# Audit log rotation (for query audit log)
+_audit_log_file = os.getenv("MCP_AUDIT_LOG_FILE", "mcp_query_audit.jsonl")
+_audit_log_rotate_enabled = os.getenv("MCP_AUDIT_LOG_ROTATE_ENABLED", "false").lower() in {"1", "true", "yes", "on", "y"}
+_audit_log_rotate_max_bytes = int(os.getenv("MCP_AUDIT_LOG_ROTATE_MAX_BYTES", "10485760"))
+_audit_log_rotate_backup_count = int(os.getenv("MCP_AUDIT_LOG_ROTATE_BACKUP_COUNT", "5"))
+
+
+# --- Simple Connection Pool Implementation ---
+import queue
+
+_CONN_POOLS: dict[int, queue.Queue] = {}
+_CONN_POOL_LOCKS: dict[int, Lock] = {}
+
+
+
+def initialize_connection_pools():
+    """Call this at server startup, not on import. Safe for tests."""
+    for inst, cfg in SETTINGS.db_instances.items():
+        pool_size = SETTINGS.db_pool_sizes.get(inst, 1)
+        if pool_size > 1:
+            _CONN_POOLS[inst] = queue.Queue(maxsize=pool_size)
+            _CONN_POOL_LOCKS[inst] = Lock()
+            # Pre-fill pool with live connections
+            for _ in range(pool_size):
+                try:
+                    conn = pyodbc.connect(_connection_string(cfg["db_name"], inst), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+                    conn.autocommit = True
+                    _CONN_POOLS[inst].put(conn)
+                except Exception as e:
+                    logger.warning(f"Failed to prefill connection pool for instance {inst}: {e}")
+
 def get_instance_config(instance: int = 1) -> dict[str, str | int]:
     if instance not in SETTINGS.db_instances:
         raise RuntimeError(f"Database instance {instance} is not configured.")
@@ -432,15 +507,36 @@ def _write_query_audit_record(
     if SETTINGS.audit_log_include_params:
         payload["params_json"] = params_json
 
+
     line = json.dumps(payload, ensure_ascii=False, default=str)
     log_path = SETTINGS.audit_log_file
     log_dir = os.path.dirname(log_path)
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
 
+    # Use RotatingFileHandler for audit log if enabled
+    if '_AUDIT_LOG_ROTATING_HANDLER' not in globals():
+        if _audit_log_rotate_enabled:
+            handler = RotatingFileHandler(
+                log_path,
+                maxBytes=_audit_log_rotate_max_bytes,
+                backupCount=_audit_log_rotate_backup_count,
+                encoding="utf-8"
+            )
+        else:
+            handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        globals()['_AUDIT_LOG_ROTATING_HANDLER'] = handler
+
+    handler = globals()['_AUDIT_LOG_ROTATING_HANDLER']
     with _AUDIT_LOG_LOCK:
-        with open(log_path, "a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
+        handler.acquire()
+        try:
+            handler.stream.write(line + "\n")
+            handler.flush()
+        finally:
+            handler.release()
 
 
 def sanitize_prompt(prompt_context: str) -> tuple[str, str]:
@@ -540,15 +636,40 @@ def _connection_string(database: str | None = None, instance: int = 1) -> str:
 
 
 
+
 def get_connection(database: str | None = None, instance: int = 1) -> pyodbc.Connection:
     validate_instance(instance)
-    if _PYODBC_CONNECT_LOCK is not None:
-        with _PYODBC_CONNECT_LOCK:
+    pool = _CONN_POOLS.get(instance)
+    pool_lock = _CONN_POOL_LOCKS.get(instance)
+    if pool and pool_lock:
+        # Try to get a pooled connection, else create new if pool is empty
+        try:
+            conn = pool.get(timeout=5)
+            # Validate connection is alive
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT 1")
+            except Exception:
+                # Connection is dead, replace
+                conn.close()
+                conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+                conn.autocommit = True
+        except queue.Empty:
+            # Pool exhausted, create new connection (not pooled)
             conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+            conn.autocommit = True
+
+        # Return a wrapped connection with pooled close
+        return PooledConnection(conn, pool)
     else:
-        conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
-    conn.autocommit = True
-    return conn
+        # No pool, fallback to direct connect
+        if _PYODBC_CONNECT_LOCK is not None:
+            with _PYODBC_CONNECT_LOCK:
+                conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+        else:
+            conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+        conn.autocommit = True
+        return conn
 
 
 def _execute_safe(cur: pyodbc.Cursor, sql: str, params: list[Any] | tuple[Any, ...] | None = None) -> None:
@@ -1031,7 +1152,8 @@ def db_sql2019_list_tables(
     """List tables for a database/schema."""
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         if schema_name:
@@ -1080,7 +1202,8 @@ def db_sql2019_get_schema(
     validate_instance(instance)
     _enforce_table_scope_for_ident(schema_name, table_name)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(
@@ -1153,10 +1276,11 @@ def _run_query_internal(
     _enforce_table_scope_for_sql(sql)
     
     db_name = database_name or get_instance_config(instance)["db_name"]
-    
+    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+
     _write_query_audit_record(
         tool_name=tool_name,
-        database_name=db_name,
+        database_name=db_name_str,
         sql=sql,
         params_json=params_json,
         prompt_context=prompt_context,
@@ -1165,7 +1289,7 @@ def _run_query_internal(
     params = _parse_params_json(params_json)
     row_cap = max_rows if isinstance(max_rows, int) and max_rows > 0 else SETTINGS.max_rows
 
-    conn = get_connection(db_name, instance=instance)
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(cur, sql, params)
@@ -1249,7 +1373,8 @@ def db_sql2019_list_objects(
     """Unified object listing for database/schema/table/view/index/function/procedure/trigger."""
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         object_type_norm = object_type.strip().upper()
@@ -1472,7 +1597,8 @@ def _get_index_fragmentation_data(
 ) -> list[dict[str, Any]]:
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         sql = """
@@ -1580,7 +1706,8 @@ def db_sql2019_analyze_table_health(
     validate_instance(instance)
     _enforce_table_scope_for_ident(schema, table_name)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
 
@@ -1736,7 +1863,8 @@ def db_sql2019_db_stats(instance: int = 1, database: str | None = None) -> dict[
     """Database object counts."""
     validate_instance(instance)
     db_name = database or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(
@@ -1918,7 +2046,8 @@ def _analyze_logical_data_model_internal(
 ) -> dict[str, Any]:
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         
@@ -1959,7 +2088,7 @@ def _analyze_logical_data_model_internal(
                  "columns": cols
              })
              
-        relationships = _fetch_relationships(cur, db_name)
+        relationships = _fetch_relationships(cur, str(db_name) if not isinstance(db_name, str) else db_name)
         issues = _analyze_erd_issues(entities, relationships)
         
         return {
@@ -1989,7 +2118,8 @@ def db_sql2019_show_top_queries(
     """Performance analysis using Query Store or dm_exec_query_stats."""
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         
@@ -2069,7 +2199,7 @@ def db_sql2019_check_fragmentation(
     """Check fragmentation for a specific table or all tables in a schema."""
     items = _get_index_fragmentation_data(
         instance=instance,
-        database_name=database_name,
+        database_name=str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name,
         schema=schema_name,
     )
     if table_name:
@@ -2086,22 +2216,26 @@ def db_sql2019_db_sec_perf_metrics(
     """Database security and basic performance metrics."""
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         
         metrics = {}
         # User count
         _execute_safe(cur, "SELECT COUNT(*) FROM sys.database_principals WHERE type IN ('S', 'U', 'G')")
-        metrics["user_count"] = cur.fetchone()[0]
+        user_count_row = cur.fetchone()
+        metrics["user_count"] = user_count_row[0] if user_count_row else 0
         
         # Open transactions
         _execute_safe(cur, "SELECT COUNT(*) FROM sys.dm_tran_database_transactions WHERE database_id = DB_ID()")
-        metrics["open_transactions"] = cur.fetchone()[0]
+        open_tx_row = cur.fetchone()
+        metrics["open_transactions"] = open_tx_row[0] if open_tx_row else 0
         
         # Data file size
         _execute_safe(cur, "SELECT SUM(size) * 8 / 1024 FROM sys.database_files WHERE type = 0")
-        metrics["data_size_mb"] = cur.fetchone()[0]
+        data_size_row = cur.fetchone()
+        metrics["data_size_mb"] = data_size_row[0] if data_size_row else 0
         
         return _paginate_tool_result(metrics, page=page, page_size=page_size)
     finally:
@@ -2121,7 +2255,8 @@ def db_sql2019_explain_query(
     _enforce_table_scope_for_sql(sql)
     
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(cur, "SET SHOWPLAN_ALL ON")
@@ -2145,7 +2280,7 @@ def db_sql2019_analyze_logical_data_model(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Analyze database schema for logical data modeling issues."""
-    result = _analyze_logical_data_model_internal(instance, database_name, schema)
+    result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
     shaped = _apply_logical_model_view(result, view)
     return _paginate_tool_result(shaped, page=page, page_size=page_size)
 
@@ -2156,7 +2291,7 @@ def db_sql2019_open_logical_model(
     schema: str | None = None,
 ) -> str:
     """Returns an HTML visualization of the logical data model."""
-    result = _analyze_logical_data_model_internal(instance, database_name, schema)
+    result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
     html = _render_data_model_html(result, result.get("issues", {}))
     return html
 
@@ -2173,7 +2308,8 @@ def db_sql2019_generate_ddl(
     validate_instance(instance)
     _enforce_table_scope_for_ident(schema_name, table_name)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         
@@ -2229,7 +2365,8 @@ def db_sql2019_create_db_user(
         raise ValueError("username and password are required")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(cur, f"CREATE USER [{username}] WITH PASSWORD = ?", [password])
@@ -2249,7 +2386,8 @@ def db_sql2019_drop_db_user(
         raise ValueError("username is required")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    conn = get_connection(db_name, instance=instance)
+    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
+    conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(cur, f"DROP USER [{username}]")
@@ -2286,7 +2424,7 @@ def db_sql2019_create_object(
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
         instance=instance,
-        database_name=db_name,
+        database_name=str(db_name) if not isinstance(db_name, str) else db_name,
         sql=sql,
         enforce_readonly=False,
         tool_name="db_sql2019_create_object",
@@ -2307,7 +2445,7 @@ def db_sql2019_alter_object(
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
         instance=instance,
-        database_name=db_name,
+        database_name=str(db_name) if not isinstance(db_name, str) else db_name,
         sql=sql,
         enforce_readonly=False,
         tool_name="db_sql2019_alter_object",
@@ -2328,7 +2466,7 @@ def db_sql2019_drop_object(
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
         instance=instance,
-        database_name=db_name,
+        database_name=str(db_name) if not isinstance(db_name, str) else db_name,
         sql=sql,
         enforce_readonly=False,
         tool_name="db_sql2019_drop_object",
