@@ -1,0 +1,14 @@
+{
+  "table_info": {
+    "TableName": "Account",
+    "SchemaName": "dbo",
+    "RowCounts": 6398,
+    "TotalSpaceKB": 1496,
+    "UsedSpaceKB": 1256,
+    "UnusedSpaceKB": 240
+  },
+  "indexes": [
+    {
+      "IndexName": "PK_Account",
+      "IndexType": "CLUSTERED",
+      "IndexSizeMB": 
