@@ -684,7 +684,9 @@ def _connection_string(database: str | None = None, instance: int = 1) -> str:
 
 
 
-def get_connection(database: str | None = None, instance: int = 1) -> pyodbc.Connection:
+from typing import Union
+
+def get_connection(database: str | None = None, instance: int = 1) -> Union[pyodbc.Connection, 'PooledConnection']:
     validate_instance(instance)
     pool = _CONN_POOLS.get(instance)
     pool_lock = _CONN_POOL_LOCKS.get(instance)
