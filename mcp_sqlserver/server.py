@@ -1,3 +1,39 @@
+# --- Helper for normalizing db_name consistently ---
+def _normalize_db_name(db_name: str | int | None) -> str | None:
+    if db_name is None:
+        return None
+    if isinstance(db_name, str):
+        return db_name
+    return str(db_name)
+import queue
+import psutil
+import logging
+from logging.handlers import RotatingFileHandler
+import os
+import pathlib
+import re
+import json
+import time
+import base64
+import hashlib
+import hmac
+import uuid
+import sys
+import functools
+import asyncio
+from datetime import datetime, timezone
+from threading import Lock
+from contextvars import ContextVar
+from typing import Any, Sequence, Literal, Annotated
+from html import escape
+from urllib.parse import quote
+from functools import lru_cache, wraps
+import pyodbc
+from fastmcp import FastMCP, Context
+
+# --- Connection Pool Wrapper ---
+
+# --- Connection Pool Wrapper ---
 class PooledConnection:
     """Wraps a pyodbc.Connection to override close() for pooling."""
     def __init__(self, conn, pool):
@@ -7,11 +43,8 @@ class PooledConnection:
         return getattr(self._conn, name)
     def close(self):
         try:
-            if self._pool.qsize() < self._pool.maxsize:
-                self._pool.put(self._conn, block=False)
-            else:
-                self._conn.close()
-        except Exception:
+            self._pool.put(self._conn, block=False)
+        except queue.Full:
             self._conn.close()
 
 import psutil
@@ -89,6 +122,7 @@ def validate_instance(instance: int) -> None:
 
  # --- Logging setup: honor MCP_LOG_LEVEL and support log rotation ---
 
+
 # Ensure log directory exists if log file is specified
 _log_file = os.getenv("MCP_LOG_FILE", "server.log")
 if _log_file:
@@ -99,7 +133,6 @@ from logging.handlers import RotatingFileHandler
 
 _log_level = os.getenv("MCP_LOG_LEVEL", "INFO").upper()
 _log_level_value = getattr(logging, _log_level, logging.INFO)
-_log_file = os.getenv("MCP_LOG_FILE", "server.log")
 _log_rotate_enabled = os.getenv("MCP_LOG_ROTATE_ENABLED", "false").lower() in {"1", "true", "yes", "on", "y"}
 _log_rotate_max_bytes = int(os.getenv("MCP_LOG_ROTATE_MAX_BYTES", "10485760"))  # 10MB default
 _log_rotate_backup_count = int(os.getenv("MCP_LOG_ROTATE_BACKUP_COUNT", "5"))
@@ -117,11 +150,41 @@ if _log_file:
 else:
     logging.basicConfig(level=_log_level_value)
 
+
 # Audit log rotation (for query audit log)
 _audit_log_file = os.getenv("MCP_AUDIT_LOG_FILE", "mcp_query_audit.jsonl")
 _audit_log_rotate_enabled = os.getenv("MCP_AUDIT_LOG_ROTATE_ENABLED", "false").lower() in {"1", "true", "yes", "on", "y"}
 _audit_log_rotate_max_bytes = int(os.getenv("MCP_AUDIT_LOG_ROTATE_MAX_BYTES", "10485760"))
 _audit_log_rotate_backup_count = int(os.getenv("MCP_AUDIT_LOG_ROTATE_BACKUP_COUNT", "5"))
+
+# Module-level audit log handler and lock
+_AUDIT_LOG_HANDLER = None
+_AUDIT_LOG_HANDLER_INIT_LOCK = Lock()
+
+def _get_audit_handler():
+    global _AUDIT_LOG_HANDLER
+    if _AUDIT_LOG_HANDLER is not None:
+        return _AUDIT_LOG_HANDLER
+    with _AUDIT_LOG_HANDLER_INIT_LOCK:
+        if _AUDIT_LOG_HANDLER is not None:
+            return _AUDIT_LOG_HANDLER
+        log_path = _audit_log_file
+        log_dir = os.path.dirname(log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        if _audit_log_rotate_enabled:
+            handler = RotatingFileHandler(
+                log_path,
+                maxBytes=_audit_log_rotate_max_bytes,
+                backupCount=_audit_log_rotate_backup_count,
+                encoding="utf-8"
+            )
+        else:
+            handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        _AUDIT_LOG_HANDLER = handler
+        return handler
 
 
 # --- Simple Connection Pool Implementation ---
@@ -509,34 +572,18 @@ def _write_query_audit_record(
 
 
     line = json.dumps(payload, ensure_ascii=False, default=str)
-    log_path = SETTINGS.audit_log_file
-    log_dir = os.path.dirname(log_path)
-    if log_dir:
-        os.makedirs(log_dir, exist_ok=True)
-
-    # Use RotatingFileHandler for audit log if enabled
-    if '_AUDIT_LOG_ROTATING_HANDLER' not in globals():
-        if _audit_log_rotate_enabled:
-            handler = RotatingFileHandler(
-                log_path,
-                maxBytes=_audit_log_rotate_max_bytes,
-                backupCount=_audit_log_rotate_backup_count,
-                encoding="utf-8"
-            )
-        else:
-            handler = logging.FileHandler(log_path, encoding="utf-8")
-        handler.setLevel(logging.INFO)
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        globals()['_AUDIT_LOG_ROTATING_HANDLER'] = handler
-
-    handler = globals()['_AUDIT_LOG_ROTATING_HANDLER']
+    handler = _get_audit_handler()
+    record = logging.LogRecord(
+        name="mcp_sqlserver.audit",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=0,
+        msg=line,
+        args=(),
+        exc_info=None
+    )
     with _AUDIT_LOG_LOCK:
-        handler.acquire()
-        try:
-            handler.stream.write(line + "\n")
-            handler.flush()
-        finally:
-            handler.release()
+        handler.emit(record)
 
 
 def sanitize_prompt(prompt_context: str) -> tuple[str, str]:
@@ -1152,7 +1199,7 @@ def db_sql2019_list_tables(
     """List tables for a database/schema."""
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
@@ -1202,7 +1249,7 @@ def db_sql2019_get_schema(
     validate_instance(instance)
     _enforce_table_scope_for_ident(schema_name, table_name)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
@@ -1276,11 +1323,13 @@ def _run_query_internal(
     _enforce_table_scope_for_sql(sql)
     
     db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
 
+    db_name_str = _normalize_db_name(db_name)
+    # Ensure database_name is str for audit record (never None)
+    audit_db_name = db_name_str if db_name_str is not None else ""
     _write_query_audit_record(
         tool_name=tool_name,
-        database_name=db_name_str,
+        database_name=audit_db_name,
         sql=sql,
         params_json=params_json,
         prompt_context=prompt_context,
@@ -1373,7 +1422,7 @@ def db_sql2019_list_objects(
     """Unified object listing for database/schema/table/view/index/function/procedure/trigger."""
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
@@ -1597,7 +1646,7 @@ def _get_index_fragmentation_data(
 ) -> list[dict[str, Any]]:
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
@@ -1706,7 +1755,7 @@ def db_sql2019_analyze_table_health(
     validate_instance(instance)
     _enforce_table_scope_for_ident(schema, table_name)
     db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
@@ -1863,7 +1912,7 @@ def db_sql2019_db_stats(instance: int = 1, database: str | None = None) -> dict[
     """Database object counts."""
     validate_instance(instance)
     db_name = database or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if db_name is not None and not isinstance(db_name, str) else db_name
+    db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
@@ -2515,7 +2564,8 @@ def _register_dual_instance_tools():
                 def wrapper(*args, **kwargs):
                     # Remove instance from kwargs if it was passed by MCP (it shouldn't be, but just in case)
                     kwargs.pop("instance", None)
-                    return f(instance=inst, *args, **kwargs)
+                    kwargs["instance"] = inst
+                    return f(*args, **kwargs)
                 return wrapper
             
             wrapped = make_wrapper(func, instance)
