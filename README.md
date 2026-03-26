@@ -1,3 +1,57 @@
+## Connection Pooling
+
+| Variable            | Description                        | Default |
+|---------------------|------------------------------------|---------|
+| `DB_01_POOL_SIZE`   | Connections in pool for instance 1 | `10`    |
+| `DB_02_POOL_SIZE`   | Connections in pool for instance 2 | `10`    |
+
+**Tip:** Set pool size to match your expected concurrency. Too large may exhaust DB resources; too small may cause waits.
+
+## Log Rotation
+
+| Variable                          | Description                              | Default    |
+|-----------------------------------|------------------------------------------|------------|
+| `MCP_LOG_ROTATE_ENABLED`          | Enable log rotation                      | `false`    |
+| `MCP_LOG_ROTATE_MAX_BYTES`        | Max log file size before rotation        | `10485760` |
+| `MCP_LOG_ROTATE_BACKUP_COUNT`     | Number of rotated log files to keep      | `5`        |
+| `MCP_AUDIT_LOG_ROTATE_ENABLED`    | Enable audit log rotation                | `false`    |
+| `MCP_AUDIT_LOG_ROTATE_MAX_BYTES`  | Max audit log size before rotation       | `10485760` |
+| `MCP_AUDIT_LOG_ROTATE_BACKUP_COUNT`| Audit log backups to keep                | `5`        |
+
+**Best Practice:** Enable log rotation in production to prevent disk exhaustion. Tune max bytes and backup count to fit your retention and storage needs.
+
+# Safe Server Startup Entrypoint
+
+## Purpose
+To ensure robust, testable, and production-safe startup, the MCP SQL Server backend now uses a dedicated entrypoint script: `server_startup.py`. This script:
+
+- Initializes all database connection pools only at runtime (not on import), preventing side effects during testing or module import.
+- Starts the FastMCP server using the correct app instance (`mcp.run()`), avoiding import errors and ensuring proper lifecycle management.
+
+## Usage
+
+To launch the server, run:
+
+```
+python server_startup.py
+```
+
+This will:
+- Initialize all DB connection pools (thread-safe, idempotent)
+- Start the MCP server (FastMCP main entrypoint)
+
+## Why this change?
+
+- Prevents import-time side effects, making the codebase safe for both production and testing (e.g., pytest, static analysis, or import by other tools).
+- Fixes previous issues where `main` was an unknown symbol; now uses the correct FastMCP app instance (`mcp`).
+- Follows best practices for Python MCP servers and robust operational deployment.
+
+## File Reference
+
+- `server_startup.py`: New safe entrypoint for server startup.
+- `mcp_sqlserver/server.py`: Main server logic, tool registration, and FastMCP app instance (`mcp`).
+
+---
 # 📦 File Save & Email Orchestration
 
 

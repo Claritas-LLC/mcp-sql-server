@@ -1,3 +1,5 @@
+# For server resource monitoring
+psutil==7.2.2
 # Azure Blob Storage
 azure-storage-blob==12.19.1
 aiofile==3.9.0
