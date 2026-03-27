@@ -1205,14 +1205,17 @@ def db_sql2019_list_tables(
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
+        if database_name:
+            _execute_safe(cur, f"USE [{database_name}]")
         if schema_name:
             _execute_safe(
                 cur,
                 """
-                SELECT TABLE_SCHEMA, TABLE_NAME
-                FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_TYPE = 'BASE TABLE' AND TABLE_SCHEMA = ?
-                ORDER BY TABLE_SCHEMA, TABLE_NAME
+                SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN sys.tables p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)
+                WHERE t.TABLE_TYPE = 'BASE TABLE' AND t.TABLE_SCHEMA = ?
+                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
                 """,
                 [schema_name],
             )
@@ -1220,15 +1223,21 @@ def db_sql2019_list_tables(
             _execute_safe(
                 cur,
                 """
-                SELECT TABLE_SCHEMA, TABLE_NAME
-                FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_TYPE = 'BASE TABLE'
-                ORDER BY TABLE_SCHEMA, TABLE_NAME
+                SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date
+                FROM INFORMATION_SCHEMA.TABLES t
+                JOIN sys.tables p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)
+                WHERE t.TABLE_TYPE = 'BASE TABLE'
+                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
                 """,
             )
         rows = cur.fetchall()
         items = [
-            {"TABLE_SCHEMA": row[0], "TABLE_NAME": row[1]}
+            {
+                "schema_name": row[0],
+                "table_name": row[1],
+                "create_date": row[2].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[2] else None,
+                "modify_date": row[3].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[3] else None,
+            }
             for row in rows
             if _is_table_allowed(str(row[0] or "dbo"), str(row[1] or ""))
         ]
@@ -1255,6 +1264,8 @@ def db_sql2019_get_schema(
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
+        if database_name:
+            _execute_safe(cur, f"USE [{database_name}]")
         _execute_safe(
             cur,
             """
@@ -1530,33 +1541,81 @@ def db_sql2019_list_objects(
                 row_mapper=lambda rows: [row[0] for row in rows],
             )
 
-        if object_type_norm in {"TABLE", "VIEW"}:
-            table_type = "BASE TABLE" if object_type_norm == "TABLE" else "VIEW"
-            where_sql = "WHERE TABLE_TYPE = ?"
-            params: list[Any] = [table_type]
+        if object_type_norm == "TABLE":
+            join_clause = "JOIN sys.tables p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)"
+            where_sql = "WHERE t.TABLE_TYPE = ?"
+            params: list[Any] = ["BASE TABLE"]
             if schema:
-                where_sql += " AND TABLE_SCHEMA = ?"
+                where_sql += " AND t.TABLE_SCHEMA = ?"
                 params.append(schema)
             if object_name:
-                where_sql += " AND TABLE_NAME LIKE ?"
+                where_sql += " AND t.TABLE_NAME LIKE ?"
                 params.append(object_name)
-            scope_sql, scope_params = _build_table_scope_sql("TABLE_SCHEMA", "TABLE_NAME")
+            scope_sql, scope_params = _build_table_scope_sql("t.TABLE_SCHEMA", "t.TABLE_NAME")
             where_sql += scope_sql
             query_params = params + scope_params
 
-            count_sql = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES " + where_sql
+            count_sql = f"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES t {join_clause} " + where_sql
             data_sql = (
-                "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE "
-                "FROM INFORMATION_SCHEMA.TABLES "
+                f"SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date "
+                f"FROM INFORMATION_SCHEMA.TABLES t {join_clause} "
                 + where_sql
-                + " ORDER BY TABLE_SCHEMA, TABLE_NAME"
+                + " ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME"
             )
+            def row_mapper(rows):
+                return [
+                    {
+                        "schema_name": row[0],
+                        "table_name": row[1],
+                        "create_date": row[2].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[2] else None,
+                        "modify_date": row[3].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[3] else None,
+                    }
+                    for row in rows
+                ]
             return _paginate_query(
                 count_sql=count_sql,
                 count_params=query_params,
                 data_sql=data_sql,
                 data_params=query_params,
-                row_mapper=lambda rows: _rows_to_dicts(cur, rows),
+                row_mapper=row_mapper,
+            )
+        elif object_type_norm == "VIEW":
+            join_clause = "JOIN sys.views p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)"
+            where_sql = "WHERE t.TABLE_TYPE = ?"
+            params: list[Any] = ["VIEW"]
+            if schema:
+                where_sql += " AND t.TABLE_SCHEMA = ?"
+                params.append(schema)
+            if object_name:
+                where_sql += " AND t.TABLE_NAME LIKE ?"
+                params.append(object_name)
+            scope_sql, scope_params = _build_table_scope_sql("t.TABLE_SCHEMA", "t.TABLE_NAME")
+            where_sql += scope_sql
+            query_params = params + scope_params
+
+            count_sql = f"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES t {join_clause} " + where_sql
+            data_sql = (
+                f"SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date "
+                f"FROM INFORMATION_SCHEMA.TABLES t {join_clause} "
+                + where_sql
+                + " ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME"
+            )
+            def row_mapper(rows):
+                return [
+                    {
+                        "schema_name": row[0],
+                        "table_name": row[1],
+                        "create_date": row[2].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[2] else None,
+                        "modify_date": row[3].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[3] else None,
+                    }
+                    for row in rows
+                ]
+            return _paginate_query(
+                count_sql=count_sql,
+                count_params=query_params,
+                data_sql=data_sql,
+                data_params=query_params,
+                row_mapper=row_mapper,
             )
 
         if object_type_norm == "INDEX":
@@ -1761,7 +1820,7 @@ def db_sql2019_analyze_table_health(
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
-
+        # Table info
         _execute_safe(
             cur,
             """
@@ -1785,6 +1844,20 @@ def db_sql2019_analyze_table_health(
         table_info_rows = _rows_to_dicts(cur, cur.fetchall())
         table_info = table_info_rows[0] if table_info_rows else {}
 
+        # Column metadata
+        _execute_safe(
+            cur,
+            """
+            SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, COLUMN_DEFAULT, NUMERIC_PRECISION, NUMERIC_SCALE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+            ORDER BY ORDINAL_POSITION
+            """,
+            [schema, table_name],
+        )
+        columns = _rows_to_dicts(cur, cur.fetchall())
+
+        # Indexes
         _execute_safe(
             cur,
             """
@@ -1804,6 +1877,22 @@ def db_sql2019_analyze_table_health(
         )
         indexes = _rows_to_dicts(cur, cur.fetchall())
 
+        # Constraints (PK, unique, check, default)
+        _execute_safe(
+            cur,
+            """
+            SELECT tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, kcu.COLUMN_NAME
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+              ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA AND tc.TABLE_NAME = kcu.TABLE_NAME
+            WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?
+            ORDER BY tc.CONSTRAINT_TYPE, tc.CONSTRAINT_NAME
+            """,
+            [schema, table_name],
+        )
+        constraints = _rows_to_dicts(cur, cur.fetchall())
+
+        # Foreign keys
         _execute_safe(
             cur,
             """
@@ -1825,6 +1914,21 @@ def db_sql2019_analyze_table_health(
         )
         foreign_keys = _rows_to_dicts(cur, cur.fetchall())
 
+        # Object dependencies
+        _execute_safe(
+            cur,
+            """
+            SELECT referencing_schema_name, referencing_entity_name, referencing_class_desc, is_caller_dependent
+            FROM sys.dm_sql_referencing_entities (?, 'OBJECT')
+            UNION ALL
+            SELECT referenced_schema_name, referenced_entity_name, referenced_class_desc, NULL
+            FROM sys.dm_sql_referenced_entities (?, 'OBJECT')
+            """,
+            [f"{schema}.{table_name}", f"{schema}.{table_name}"],
+        )
+        dependencies = _rows_to_dicts(cur, cur.fetchall())
+
+        # Statistics sample
         _execute_safe(
             cur,
             """
@@ -1848,6 +1952,7 @@ def db_sql2019_analyze_table_health(
         )
         statistics_sample = _rows_to_dicts(cur, cur.fetchall())
 
+        # FK index checks
         _execute_safe(
             cur,
             """
@@ -1891,10 +1996,26 @@ def db_sql2019_analyze_table_health(
                     }
                 )
 
+        # Additional tuning recommendations (datatype, wide columns, etc.)
+        for col in columns:
+            if col.get("DATA_TYPE", "").upper() in ("NVARCHAR", "VARCHAR") and (col.get("CHARACTER_MAXIMUM_LENGTH") is not None and col["CHARACTER_MAXIMUM_LENGTH"] > 255):
+                recommendations.append({
+                    "severity": "Low",
+                    "recommendation": f"Column '{col['COLUMN_NAME']}' is wide ({col['CHARACTER_MAXIMUM_LENGTH']} chars). Consider if max length can be reduced for performance."
+                })
+            if col.get("DATA_TYPE", "").upper() == "INT" and col.get("IS_NULLABLE", "NO") == "NO":
+                recommendations.append({
+                    "severity": "Info",
+                    "recommendation": f"Column '{col['COLUMN_NAME']}' is INT and NOT NULL. If values are small, consider using SMALLINT or TINYINT to save space."
+                })
+
         result = {
             "table_info": table_info,
+            "columns": columns,
             "indexes": indexes,
+            "constraints": constraints,
             "foreign_keys": foreign_keys,
+            "dependencies": dependencies,
             "statistics_sample": statistics_sample,
             "health_analysis": {
                 "constraint_issues": constraint_issues,
