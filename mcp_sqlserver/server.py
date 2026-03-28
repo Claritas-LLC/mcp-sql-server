@@ -1437,6 +1437,7 @@ def db_sql2019_list_objects(
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
+    recommendations: list[dict[str, Any]] = []
     try:
         cur = conn.cursor()
         object_type_norm = object_type.strip().upper()
@@ -1711,7 +1712,7 @@ def _get_index_fragmentation_data(
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
-        sql = """
+        sql = f"""
         SELECT TOP (?)
             s.name AS schema_name,
             t.name AS table_name,
@@ -1719,11 +1720,11 @@ def _get_index_fragmentation_data(
             ips.avg_fragmentation_in_percent,
             ips.page_count,
             i.type_desc AS index_type
-        FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'SAMPLED') ips
-        JOIN sys.indexes i
+        FROM sys.dm_db_index_physical_stats(DB_ID('{db_name}'), NULL, NULL, NULL, 'SAMPLED') ips
+        JOIN [{db_name}].sys.indexes i
             ON ips.object_id = i.object_id AND ips.index_id = i.index_id
-        JOIN sys.tables t ON i.object_id = t.object_id
-        JOIN sys.schemas s ON t.schema_id = s.schema_id
+        JOIN [{db_name}].sys.tables t ON i.object_id = t.object_id
+        JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
         WHERE i.name IS NOT NULL
           AND ips.page_count >= ?
           AND ips.avg_fragmentation_in_percent >= ?
@@ -1818,12 +1819,13 @@ def db_sql2019_analyze_table_health(
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
+    recommendations: list[dict[str, Any]] = []
     try:
         cur = conn.cursor()
         # Table info
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT
                 t.name AS TableName,
                 s.name AS SchemaName,
@@ -1831,11 +1833,11 @@ def db_sql2019_analyze_table_health(
                 SUM(a.total_pages) * 8 AS TotalSpaceKB,
                 SUM(a.used_pages) * 8 AS UsedSpaceKB,
                 (SUM(a.total_pages) - SUM(a.used_pages)) * 8 AS UnusedSpaceKB
-            FROM sys.tables t
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
-            JOIN sys.indexes i ON t.object_id = i.object_id
-            JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-            JOIN sys.allocation_units a ON p.partition_id = a.container_id
+            FROM [{db_name}].sys.tables t
+            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
+            JOIN [{db_name}].sys.indexes i ON t.object_id = i.object_id
+            JOIN [{db_name}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+            JOIN [{db_name}].sys.allocation_units a ON p.partition_id = a.container_id
             WHERE s.name = ? AND t.name = ?
             GROUP BY t.name, s.name
             """,
@@ -1847,9 +1849,9 @@ def db_sql2019_analyze_table_health(
         # Column metadata
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, COLUMN_DEFAULT, NUMERIC_PRECISION, NUMERIC_SCALE
-            FROM INFORMATION_SCHEMA.COLUMNS
+            FROM [{db_name}].INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
             ORDER BY ORDINAL_POSITION
             """,
@@ -1860,15 +1862,15 @@ def db_sql2019_analyze_table_health(
         # Indexes
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT i.name AS IndexName, i.type_desc AS IndexType,
                    CAST(SUM(a.used_pages) * 8.0 / 1024 AS DECIMAL(18, 4)) AS IndexSizeMB,
                    i.is_disabled
-            FROM sys.indexes i
-            JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-            JOIN sys.allocation_units a ON p.partition_id = a.container_id
-            JOIN sys.tables t ON i.object_id = t.object_id
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            FROM [{db_name}].sys.indexes i
+            JOIN [{db_name}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+            JOIN [{db_name}].sys.allocation_units a ON p.partition_id = a.container_id
+            JOIN [{db_name}].sys.tables t ON i.object_id = t.object_id
+            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
             WHERE s.name = ? AND t.name = ? AND i.name IS NOT NULL
             GROUP BY i.name, i.type_desc, i.is_disabled
             ORDER BY IndexSizeMB DESC
@@ -1880,10 +1882,10 @@ def db_sql2019_analyze_table_health(
         # Constraints (PK, unique, check, default)
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, kcu.COLUMN_NAME
-            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-            LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+            FROM [{db_name}].INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            LEFT JOIN [{db_name}].INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
               ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA AND tc.TABLE_NAME = kcu.TABLE_NAME
             WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?
             ORDER BY tc.CONSTRAINT_TYPE, tc.CONSTRAINT_NAME
@@ -1895,17 +1897,17 @@ def db_sql2019_analyze_table_health(
         # Foreign keys
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT
                 fk.name AS FK_Name,
                 OBJECT_NAME(fk.parent_object_id) AS ParentTable,
                 pc.name AS ParentColumn,
                 OBJECT_NAME(fk.referenced_object_id) AS ReferencedTable,
                 rc.name AS ReferencedColumn
-            FROM sys.foreign_keys fk
-            JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-            JOIN sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
-            JOIN sys.columns rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
+            FROM [{db_name}].sys.foreign_keys fk
+            JOIN [{db_name}].sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+            JOIN [{db_name}].sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
+            JOIN [{db_name}].sys.columns rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
             WHERE OBJECT_SCHEMA_NAME(fk.parent_object_id) = ?
               AND OBJECT_NAME(fk.parent_object_id) = ?
             ORDER BY fk.name
@@ -1931,7 +1933,7 @@ def db_sql2019_analyze_table_health(
         # Statistics sample
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT TOP 25
                 c.name AS ColumnName,
                 st.name AS StatsName,
@@ -1939,12 +1941,12 @@ def db_sql2019_analyze_table_health(
                 sp.rows,
                 sp.rows_sampled,
                 sp.modification_counter
-            FROM sys.stats st
-            JOIN sys.stats_columns sc ON st.object_id = sc.object_id AND st.stats_id = sc.stats_id
-            JOIN sys.columns c ON sc.object_id = c.object_id AND sc.column_id = c.column_id
-            OUTER APPLY sys.dm_db_stats_properties(st.object_id, st.stats_id) sp
-            JOIN sys.tables t ON st.object_id = t.object_id
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            FROM [{db_name}].sys.stats st
+            JOIN [{db_name}].sys.stats_columns sc ON st.object_id = sc.object_id AND st.stats_id = sc.stats_id
+            JOIN [{db_name}].sys.columns c ON sc.object_id = c.object_id AND sc.column_id = c.column_id
+            OUTER APPLY [{db_name}].sys.dm_db_stats_properties(st.object_id, st.stats_id) sp
+            JOIN [{db_name}].sys.tables t ON st.object_id = t.object_id
+            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
             WHERE s.name = ? AND t.name = ?
             ORDER BY st.name
             """,
@@ -1952,20 +1954,137 @@ def db_sql2019_analyze_table_health(
         )
         statistics_sample = _rows_to_dicts(cur, cur.fetchall())
 
+        # Fragmentation checks
+        fragmentation_data = _get_index_fragmentation_data(
+            instance=instance, database_name=db_name, schema=schema, min_fragmentation=5.0
+        )
+        index_issues: list[dict[str, Any]] = []
+        for frag in fragmentation_data:
+            if frag.get("table_name") == table_name:
+                frag_percent = frag.get("avg_fragmentation_in_percent", 0.0) or 0.0
+                index_name = frag.get("index_name")
+                issue = {
+                    "type": "Index Fragmentation",
+                    "index_name": index_name,
+                    "fragmentation_percent": frag_percent,
+                }
+                if frag_percent > 30.0:
+                    issue["severity"] = "High"
+                    issue["message"] = f"Index '{index_name}' is highly fragmented ({frag_percent:.2f}%) and should be rebuilt."
+                    recommendations.append(
+                        {
+                            "severity": "High",
+                            "recommendation": f"Rebuild index '{index_name}' to improve performance.",
+                            "action": f"ALTER INDEX '{index_name}' ON [{schema}].[{table_name}] REBUILD;",
+                        }
+                    )
+                elif frag_percent > 10.0:
+                    issue["severity"] = "Medium"
+                    issue["message"] = f"Index '{index_name}' is moderately fragmented ({frag_percent:.2f}%). Consider reorganizing."
+                    recommendations.append(
+                        {
+                            "severity": "Medium",
+                            "recommendation": f"Reorganize index '{index_name}' to improve performance.",
+                            "action": f"ALTER INDEX '{index_name}' ON [{schema}].[{table_name}] REORGANIZE;",
+                        }
+                    )
+                index_issues.append(issue)
+
+        # Stale statistics checks
+        for stat in statistics_sample:
+            mod_counter = stat.get("modification_counter", 0) or 0
+            row_count = table_info.get("RowCounts", 0) or 0
+            if row_count > 500 and mod_counter > (row_count * 0.1):  # 10% change
+                stats_name = stat.get("StatsName")
+                recommendations.append(
+                    {
+                        "severity": "Medium",
+                        "recommendation": f"Statistics '{stats_name}' are stale (approx. {mod_counter} modifications). Update statistics to improve query performance.",
+                        "action": f"UPDATE STATISTICS [{schema}].[{table_name}] ('{stats_name}');",
+                    }
+                )
+
+        # Unused index checks
+        _execute_safe(
+            cur,
+            f"""
+            SELECT i.name AS index_name, us.user_seeks, us.user_scans, us.user_lookups, us.user_updates
+            FROM [{db_name}].sys.indexes i
+            LEFT JOIN [{db_name}].sys.dm_db_index_usage_stats us
+              ON us.database_id = DB_ID('{db_name}') AND us.object_id = i.object_id AND us.index_id = i.index_id
+            WHERE i.object_id = OBJECT_ID(?)
+              AND i.type_desc != 'HEAP'
+            """,
+            [f"[{db_name}].[{schema}].[{table_name}]"]
+        )
+        index_usage = _rows_to_dicts(cur, cur.fetchall())
+        for usage in index_usage:
+            if (usage.get("user_seeks", 0) or 0) == 0 and (usage.get("user_scans", 0) or 0) == 0 and (usage.get("user_lookups", 0) or 0) == 0:
+                index_name = usage.get("index_name")
+                user_updates = usage.get("user_updates", 0) or 0
+                recommendations.append(
+                    {
+                        "severity": "Low",
+                        "recommendation": f"Index '{index_name}' is not being used for reads but is being maintained ({user_updates} updates). Consider dropping this index.",
+                        "action": f"DROP INDEX '{index_name}' ON [{schema}].[{table_name}];",
+                    }
+                )
+
+        # Column cardinality and data type checks
+        for col in columns:
+            # High cardinality, not indexed
+            _execute_safe(cur, f"SELECT COUNT(DISTINCT [{col["COLUMN_NAME"]}]) FROM [{db_name}].[{schema}].[{table_name}]")
+            distinct_count = cur.fetchone()[0]
+            if row_count > 0 and (distinct_count / row_count) > 0.8:
+                # Check if part of any index
+                _execute_safe(cur, f"""
+                    SELECT COUNT(*)
+                    FROM [{db_name}].sys.index_columns ic
+                    JOIN [{db_name}].sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                    WHERE ic.object_id = OBJECT_ID(?)
+                      AND c.name = ?
+                """, [f"[{db_name}].[{schema}].[{table_name}]", col['COLUMN_NAME']])
+                in_index_count = cur.fetchone()[0]
+                if in_index_count == 0:
+                    recommendations.append(
+                        {
+                            "severity": "Medium",
+                            "recommendation": f"Column '{col['COLUMN_NAME']}' has high cardinality and is not indexed. Consider creating an index to improve performance.",
+                            "action": f"CREATE INDEX IX_{table_name}_{col['COLUMN_NAME']} ON [{schema}].[{table_name}] ('{col['COLUMN_NAME']}');",
+                        }
+                    )
+
+            # Data type checks
+            if col.get("DATA_TYPE", "").upper() in ("NVARCHAR", "VARCHAR") and (col.get("CHARACTER_MAXIMUM_LENGTH") is not None and col["CHARACTER_MAXIMUM_LENGTH"] > 255):
+                recommendations.append({
+                    "severity": "Low",
+                    "recommendation": f"Column '{col['COLUMN_NAME']}' is wide ({col['CHARACTER_MAXIMUM_LENGTH']} chars). Consider if max length can be reduced for performance."
+                })
+            if col.get("DATA_TYPE", "").upper() == "INT" and col.get("IS_NULLABLE", "NO") == "NO":
+                _execute_safe(cur, f"SELECT MAX([{col['COLUMN_NAME']}]) FROM [{db_name}].[{schema}].[{table_name}]")
+                max_val_row = cur.fetchone()
+                if max_val_row and max_val_row[0] is not None:
+                    max_val = max_val_row[0]
+                    if max_val < 32767:
+                        recommendations.append({
+                            "severity": "Info",
+                            "recommendation": f"Column '{col['COLUMN_NAME']}' is INT but max value is {max_val}. Consider using SMALLINT to save space."
+                        })
+
         # FK index checks
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT
                 fk.name AS fk_name,
                 pc.name AS column_name,
                 CASE WHEN ix.index_id IS NULL THEN 1 ELSE 0 END AS missing_index
-            FROM sys.foreign_keys fk
-            JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-            JOIN sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
-            LEFT JOIN sys.index_columns ic
+            FROM [{db_name}].sys.foreign_keys fk
+            JOIN [{db_name}].sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+            JOIN [{db_name}].sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
+            LEFT JOIN [{db_name}].sys.index_columns ic
               ON ic.object_id = fkc.parent_object_id AND ic.column_id = fkc.parent_column_id AND ic.key_ordinal = 1
-            LEFT JOIN sys.indexes ix
+            LEFT JOIN [{db_name}].sys.indexes ix
               ON ix.object_id = ic.object_id AND ix.index_id = ic.index_id
             WHERE OBJECT_SCHEMA_NAME(fk.parent_object_id) = ?
               AND OBJECT_NAME(fk.parent_object_id) = ?
@@ -1975,7 +2094,6 @@ def db_sql2019_analyze_table_health(
         fk_index_checks = _rows_to_dicts(cur, cur.fetchall())
 
         constraint_issues: list[dict[str, Any]] = []
-        recommendations: list[dict[str, Any]] = []
         for fk in fk_index_checks:
             if fk.get("missing_index") == 1:
                 fk_name = fk.get("fk_name")
@@ -1995,6 +2113,146 @@ def db_sql2019_analyze_table_health(
                         "recommendation": f"Create index on '{column_name}' to support foreign key '{fk_name}'.",
                     }
                 )
+
+        # Missing index checks
+        _execute_safe(
+            cur,
+            f"""
+            SELECT
+                mig.index_group_handle,
+                mid.object_id,
+                mid.database_id,
+                mid.equality_columns,
+                mid.inequality_columns,
+                mid.included_columns,
+                migs.unique_compiles,
+                migs.user_seeks,
+                migs.user_scans,
+                migs.last_user_seek,
+                migs.avg_total_user_cost,
+                migs.avg_user_impact
+            FROM [{db_name}].sys.dm_db_missing_index_groups mig
+            INNER JOIN [{db_name}].sys.dm_db_missing_index_details mid ON mig.index_handle = mid.index_handle
+            INNER JOIN [{db_name}].sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
+            WHERE mid.object_id = OBJECT_ID(N'[{db_name}].[{schema}].[{table_name}]')
+            ORDER BY migs.avg_total_user_cost * migs.avg_user_impact DESC;
+            """,
+        )
+        missing_indexes = _rows_to_dicts(cur, cur.fetchall())
+
+        for mi in missing_indexes:
+            columns_str = ""
+            if mi["equality_columns"]:
+                columns_str += mi["equality_columns"]
+            if mi["inequality_columns"]:
+                if columns_str:
+                    columns_str += ", "
+                columns_str += mi["inequality_columns"]
+            
+            include_str = ""
+            if mi["included_columns"]:
+                include_str = f" INCLUDE ({mi['included_columns']})"
+
+            if columns_str:
+                recommendations.append({
+                    "severity": "High",
+                    "recommendation": (
+                        f"Consider creating a missing index on columns ({columns_str}){include_str} "
+                        f"for an estimated impact of {mi['avg_user_impact']:.2f}."
+                    ),
+                    "action": f"CREATE INDEX IX_Missing_{table_name}_{mi['index_group_handle']} "
+                              f"ON [{schema}].[{table_name}] ({columns_str}){include_str};"
+                })
+
+        # Redundant index checks
+        _execute_safe(
+            cur,
+            f"""
+            SELECT
+                RedundantIndex.name AS RedundantIndexName,
+                CoveringIndex.name AS CoveringIndexName
+            FROM
+                [{db_name}].sys.indexes AS RedundantIndex
+            INNER JOIN
+                [{db_name}].sys.tables AS t ON RedundantIndex.object_id = t.object_id
+            INNER JOIN
+                [{db_name}].sys.schemas AS s ON t.schema_id = s.schema_id
+            INNER JOIN
+                [{db_name}].sys.indexes AS CoveringIndex ON RedundantIndex.object_id = CoveringIndex.object_id
+            WHERE
+                t.object_id = OBJECT_ID(N'[{db_name}].[{schema}].[{table_name}]')
+                AND RedundantIndex.index_id > 1 -- Only non-clustered indexes
+                AND CoveringIndex.index_id > 0 -- Clustered or non-clustered
+                AND RedundantIndex.index_id <> CoveringIndex.index_id
+                AND s.name = ?
+                AND t.name = ?
+                -- Check if RedundantIndex's key columns are a leading subset of CoveringIndex's key columns
+                AND NOT EXISTS (
+                    -- Check if there is any key column in RedundantIndex that is NOT a matching leading key column in CoveringIndex
+                    SELECT 1
+                    FROM [{db_name}].sys.index_columns AS ric
+                    WHERE
+                        ric.object_id = RedundantIndex.object_id
+                        AND ric.index_id = RedundantIndex.index_id
+                        AND ric.is_included_column = 0 -- Only key columns
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM [{db_name}].sys.index_columns AS cic
+                            WHERE
+                                cic.object_id = CoveringIndex.object_id
+                                AND cic.index_id = CoveringIndex.index_id
+                                AND cic.is_included_column = 0 -- Only key columns
+                                AND cic.column_id = ric.column_id
+                                AND cic.key_ordinal = ric.key_ordinal
+                        )
+                )
+                -- Additionally, ensure that the number of key columns in RedundantIndex is less than or equal to CoveringIndex
+                AND (
+                    SELECT COUNT(*)
+                    FROM [{db_name}].sys.index_columns AS ric
+                    WHERE
+                        ric.object_id = RedundantIndex.object_id
+                        AND ric.index_id = RedundantIndex.index_id
+                        AND ric.is_included_column = 0
+                ) <= (
+                    SELECT COUNT(*)
+                    FROM [{db_name}].sys.index_columns AS cic
+                    WHERE
+                        cic.object_id = CoveringIndex.object_id
+                        AND cic.index_id = CoveringIndex.index_id
+                        AND cic.is_included_column = 0
+                )
+                -- Check if all included columns of RedundantIndex are also included in CoveringIndex (either as key or included)
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM
+                        [{db_name}].sys.index_columns AS ic_redundant_included
+                    WHERE
+                        ic_redundant_included.object_id = RedundantIndex.object_id
+                        AND ic_redundant_included.index_id = RedundantIndex.index_id
+                        AND ic_redundant_included.is_included_column = 1
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM
+                                [{db_name}].sys.index_columns AS ic_covering_all
+                            WHERE
+                                ic_covering_all.object_id = CoveringIndex.object_id
+                                AND ic_covering_all.index_id = CoveringIndex.index_id
+                                AND ic_covering_all.column_id = ic_redundant_included.column_id
+                                AND (ic_covering_all.is_included_column = 1 OR ic_covering_all.key_ordinal > 0)
+                        )
+                )
+            ;""",
+            [schema, table_name],
+        )
+        redundant_indexes = _rows_to_dicts(cur, cur.fetchall())
+
+        for ri in redundant_indexes:
+            recommendations.append({
+                "severity": "Medium",
+                "recommendation": f"Index '{ri["RedundantIndexName"]}' might be redundant as its columns are covered by index '{ri["CoveringIndexName"]}'. Consider dropping '{ri["RedundantIndexName"]}'.",
+                "action": f"DROP INDEX [{ri["RedundantIndexName"]}] ON [{schema}].[{table_name}];"
+            })
 
         # Additional tuning recommendations (datatype, wide columns, etc.)
         for col in columns:
@@ -2019,7 +2277,7 @@ def db_sql2019_analyze_table_health(
             "statistics_sample": statistics_sample,
             "health_analysis": {
                 "constraint_issues": constraint_issues,
-                "index_issues": [],
+                "index_issues": index_issues,
             },
             "recommendations": recommendations,
         }
@@ -2041,14 +2299,14 @@ def db_sql2019_db_stats(instance: int = 1, database: str | None = None) -> dict[
         cur = conn.cursor()
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT
                 DB_NAME() AS DatabaseName,
-                (SELECT COUNT(*) FROM sys.tables) AS TableCount,
-                (SELECT COUNT(*) FROM sys.views) AS ViewCount,
-                (SELECT COUNT(*) FROM sys.procedures) AS ProcedureCount,
-                (SELECT COUNT(*) FROM sys.indexes WHERE name IS NOT NULL) AS IndexCount,
-                (SELECT COUNT(*) FROM sys.schemas) AS SchemaCount
+                (SELECT COUNT(*) FROM [{db_name}].sys.tables) AS TableCount,
+                (SELECT COUNT(*) FROM [{db_name}].sys.views) AS ViewCount,
+                (SELECT COUNT(*) FROM [{db_name}].sys.procedures) AS ProcedureCount,
+                (SELECT COUNT(*) FROM [{db_name}].sys.indexes WHERE name IS NOT NULL) AS IndexCount,
+                (SELECT COUNT(*) FROM [{db_name}].sys.schemas) AS SchemaCount
             """,
         )
         row = cur.fetchone()
@@ -2234,8 +2492,8 @@ def _analyze_logical_data_model_internal(
             cur,
             f"""
             SELECT s.name AS schema_name, t.name AS table_name
-            FROM sys.tables t
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            FROM [{db_name}].sys.tables t
+            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
             {where_sql}
             """,
             params,
@@ -2246,9 +2504,9 @@ def _analyze_logical_data_model_internal(
         for t_schema, t_name in tables:
              _execute_safe(
                  cur,
-                 """
+                 f"""
                  SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-                 FROM INFORMATION_SCHEMA.COLUMNS
+                 FROM [{db_name}].INFORMATION_SCHEMA.COLUMNS
                  WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
                  """,
                  [t_schema, t_name],
@@ -2296,7 +2554,7 @@ def db_sql2019_show_top_queries(
         cur = conn.cursor()
         
         # Check if Query Store is enabled
-        _execute_safe(cur, "SELECT actual_state_desc FROM sys.database_query_store_options")
+        _execute_safe(cur, f"SELECT actual_state_desc FROM [{db_name}].sys.database_query_store_options")
         qs_row = cur.fetchone()
         qs_enabled = qs_row[0] != "OFF" if qs_row else False
         
@@ -2316,11 +2574,11 @@ def db_sql2019_show_top_queries(
                 qt.query_sql_text,
                 rs.{sort_col} AS metric_value,
                 rs.count_executions,
-                rs.last_execution_time
-            FROM sys.query_store_query q
-            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+                CAST(rs.last_execution_time AS DATETIME2) AS last_execution_time
+            FROM [{db_name}].sys.query_store_query q
+            JOIN [{db_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN [{db_name}].sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN [{db_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             ORDER BY rs.{sort_col} DESC
             """
             _execute_safe(cur, sql, [limit])
@@ -2340,9 +2598,9 @@ def db_sql2019_show_top_queries(
                 st.text AS query_sql_text,
                 {sort_col} AS metric_value,
                 count.execution_count,
-                count.last_execution_time
-            FROM sys.dm_exec_query_stats count
-            CROSS APPLY sys.dm_exec_sql_text(count.sql_handle) st
+                CAST(count.last_execution_time AS DATETIME2) AS last_execution_time
+            FROM [{db_name}].sys.dm_exec_query_stats count
+            CROSS APPLY [{db_name}].sys.dm_exec_sql_text(count.sql_handle) st
             ORDER BY metric_value DESC
             """
             _execute_safe(cur, sql, [limit])
@@ -2395,17 +2653,17 @@ def db_sql2019_db_sec_perf_metrics(
         
         metrics = {}
         # User count
-        _execute_safe(cur, "SELECT COUNT(*) FROM sys.database_principals WHERE type IN ('S', 'U', 'G')")
+        _execute_safe(cur, f"SELECT COUNT(*) FROM [{db_name}].sys.database_principals WHERE type IN ('S', 'U', 'G')")
         user_count_row = cur.fetchone()
         metrics["user_count"] = user_count_row[0] if user_count_row else 0
         
         # Open transactions
-        _execute_safe(cur, "SELECT COUNT(*) FROM sys.dm_tran_database_transactions WHERE database_id = DB_ID()")
+        _execute_safe(cur, f"SELECT COUNT(*) FROM [{db_name}].sys.dm_tran_database_transactions WHERE database_id = DB_ID('{db_name}')")
         open_tx_row = cur.fetchone()
         metrics["open_transactions"] = open_tx_row[0] if open_tx_row else 0
         
         # Data file size
-        _execute_safe(cur, "SELECT SUM(size) * 8 / 1024 FROM sys.database_files WHERE type = 0")
+        _execute_safe(cur, f"SELECT SUM(size) * 8 / 1024 FROM [{db_name}].sys.database_files WHERE type = 0")
         data_size_row = cur.fetchone()
         metrics["data_size_mb"] = data_size_row[0] if data_size_row else 0
         
@@ -2496,10 +2754,10 @@ def db_sql2019_generate_ddl(
 
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH,
                    NUMERIC_PRECISION, NUMERIC_SCALE, COLUMN_DEFAULT
-            FROM INFORMATION_SCHEMA.COLUMNS
+            FROM [{db_name}].INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
             ORDER BY ORDINAL_POSITION
             """,
