@@ -1007,6 +1007,7 @@ def table_health():
 @app.route("/db_stats", methods=["GET"])
 def db_stats():
     db_name = request.args.get("database")
+    _validate_identifier(db_name, "database")
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
     if not db_name:
@@ -1212,6 +1213,7 @@ def explain_query():
     data = request.get_json()
     sql = data.get("sql")
     db_name = data.get("database_name")
+    _validate_identifier(db_name, "database")
     instance = data.get("instance", SETTINGS["default_instance_id"])
 
     _validate_identifier(db_name, "database")
@@ -1498,6 +1500,7 @@ def drop_db_user():
 def kill_session():
     data = request.get_json()
     session_id = data.get("session_id")
+    _validate_identifier(str(session_id), "session ID")
     instance = data.get("instance", SETTINGS["default_instance_id"])
 
     if not session_id:
