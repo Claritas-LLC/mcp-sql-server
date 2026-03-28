@@ -208,6 +208,10 @@ def get_schema():
     if not db_name or not table_name:
         return jsonify({"status": "error", "message": "database_name and table_name parameters are required"}), 400
 
+    _validate_identifier(db_name, "database")
+    _validate_identifier(schem_name, "schema")
+    _validate_identifier(table_name, "table")
+
     sql = f"""
     SELECT
         c.name AS ColumnName,
@@ -253,6 +257,7 @@ def execute_query():
     data = request.get_json()
     sql = data.get("sql")
     db_name = data.get("database_name")
+    _validate_identifier(db_name, "database")
     instance = data.get("instance", SETTINGS["default_instance_id"])
     params = data.get("params_json")
 
@@ -1209,6 +1214,8 @@ def explain_query():
     db_name = data.get("database_name")
     instance = data.get("instance", SETTINGS["default_instance_id"])
 
+    _validate_identifier(db_name, "database")
+
     if not sql:
         return jsonify({"status": "error", "message": "SQL query is required"}), 400
 
@@ -1230,6 +1237,9 @@ def analyze_logical_data_model():
 
     if not db_name:
         return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
+
+    _validate_identifier(db_name, "database")
+    _validate_identifier(schema, "schema")
 
     # This is a placeholder for a complex data model analysis.
     # A real implementation would involve checking for:
@@ -1293,6 +1303,9 @@ def open_logical_model():
 
     if not db_name:
         return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
+
+    _validate_identifier(db_name, "database")
+    _validate_identifier(schema, "schema")
 
     # This endpoint would typically generate an HTML representation of the ERD.
     # For a placeholder, we'll return a simple HTML structure.
