@@ -93,8 +93,7 @@ def get_connection(db_name: Optional[str] = None, instance: int = 1):
             conn.close()
 
 def _execute_query(sql: str, db_name: Optional[str] = None, instance: int = 1, params: Optional[Tuple] = None, fetchall: bool = True) -> List[Dict[str, Any]]:
-    logging.debug(f"Executing SQL query:
-{sql}")
+    logging.debug(f"Executing SQL query:\n{sql}")
     if params:
         logging.debug(f"With parameters: {params}")
     with get_connection(db_name, instance) as conn:
@@ -113,9 +112,7 @@ def _execute_query(sql: str, db_name: Optional[str] = None, instance: int = 1, p
                 return []
         except pyodbc.Error as ex:
             sqlstate = ex.args[0]
-            logging.error(f"SQL execution error (SQLSTATE: {sqlstate}): {ex}
-Query:
-{sql}")
+            logging.error(f"SQL execution error (SQLSTATE: {sqlstate}): {ex}\nQuery:\n{sql}")
             raise
 
 def _execute_safe(sql: str, db_name: Optional[str] = None, instance: int = 1, params: Optional[Tuple] = None) -> List[Dict[str, Any]]:
@@ -169,7 +166,7 @@ def list_databases():
 @app.route("/list_tables", methods=["GET"])
 def list_tables():
     db_name = request.args.get("database_name")
-    schem-name = request.args.get("schem-name", "dbo")
+    schema_name = request.args.get("schema_name", "dbo")
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
     if not db_name:
@@ -186,14 +183,14 @@ def list_tables():
     FROM
         [{_escape_sql_identifier(db_name)}].sys.tables t
     INNER JOIN
-        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schema_id = s.schema_id
     WHERE
         s.name = ?
     ORDER BY
         s.name, t.name;
     """
     try:
-        tables = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(schem-name,))
+        tables = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(schema_name,))
         return jsonify(tables)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -201,7 +198,7 @@ def list_tables():
 @app.route("/get_schema", methods=["GET"])
 def get_schema():
     db_name = request.args.get("database_name")
-    schem-name = request.args.get("schem-name", "dbo")
+    schema_name = request.args.get("schema_name", "dbo")
     table_name = request.args.get("table_name")
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
@@ -228,7 +225,7 @@ def get_schema():
     INNER JOIN
         [{_escape_sql_identifier(db_name)}].sys.tables t ON c.object_id = t.object_id
     INNER JOIN
-        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schema_id = s.schema_id
     INNER JOIN
         [{_escape_sql_identifier(db_name)}].sys.types ty ON c.user_type_id = ty.user_type_id
     LEFT JOIN
@@ -247,7 +244,7 @@ def get_schema():
         c.column_id;
     """
     try:
-        schema = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(schem-name, table_name))
+        schema = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(schema_name, table_name))
         return jsonify(schema)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -292,7 +289,7 @@ def run_query():
 @app.route("/list_objects", methods=["GET"])
 def list_objects():
     db_name = request.args.get("database_name")
-    schem-name = request.args.get("schema", "dbo")
+    schema_name = request.args.get("schema", "dbo")
     object_type = request.args.get("object_type", "TABLE").upper()
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
     object_name_filter = request.args.get("object_name")
@@ -344,7 +341,7 @@ def list_objects():
         INNER JOIN
             [{_escape_sql_identifier(db_name)}].sys.tables t ON i.object_id = t.object_id
         INNER JOIN
-            [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+            [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schema_id = s.schema_id
         LEFT JOIN
             [{_escape_sql_identifier(db_name)}].sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id AND ic.is_included_column = 0
         LEFT JOIN
@@ -362,7 +359,7 @@ def list_objects():
         ORDER BY
             s.name, t.name, i.name;
         """
-        params = (schem-name,)
+        params = (schema_name,)
     else:
         obj_type_code = object_type_map.get(object_type)
         if not obj_type_code:
@@ -377,14 +374,14 @@ def list_objects():
         FROM
             [{_escape_sql_identifier(db_name)}].sys.objects o
         INNER JOIN
-            [{_escape_sql_identifier(db_name)}].sys.schemas s ON o.schem-id = s.schem-id
+            [{_escape_sql_identifier(db_name)}].sys.schemas s ON o.schema_id = s.schema_id
         WHERE
             o.type = ? AND s.name = ?
             {f"AND o.name LIKE '%{object_name_filter}%'" if object_name_filter else ""}
         ORDER BY
             s.name, o.name;
         """
-        params = (obj_type_code, schem-name)
+        params = (obj_type_code, schema_name)
 
     try:
         objects = _execute_safe(sql, db_name=db_name, instance=int(instance), params=params)
@@ -419,7 +416,7 @@ def index_fragmentation():
     INNER JOIN
         [{_escape_sql_identifier(db_name)}].sys.tables st ON ps.object_id = st.object_id
     INNER JOIN
-        [{_escape_sql_identifier(db_name)}].sys.schemas sch ON st.schem-id = sch.schem-id
+        [{_escape_sql_identifier(db_name)}].sys.schemas sch ON st.schema_id = sch.schema_id
     WHERE
         ps.avg_fragmentation_in_percent > ?
         AND ps.page_count > ?
@@ -692,7 +689,7 @@ def index_health():
 @app.route("/table_health", methods=["GET"])
 def table_health():
     db_name = request.args.get("database_name")
-    schem-name = request.args.get("schema", "dbo")
+    schema_name = request.args.get("schema", "dbo")
     table_name = request.args.get("table_name")
     view = request.args.get("view", "standard") # summary, standard, full
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
@@ -701,7 +698,7 @@ def table_health():
         return jsonify({"status": "error", "message": "database_name and table_name parameters are required"}), 400
 
     _validate_identifier(db_name, "database")
-    _validate_identifier(schem-name, "schema")
+    _validate_identifier(schema_name, "schema")
     _validate_identifier(table_name, "table")
 
     recommendations: List[Dict[str, Any]] = []
@@ -717,7 +714,7 @@ def table_health():
     FROM
         [{_escape_sql_identifier(db_name)}].sys.tables t
     INNER JOIN
-        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schema_id = s.schema_id
     INNER JOIN
         [{_escape_sql_identifier(db_name)}].sys.partitions p ON t.object_id = p.object_id
     INNER JOIN
@@ -728,9 +725,9 @@ def table_health():
     GROUP BY
         t.name, s.name;
     """
-    table_info_results = _execute_safe(table_info_sql, db_name=db_name, instance=int(instance), params=(table_name, schem-name))
+    table_info_results = _execute_safe(table_info_sql, db_name=db_name, instance=int(instance), params=(table_name, schema_name))
     table_info = table_info_results[0] if table_info_results else {}
-    recommendations.append({"type": "info", "message": f"Table: {schem-name}.{table_name}", "details": table_info})
+    recommendations.append({"type": "info", "message": f"Table: {schema_name}.{table_name}", "details": table_info})
 
     # --- Index Fragmentation Checks ---
     frag_sql = f"""
@@ -748,7 +745,7 @@ def table_health():
         AND si.name IS NOT NULL
         AND ps.page_count >= ?;
     """
-    index_fragmentation = _execute_safe(frag_sql, db_name=db_name, instance=int(instance), params=(f"{schem-name}.{table_name}", MIN_PAGE_COUNT))
+    index_fragmentation = _execute_safe(frag_sql, db_name=db_name, instance=int(instance), params=(f"{schema_name}.{table_name}", MIN_PAGE_COUNT))
     for frag in index_fragmentation:
         frag_percent = frag["FragmentationPercentage"]
         index_name = _escape_sql_identifier(frag["IndexName"])
@@ -756,14 +753,14 @@ def table_health():
             recommendations.append({
                 "type": "warning",
                 "message": f"High fragmentation ({frag_percent:.2f}%) on index '{frag['IndexName']}'. Consider rebuilding.",
-                "action": f"ALTER INDEX [{index_name}] ON [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] REBUILD;",
+                "action": f"ALTER INDEX [{index_name}] ON [{_escape_sql_identifier(schema_name)}].[{_escape_sql_identifier(table_name)}] REBUILD;",
                 "details": frag
             })
         elif frag_percent > MEDIUM_FRAGMENTATION_THRESHOLD:
             recommendations.append({
                 "type": "info",
                 "message": f"Medium fragmentation ({frag_percent:.2f}%) on index '{frag['IndexName']}'. Consider reorganizing.",
-                "action": f"ALTER INDEX [{index_name}] ON [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] REORGANIZE;",
+                "action": f"ALTER INDEX [{index_name}] ON [{_escape_sql_identifier(schema_name)}].[{_escape_sql_identifier(table_name)}] REORGANIZE;",
                 "details": frag
             })
 
@@ -784,7 +781,7 @@ def table_health():
     WHERE
         s.object_id = OBJECT_ID(?) AND s.user_created = 1;
     """
-    statistics_sample = _execute_safe(stats_sql, db_name=db_name, instance=int(instance), params=(f"{schem-name}.{table_name}",))
+    statistics_sample = _execute_safe(stats_sql, db_name=db_name, instance=int(instance), params=(f"{schema_name}.{table_name}",))
 
     for stat in statistics_sample:
         mod_counter = stat.get("modification_counter", 0) or 0
@@ -793,7 +790,7 @@ def table_health():
             recommendations.append({
                 "type": "warning",
                 "message": f"Statistics '{stat['StatisticsName']}' are stale ({mod_counter} modifications, {row_count} total rows). Consider updating.",
-                "action": f"UPDATE STATISTICS [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] ([{stats_name}]);",
+                "action": f"UPDATE STATISTICS [{_escape_sql_identifier(schema_name)}].[{_escape_sql_identifier(table_name)}] ([{stats_name}]);",
                 "details": stat
             })
 
@@ -818,7 +815,7 @@ def table_health():
     WHERE
         mid.object_id = OBJECT_ID(?);
     """
-    missing_indexes = _execute_safe(missing_index_sql, db_name=db_name, instance=int(instance), params=(f"{schem-name}.{table_name}",))
+    missing_indexes = _execute_safe(missing_index_sql, db_name=db_name, instance=int(instance), params=(f"{schema_name}.{table_name}",))
     for mi in missing_indexes:
         columns_str = ""
         if mi['equality_columns']:
@@ -845,7 +842,7 @@ def table_health():
         recommendations.append({
             "type": "suggestion",
             "message": f"Missing index detected. Estimated improvement: {impact:.2f}%.",
-            "action": f"CREATE INDEX IX_{_escape_sql_identifier(table_name)}_{'_'.join(re.findall(r'\b\w+\b', columns_str))} ON [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] ({escaped_columns_for_create}){escaped_include_str};",
+            "action": f"CREATE INDEX IX_{_escape_sql_identifier(table_name)}_{'_'.join(re.findall(r'\b\w+\b', columns_str))} ON [{_escape_sql_identifier(schema_name)}].[{_escape_sql_identifier(table_name)}] ({escaped_columns_for_create}){escaped_include_str};",
             "details": mi
         })
     
@@ -862,7 +859,7 @@ def table_health():
         INNER JOIN
             [{_escape_sql_identifier(db_name)}].sys.tables t ON c.object_id = t.object_id
         INNER JOIN
-            [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+            [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schema_id = s.schema_id
         INNER JOIN
             [{_escape_sql_identifier(db_name)}].sys.types ty ON c.user_type_id = ty.user_type_id
         WHERE
@@ -870,7 +867,7 @@ def table_health():
         ORDER BY
             c.column_id;
         """
-        columns = _execute_safe(columns_sql, db_name=db_name, instance=int(instance), params=(schem-name, table_name))
+        columns = _execute_safe(columns_sql, db_name=db_name, instance=int(instance), params=(schema_name, table_name))
 
         if columns:
             cardinality_queries = []
@@ -886,7 +883,7 @@ def table_health():
                         COUNT(DISTINCT [{col_name_escaped}]) AS DistinctCount,
                         (SELECT SUM(p.rows) FROM [{_escape_sql_identifier(db_name)}].sys.tables t JOIN [{_escape_sql_identifier(db_name)}].sys.partitions p ON t.object_id = p.object_id WHERE t.name = ? AND p.index_id IN (0, 1)) AS TotalRows
                     FROM
-                        [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}];
+                        [{_escape_sql_identifier(schema_name)}].[{_escape_sql_identifier(table_name)}];
                 """)
 
                 # Index Membership Query for batching
@@ -927,7 +924,7 @@ def table_health():
                 batched_index_membership_sql = " UNION ALL ".join(index_membership_queries)
                 index_membership_params = []
                 for col in columns:
-                    index_membership_params.append(f"{schem-name}.{table_name}")
+                    index_membership_params.append(f"{schema_name}.{table_name}")
                     index_membership_params.append(col['ColumnName'])
 
                 index_membership_results = _execute_safe(batched_index_membership_sql, db_name=db_name, instance=int(instance), params=tuple(index_membership_params))
@@ -939,7 +936,7 @@ def table_health():
                         recommendations.append({
                             "type": "suggestion",
                             "message": f"Column '{col_name}' is not part of any index. Consider indexing if frequently used in WHERE/JOIN clauses.",
-                            "action": f"CREATE INDEX IX_{_escape_sql_identifier(table_name)}_{_escape_sql_identifier(col_name)} ON [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] ([{_escape_sql_identifier(col_name)}]);",
+                            "action": f"CREATE INDEX IX_{_escape_sql_identifier(table_name)}_{_escape_sql_identifier(col_name)} ON [{_escape_sql_identifier(schema_name)}].[{_escape_sql_identifier(table_name)}] ([{_escape_sql_identifier(col_name)}]);",
                             "details": {"ColumnName": col_name, "NumIndexes": num_indexes}
                         })
 
@@ -983,7 +980,7 @@ def table_health():
     WHERE
         OBJECT_NAME(fkc.referenced_object_id) = ? AND OBJECT_SCHEMA_NAME(fkc.referenced_object_id) = ?;
     """
-    referencing_fks = _execute_safe(fk_check_sql, db_name=db_name, instance=int(instance), params=(table_name, schem-name))
+    referencing_fks = _execute_safe(fk_check_sql, db_name=db_name, instance=int(instance), params=(table_name, schema_name))
 
     for fk in referencing_fks:
         # A more thorough check would involve querying for actual orphaned records.
@@ -1149,14 +1146,19 @@ def show_top_queries():
 @app.route("/check_fragmentation", methods=["GET"])
 def check_fragmentation():
     db_name = request.args.get("database_name")
-    schem-name = request.args.get("schem-name", "dbo")
+    schema_name = request.args.get("schema_name", "dbo")
     table_name = request.args.get("table_name")
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
     if not db_name:
         return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
 
-    object_id_clause = f"OBJECT_ID('[{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}]')" if table_name else "NULL"
+    _validate_identifier(db_name, "database")
+    _validate_identifier(schema_name, "schema")
+    if table_name:
+        _validate_identifier(table_name, "table")
+
+    object_id_clause = f"OBJECT_ID('[{_escape_sql_identifier(schema_name)}].[{_escape_sql_identifier(table_name)}]')" if table_name else "NULL"
 
     sql = f"""
     SELECT
@@ -1172,7 +1174,7 @@ def check_fragmentation():
     INNER JOIN
         [{_escape_sql_identifier(db_name)}].sys.tables st ON ps.object_id = st.object_id
     INNER JOIN
-        [{_escape_sql_identifier(db_name)}].sys.schemas sch ON st.schem-id = sch.schem-id
+        [{_escape_sql_identifier(db_name)}].sys.schemas sch ON st.schem_id = sch.schema_id
     WHERE
         ps.alloc_unit_type_desc = 'IN_ROW_DATA' -- Focus on data pages
         AND si.name IS NOT NULL
@@ -1183,7 +1185,7 @@ def check_fragmentation():
         ps.avg_fragmentation_in_percent DESC;
     """
     try:
-        fragmentation_data = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(schem-name,))
+        fragmentation_data = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(schema_name,))
         return jsonify(fragmentation_data)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -1226,8 +1228,7 @@ def explain_query():
 
     try:
         # Prepend SET SHOWPLAN_ALL ON to the query
-        explain_sql = f"SET SHOWPLAN_ALL ON;
-{sql}"
+        explain_sql = f"SET SHOWPLAN_ALL ON;\n{sql}"
         results = _execute_safe(explain_sql, db_name=db_name, instance=int(instance))
         return jsonify(results)
     except Exception as e:
@@ -1267,7 +1268,7 @@ def analyze_logical_data_model():
     FROM
         [{_escape_sql_identifier(db_name)}].sys.tables t
     INNER JOIN
-        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schema_id = s.schema_id
     WHERE
         s.name = ?
     ORDER BY
@@ -1279,17 +1280,17 @@ def analyze_logical_data_model():
 
         for table in analysis_results:
             table_name = table["TableName"]
-            schem-name = table["SchemaName"]
+            schema_name = table["SchemaName"]
             if not table["HasPrimaryKey"]:
                 recommendations.append({
                     "type": "warning",
-                    "message": f"Table '{schem-name}.{table_name}' has no Primary Key. Consider adding one for data integrity and performance.",
-                    "action": f"ALTER TABLE [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] ADD PRIMARY KEY (ColumnName);"
+                    "message": f"Table '{schema_name}.{table_name}' has no Primary Key. Consider adding one for data integrity and performance.",
+                    "action": f"ALTER TABLE [{_escape_sql_identifier(schema_name)}].[{_escape_sql_identifier(table_name)}] ADD PRIMARY KEY (ColumnName);"
                 })
             if not table["ForeignKeyCount"] and view == "full": # Only suggest for full view
                 recommendations.append({
                     "type": "info",
-                    "message": f"Table '{schem-name}.{table_name}' has no Foreign Keys. Ensure it's not an isolated table if relationships are expected.",
+                    "message": f"Table '{schema_name}.{table_name}' has no Foreign Keys. Ensure it's not an isolated table if relationships are expected.",
                     "details": "Lack of foreign keys can lead to data inconsistency."
                 })
         
@@ -1337,7 +1338,7 @@ def open_logical_model():
         <div class="mermaid">
             graph TD
                 A[Table A] --> B(Table B);
-                B --> C{Table C};
+                B --> C{{Table C}};
                 C -- has a --> A;
                 D[Another Table]
         </div>
@@ -1350,12 +1351,16 @@ def open_logical_model():
 @app.route("/generate_ddl", methods=["GET"])
 def generate_ddl():
     db_name = request.args.get("database_name")
-    schem-name = request.args.get("schem-name", "dbo")
+    schema_name = request.args.get("schema_name", "dbo")
     table_name = request.args.get("table_name")
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
     if not db_name or not table_name:
         return jsonify({"status": "error", "message": "database_name and table_name parameters are required"}), 400
+
+    _validate_identifier(db_name, "database")
+    _validate_identifier(schema_name, "schema")
+    _validate_identifier(table_name, "table")
 
     # This is a simplified DDL generation. A robust solution would use SQL Server's
     # built-in `sp_helptext` or query `sys.columns`, `sys.tables`, `sys.types`,
@@ -1377,7 +1382,7 @@ def generate_ddl():
     INNER JOIN
         [{_escape_sql_identifier(db_name)}].sys.tables t ON c.object_id = t.object_id
     INNER JOIN
-        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem_id = s.schema_id
     INNER JOIN
         [{_escape_sql_identifier(db_name)}].sys.types ty ON c.user_type_id = ty.user_type_id
     LEFT JOIN
@@ -1394,12 +1399,12 @@ def generate_ddl():
         c.column_id;
     """
     try:
-        columns_data = _execute_safe(columns_sql, db_name=db_name, instance=int(instance), params=(schem-name, table_name))
+        columns_data = _execute_safe(columns_sql, db_name=db_name, instance=int(instance), params=(schema_name, table_name))
 
         if not columns_data:
-            return jsonify({"status": "error", "message": f"Table '{schem-name}.{table_name}' not found or has no columns."}), 404
+            return jsonify({"status": "error", "message": f"Table '{schema_name}.{table_name}' not found or has no columns."}), 404
 
-        ddl_statements = [f"CREATE TABLE [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] ("]
+        ddl_statements = [f"CREATE TABLE [{_escape_sql_identifier(schema_name)}].[{_escape_sql_identifier(table_name)}] ("]
         pk_columns = []
 
         for col in columns_data:
@@ -1433,8 +1438,7 @@ def generate_ddl():
 
         ddl_statements.append(");")
 
-        return jsonify({"ddl": "
-".join(ddl_statements)})
+        return jsonify({"ddl": "\n".join(ddl_statements)})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -1449,6 +1453,8 @@ def create_db_user():
 
     if not db_name or not username or not password:
         return jsonify({"status": "error", "message": "database_name, username, and password parameters are required"}), 400
+
+    _validate_identifier(db_name, "database")
 
     # Basic validation for username to prevent SQL injection
     if not re.match(r"^[A-Za-z0-9_]+$", username):
@@ -1482,6 +1488,8 @@ def drop_db_user():
 
     if not db_name or not username:
         return jsonify({"status": "error", "message": "database_name and username parameters are required"}), 400
+
+    _validate_identifier(db_name, "database")
 
     if not re.match(r"^[A-Za-z0-9_]+$", username):
         return jsonify({"status": "error", "message": "Invalid username format."}), 400
