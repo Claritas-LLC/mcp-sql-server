@@ -1,2960 +1,1567 @@
-# --- Helper for normalizing db_name consistently ---
-def _normalize_db_name(db_name: str | int | None) -> str | None:
-    if db_name is None:
-        return None
-    if isinstance(db_name, str):
-        return db_name
-    return str(db_name)
-import queue
-import psutil
-import logging
-from logging.handlers import RotatingFileHandler
 import os
-import pathlib
 import re
+import sys
 import json
 import time
 import base64
-import hashlib
-import hmac
-import uuid
-import sys
-import functools
-import asyncio
-from datetime import datetime, timezone
-from threading import Lock
-from contextvars import ContextVar
-from typing import Any, Sequence, Literal, Annotated
-from html import escape
-from urllib.parse import quote
-from functools import lru_cache, wraps
-import pyodbc
-from fastmcp import FastMCP, Context
-
-# --- Connection Pool Wrapper ---
-
-# --- Connection Pool Wrapper ---
-class PooledConnection:
-    """Wraps a pyodbc.Connection to override close() for pooling."""
-    def __init__(self, conn, pool):
-        self._conn = conn
-        self._pool = pool
-    def __getattr__(self, name):
-        return getattr(self._conn, name)
-    def close(self):
-        try:
-            self._pool.put(self._conn, block=False)
-        except queue.Full:
-            self._conn.close()
-
-import psutil
 import logging
-from logging.handlers import RotatingFileHandler
-import os
-import pathlib
-import re
-import json
-import time
-import base64
-import hashlib
-import hmac
-import uuid
-import sys
-import functools
-import asyncio
+import threading
+import contextlib
+import urllib.parse
 from datetime import datetime, timezone
-from threading import Lock
-from contextvars import ContextVar
-from typing import Any, Sequence, Literal, Annotated
-from html import escape
-from urllib.parse import quote
-from functools import lru_cache, wraps
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union
+
 import pyodbc
-from fastmcp import FastMCP, Context
+from flask import Flask, jsonify, request, Response, stream_with_context
 
-logger = logging.getLogger("mcp_sqlserver")
+# Initialize Flask app
+app = Flask(__name__)
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Minimal Settings class to satisfy code references
-class Settings:
-    def __init__(self, **kwargs):
-        self.db_instances = kwargs.get('db_instances', {})
-        self.db_pool_sizes = kwargs.get('db_pool_sizes', {})
-        self.statement_timeout_ms = kwargs.get('statement_timeout_ms', 120000)
-        self.max_rows = kwargs.get('max_rows', 500)
-        self.allow_write = kwargs.get('allow_write', False)
-        self.confirm_write = kwargs.get('confirm_write', False)
-        self.transport = kwargs.get('transport', 'http')
-        self.host = kwargs.get('host', '0.0.0.0')
-        self.port = kwargs.get('port', 8000)
-        self.auth_type = kwargs.get('auth_type', '')
-        self.api_key = kwargs.get('api_key', '')
-        self.allow_query_token_auth = kwargs.get('allow_query_token_auth', False)
-        self.public_base_url = kwargs.get('public_base_url', '')
-        self.ssl_cert = kwargs.get('ssl_cert', '')
-        self.ssl_key = kwargs.get('ssl_key', '')
-        self.ssl_strict = kwargs.get('ssl_strict', False)
-        self.table_scope_enforced = kwargs.get('table_scope_enforced', False)
-        self.allowed_tables = kwargs.get('allowed_tables', '')
-        self.rate_limit_enabled = kwargs.get('rate_limit_enabled', True)
-        self.rate_limit_window_seconds = kwargs.get('rate_limit_window_seconds', 60)
-        self.rate_limit_max_requests = kwargs.get('rate_limit_max_requests', 240)
-        self.rate_limit_breaker_seconds = kwargs.get('rate_limit_breaker_seconds', 60)
-        self.rate_limit_breaker_violations = kwargs.get('rate_limit_breaker_violations', 3)
-        self.audit_log_queries = kwargs.get('audit_log_queries', False)
-        self.audit_log_file = kwargs.get('audit_log_file', 'mcp_query_audit.jsonl')
-        self.audit_log_include_params = kwargs.get('audit_log_include_params', False)
-        self.allow_raw_prompts = kwargs.get('allow_raw_prompts', False)
-        self.tool_search_enabled = kwargs.get('tool_search_enabled', False)
-        self.tool_search_strategy = kwargs.get('tool_search_strategy', 'regex')
-        self.tool_search_max_results = kwargs.get('tool_search_max_results', None)
-        self.tool_search_always_visible = kwargs.get('tool_search_always_visible', '')
-        self.tool_search_tool_name = kwargs.get('tool_search_tool_name', 'search_tools')
-        self.tool_call_tool_name = kwargs.get('tool_call_tool_name', 'call_tool')
+# Constants for health checks
+MIN_FRAGMENTATION_PERCENT = 5.0
+HIGH_FRAGMENTATION_THRESHOLD = 30.0
+MEDIUM_FRAGMENTATION_THRESHOLD = 10.0
+MIN_ROWS_FOR_STALE_STATS_CHECK = 500
+STALE_STATS_MODIFICATION_PERCENT = 0.1
+HIGH_CARDINALITY_THRESHOLD = 0.8
+WIDE_COLUMN_MAX_LENGTH = 255
+SMALLINT_MAX_VALUE = 32767
 
-# Minimal _now_utc_iso helper
-def _now_utc_iso():
-    return datetime.now(timezone.utc).isoformat()
+# --- Configuration Loading ---
+def _load_settings() -> Dict[str, Any]:
+    settings = {
+        "connections": json.loads(os.environ.get("MCP_SQLSERVER_CONNECTIONS_JSON", "{}")),
+        "default_instance_id": os.environ.get("MCP_SQLSERVER_DEFAULT_INSTANCE_ID", "1"),
+        "sql_version": os.environ.get("MCP_SQLSERVER_SQL_VERSION", "2019"),
+        "query_timeout": int(os.environ.get("MCP_SQLSERVER_QUERY_TIMEOUT", "30")),
+        "log_level": os.environ.get("MCP_SQLSERVER_LOG_LEVEL", "INFO").upper(),
+    }
+    _configure_logging(settings["log_level"])
+    return settings
 
-def validate_instance(instance: int) -> None:
-    if instance not in SETTINGS.db_instances:
-        raise ValueError(f"Invalid instance: {instance}. Available: {list(SETTINGS.db_instances.keys())}")
-
-
- # --- Logging setup: honor MCP_LOG_LEVEL and support log rotation ---
-
-
-# Ensure log directory exists if log file is specified
-_log_file = os.getenv("MCP_LOG_FILE", "server.log")
-if _log_file:
-    log_path = pathlib.Path(_log_file)
-    if log_path.parent and not log_path.parent.exists():
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-from logging.handlers import RotatingFileHandler
-
-_log_level = os.getenv("MCP_LOG_LEVEL", "INFO").upper()
-_log_level_value = getattr(logging, _log_level, logging.INFO)
-_log_rotate_enabled = os.getenv("MCP_LOG_ROTATE_ENABLED", "false").lower() in {"1", "true", "yes", "on", "y"}
-_log_rotate_max_bytes = int(os.getenv("MCP_LOG_ROTATE_MAX_BYTES", "10485760"))  # 10MB default
-_log_rotate_backup_count = int(os.getenv("MCP_LOG_ROTATE_BACKUP_COUNT", "5"))
-
-if _log_file:
-    if _log_rotate_enabled:
-        handler = RotatingFileHandler(_log_file, maxBytes=_log_rotate_max_bytes, backupCount=_log_rotate_backup_count)
-    else:
-        handler = logging.FileHandler(_log_file)
-    handler.setLevel(_log_level_value)
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-    handler.setFormatter(formatter)
-    logging.getLogger().handlers = [handler]
-    logging.getLogger().setLevel(_log_level_value)
-else:
-    logging.basicConfig(level=_log_level_value)
-
-
-# Audit log rotation (for query audit log)
-_audit_log_file = os.getenv("MCP_AUDIT_LOG_FILE", "mcp_query_audit.jsonl")
-_audit_log_rotate_enabled = os.getenv("MCP_AUDIT_LOG_ROTATE_ENABLED", "false").lower() in {"1", "true", "yes", "on", "y"}
-_audit_log_rotate_max_bytes = int(os.getenv("MCP_AUDIT_LOG_ROTATE_MAX_BYTES", "10485760"))
-_audit_log_rotate_backup_count = int(os.getenv("MCP_AUDIT_LOG_ROTATE_BACKUP_COUNT", "5"))
-
-# Module-level audit log handler and lock
-_AUDIT_LOG_HANDLER = None
-_AUDIT_LOG_HANDLER_INIT_LOCK = Lock()
-
-def _get_audit_handler():
-    global _AUDIT_LOG_HANDLER
-    if _AUDIT_LOG_HANDLER is not None:
-        return _AUDIT_LOG_HANDLER
-    with _AUDIT_LOG_HANDLER_INIT_LOCK:
-        if _AUDIT_LOG_HANDLER is not None:
-            return _AUDIT_LOG_HANDLER
-        log_path = _audit_log_file
-        log_dir = os.path.dirname(log_path)
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
-        if _audit_log_rotate_enabled:
-            handler = RotatingFileHandler(
-                log_path,
-                maxBytes=_audit_log_rotate_max_bytes,
-                backupCount=_audit_log_rotate_backup_count,
-                encoding="utf-8"
-            )
-        else:
-            handler = logging.FileHandler(log_path, encoding="utf-8")
-        handler.setLevel(logging.INFO)
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        _AUDIT_LOG_HANDLER = handler
-        return handler
-
-
-# --- Simple Connection Pool Implementation ---
-import queue
-
-_CONN_POOLS: dict[int, queue.Queue] = {}
-_CONN_POOL_LOCKS: dict[int, Lock] = {}
-
-
-
-def initialize_connection_pools():
-    """Call this at server startup, not on import. Safe for tests."""
-    for inst, cfg in SETTINGS.db_instances.items():
-        pool_size = SETTINGS.db_pool_sizes.get(inst, 1)
-        if pool_size > 1:
-            _CONN_POOLS[inst] = queue.Queue(maxsize=pool_size)
-            _CONN_POOL_LOCKS[inst] = Lock()
-            # Pre-fill pool with live connections
-            for _ in range(pool_size):
-                try:
-                    conn = pyodbc.connect(_connection_string(cfg["db_name"], inst), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
-                    conn.autocommit = True
-                    _CONN_POOLS[inst].put(conn)
-                except Exception as e:
-                    logger.warning(f"Failed to prefill connection pool for instance {inst}: {e}")
-
-def get_instance_config(instance: int = 1) -> dict[str, str | int]:
-    if instance not in SETTINGS.db_instances:
-        raise RuntimeError(f"Database instance {instance} is not configured.")
-    return SETTINGS.db_instances[instance]
-
-
-def _env(name: str, default: str = "") -> str:
-    return os.getenv(name, default)
-
-
-def _env_int(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if not value:
-        return default
-    return int(value)
-
-
-def _env_optional_int(name: str) -> int | None:
-    value = os.getenv(name)
-    if value is None:
-        return None
-    value = value.strip()
-    if value == "":
-        return None
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        logger.warning("Invalid integer value for %s: %r", name, value)
-        return None
-    if parsed <= 0:
-        return None
-    return parsed
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on", "y"}
-
-
-
-def _load_settings() -> Settings:
-    # Load up to 2 instances: DB_01_*, DB_02_*, fallback to DB_* for instance 1
-    def load_instance(idx: int) -> dict[str, str | int]:
-        prefix = f"DB_{idx:02d}_"
-        get = lambda k, default=None: os.getenv(prefix + k, default)
-        # Fallback for instance 1: support legacy DB_*
-        if idx == 1:
-            get = lambda k, default=None: os.getenv(prefix + k, os.getenv("DB_" + k, default))
-        port_val = get("PORT") or get("SQL_PORT") or "1433"
-        try:
-            db_port = int(port_val)
-            # Optional: validate port range
-            if not (0 < db_port < 65536):
-                db_port = 1433
-        except (ValueError, TypeError):
-            db_port = 1433
-        return {
-            "db_server": get("SERVER") or get("SQL_SERVER") or "",
-            "db_port": db_port,
-            "db_user": get("USER") or get("SQL_USER") or "",
-            "db_password": get("PASSWORD") or get("SQL_PASSWORD") or "",
-            "db_name": get("NAME") or get("SQL_DATABASE") or "master",
-            "db_driver": get("DRIVER") or get("SQL_DRIVER") or "ODBC Driver 17 for SQL Server",
-            "db_encrypt": get("ENCRYPT", "no") or "no",
-            "db_trust_cert": get("TRUST_CERT", "yes") or "yes",
-        }
-    db_instances = {}
-    db_pool_sizes = {}
-    for idx in (1, 2):
-        inst = load_instance(idx)
-        if inst["db_server"] and inst["db_user"] and inst["db_password"]:
-            db_instances[idx] = inst
-            # Pool size: DB_01_POOL_SIZE, DB_02_POOL_SIZE, fallback default 10
-            pool_env = f"DB_{idx:02d}_POOL_SIZE"
-            try:
-                pool_size = int(os.getenv(pool_env, "10"))
-                if pool_size <= 0:
-                    pool_size = 10
-            except (TypeError, ValueError):
-                pool_size = 10
-            db_pool_sizes[idx] = pool_size
-    return Settings(
-        db_instances=db_instances,
-        db_pool_sizes=db_pool_sizes,
-        statement_timeout_ms=_env_int("MCP_STATEMENT_TIMEOUT_MS", 120000),
-        max_rows=_env_int("MCP_MAX_ROWS", 500),
-        allow_write=_env_bool("MCP_ALLOW_WRITE", False),
-        confirm_write=_env_bool("MCP_CONFIRM_WRITE", False),
-        transport=_env("MCP_TRANSPORT", "http").lower(),
-        host=_env("MCP_HOST", "0.0.0.0"),
-        port=_env_int("MCP_PORT", 8000),
-        auth_type=_env("FASTMCP_AUTH_TYPE", "").lower(),
-        api_key=_env("FASTMCP_API_KEY", ""),
-        allow_query_token_auth=_env_bool("MCP_ALLOW_QUERY_TOKEN_AUTH", False),
-        public_base_url=_env("MCP_PUBLIC_BASE_URL", "").strip(),
-        ssl_cert=_env("MCP_SSL_CERT", "").strip(),
-        ssl_key=_env("MCP_SSL_KEY", "").strip(),
-        ssl_strict=_env_bool("MCP_SSL_STRICT", False),
-        table_scope_enforced=_env_bool("MCP_TABLE_SCOPE_ENFORCED", False),
-        allowed_tables=_env("MCP_ALLOWED_TABLES", "").strip(),
-        rate_limit_enabled=_env_bool("MCP_RATE_LIMIT_ENABLED", True),
-        rate_limit_window_seconds=_env_int("MCP_RATE_LIMIT_WINDOW_SECONDS", 60),
-        rate_limit_max_requests=_env_int("MCP_RATE_LIMIT_MAX_REQUESTS", 240),
-        rate_limit_breaker_seconds=_env_int("MCP_RATE_LIMIT_BREAKER_SECONDS", 60),
-        rate_limit_breaker_violations=_env_int("MCP_RATE_LIMIT_BREAKER_VIOLATIONS", 3),
-        audit_log_queries=_env_bool("MCP_AUDIT_LOG_QUERIES", False),
-        audit_log_file=_env("MCP_AUDIT_LOG_FILE", "mcp_query_audit.jsonl").strip() or "mcp_query_audit.jsonl",
-        audit_log_include_params=_env_bool("MCP_AUDIT_LOG_INCLUDE_PARAMS", False),
-        allow_raw_prompts=_env_bool("MCP_ALLOW_RAW_PROMPTS", _env_bool("ALLOW_RAW_PROMPTS", False)),
-        tool_search_enabled=_env_bool("MCP_TOOL_SEARCH_ENABLED", False),
-        tool_search_strategy=_env("MCP_TOOL_SEARCH_STRATEGY", "regex").strip().lower(),
-        tool_search_max_results=_env_optional_int("MCP_TOOL_SEARCH_MAX_RESULTS"),
-        tool_search_always_visible=_env("MCP_TOOL_SEARCH_ALWAYS_VISIBLE", "").strip(),
-        tool_search_tool_name=_env("MCP_TOOL_SEARCH_TOOL_NAME", "search_tools").strip(),
-        tool_call_tool_name=_env("MCP_TOOL_CALL_TOOL_NAME", "call_tool").strip(),
-    )
-
+def _configure_logging(log_level: str) -> None:
+    logging.getLogger().setLevel(getattr(logging, log_level, logging.INFO))
 
 SETTINGS = _load_settings()
 
-_PYODBC_CONNECT_LOCK = Lock() if sys.platform == "win32" else None
-_AUDIT_LOG_LOCK = Lock()
-_RATE_LIMIT_LOCK = Lock()
-_DEFAULT_API_CALLER = "system:local"
-_API_CALLER_CONTEXT: ContextVar[str] = ContextVar("api_caller", default=_DEFAULT_API_CALLER)
-_RATE_LIMIT_REQUESTS: dict[str, list[float]] = {}
-_RATE_LIMIT_VIOLATIONS: dict[str, int] = {}
-_RATE_LIMIT_BLOCKED_UNTIL: dict[str, float] = {}
-_RATE_LIMIT_CHECK_COUNTER = 0
-_RATE_LIMIT_CLEANUP_EVERY_REQUESTS = 256
-_SCOPE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# --- Helper Functions ---
+def get_instance_config(instance_id: str) -> Dict[str, Any]:
+    config = SETTINGS["connections"].get(instance_id)
+    if not config:
+        raise ValueError(f"SQL Server instance '{instance_id}' not found in configuration.")
+    return config
 
-
-def _parse_allowed_table_patterns(raw_value: str) -> set[str]:
-    patterns: set[str] = set()
-    if not raw_value:
-        return patterns
-
-    for item in raw_value.split(","):
-        pattern = item.strip().lower()
-        if not pattern:
-            continue
-        if "." not in pattern:
-            raise ValueError(f"Invalid table scope pattern: {item!r}. Use schema.table format.")
-        schema_name, table_name = pattern.split(".", 1)
-        schema_valid = schema_name == "*" or bool(_SCOPE_IDENTIFIER_RE.fullmatch(schema_name))
-        table_valid = table_name == "*" or bool(_SCOPE_IDENTIFIER_RE.fullmatch(table_name))
-        if not schema_valid or not table_valid:
-            raise ValueError(f"Invalid table scope pattern: {item!r}. Use identifiers and optional '*' wildcard.")
-        patterns.add(f"{schema_name}.{table_name}")
-
-    return patterns
-
-
-_TABLE_SCOPE_PATTERNS = _parse_allowed_table_patterns(SETTINGS.allowed_tables)
-
-
-def _validate_runtime_guards() -> None:
-    if SETTINGS.allow_write and not SETTINGS.confirm_write:
-        raise RuntimeError("Write mode requires MCP_CONFIRM_WRITE=true.")
-    if SETTINGS.allow_write and SETTINGS.transport in {"http", "sse"} and SETTINGS.auth_type in {"", "none"}:
-        raise RuntimeError("Write mode over HTTP requires FASTMCP_AUTH_TYPE.")
-    if SETTINGS.table_scope_enforced and not _TABLE_SCOPE_PATTERNS:
-        raise RuntimeError("MCP_TABLE_SCOPE_ENFORCED=true requires MCP_ALLOWED_TABLES.")
-    if SETTINGS.rate_limit_window_seconds <= 0:
-        raise RuntimeError("MCP_RATE_LIMIT_WINDOW_SECONDS must be > 0.")
-    if SETTINGS.rate_limit_max_requests <= 0:
-        raise RuntimeError("MCP_RATE_LIMIT_MAX_REQUESTS must be > 0.")
-    if SETTINGS.rate_limit_breaker_seconds <= 0:
-        raise RuntimeError("MCP_RATE_LIMIT_BREAKER_SECONDS must be > 0.")
-    if SETTINGS.rate_limit_breaker_violations <= 0:
-        raise RuntimeError("MCP_RATE_LIMIT_BREAKER_VIOLATIONS must be > 0.")
-    if SETTINGS.tool_search_enabled and SETTINGS.tool_search_strategy not in {"regex", "bm25"}:
-        raise RuntimeError("MCP_TOOL_SEARCH_STRATEGY must be 'regex' or 'bm25'.")
-
-
-_validate_runtime_guards()
-
-
-def _is_table_allowed(schema_name: str, table_name: str) -> bool:
-    if not SETTINGS.table_scope_enforced:
-        return True
-
-    schema_norm = (schema_name or "").strip().lower() or "dbo"
-    table_norm = (table_name or "").strip().lower()
-    if not table_norm:
-        return False
-
-    for pattern in _TABLE_SCOPE_PATTERNS:
-        pattern_schema, pattern_table = pattern.split(".", 1)
-        schema_ok = pattern_schema == "*" or pattern_schema == schema_norm
-        table_ok = pattern_table == "*" or pattern_table == table_norm
-        if schema_ok and table_ok:
-            return True
-    return False
-
-
-def _enforce_table_scope_for_ident(schema_name: str, table_name: str) -> None:
-    if SETTINGS.table_scope_enforced and not _is_table_allowed(schema_name, table_name):
-        raise ValueError(f"Access denied by table scope policy for {schema_name}.{table_name}.")
-
-
-def _strip_identifier_quotes(value: str) -> str:
-    s = value.strip()
-    if s.startswith("[") and s.endswith("]") and len(s) >= 2:
-        s = s[1:-1]
-    if s.startswith('"') and s.endswith('"') and len(s) >= 2:
-        s = s[1:-1]
-    return s.strip().lower()
-
-
-def _extract_referenced_tables(sql: str) -> list[tuple[str, str]]:
-    cleaned = _strip_sql_comments_and_literals(sql)
-    ident = r"(?:\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_]*)"
-    object_ref = rf"(?:{ident}\s*\.\s*{ident}|{ident})"
-    cte_patterns = [
-        # CTE declarations can include an optional column list before AS.
-        re.compile(rf"\bwith\s+({ident})(?:\s*\([^\)]*\))?\s+as\s*\(", flags=re.I),
-        re.compile(rf",\s*({ident})(?:\s*\([^\)]*\))?\s+as\s*\(", flags=re.I),
+def get_connection_string(instance_config: Dict[str, Any], db_name: Optional[str] = None) -> str:
+    conn_str_parts = [
+        f"DRIVER={instance_config['driver']}",
+        f"SERVER={instance_config['server']}",
     ]
+    if db_name:
+        conn_str_parts.append(f"DATABASE={db_name}")
+    if instance_config.get("port"):
+        conn_str_parts.append(f"PORT={instance_config['port']}")
+    if instance_config.get("username"):
+        conn_str_parts.append(f"UID={instance_config['username']}")
+    if instance_config.get("password"):
+        conn_str_parts.append(f"PWD={instance_config['password']}")
+    if instance_config.get("encrypt"):
+        conn_str_parts.append(f"Encrypt={instance_config['encrypt']}")
+    if instance_config.get("trust_server_certificate"):
+        conn_str_parts.append(f"TrustServerCertificate={instance_config['trust_server_certificate']}")
+    if instance_config.get("connection_timeout"):
+        conn_str_parts.append(f"Connection Timeout={instance_config['connection_timeout']}")
+    return ";".join(conn_str_parts)
 
-    cte_aliases: set[str] = set()
-    for pattern in cte_patterns:
-        for match in pattern.finditer(cleaned):
-            cte_alias = _strip_identifier_quotes(match.group(1).strip())
-            if cte_alias:
-                cte_aliases.add(cte_alias)
-
-    patterns = [
-        re.compile(rf"\b(?:from|join)\s+({object_ref})", flags=re.I),
-        re.compile(rf"\b(?:insert(?:\s+into)?|update|merge(?:\s+into)?)\s+({object_ref})", flags=re.I),
-        # This matches only DELETE FROM <table>; alias forms (DELETE t FROM ...)
-        # are resolved by the separate FROM/JOIN extraction pattern above.
-        re.compile(rf"\bdelete\s+from\s+({object_ref})", flags=re.I),
-    ]
-    references: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for pattern in patterns:
-        for match in pattern.finditer(cleaned):
-            raw_target = match.group(1).strip()
-            if raw_target.startswith("("):
-                continue
-            parts = [p.strip() for p in raw_target.split(".")]
-            if len(parts) == 2:
-                schema_name = _strip_identifier_quotes(parts[0])
-                table_name = _strip_identifier_quotes(parts[1])
-            else:
-                schema_name = "dbo"
-                table_name = _strip_identifier_quotes(parts[0])
-
-            # Ignore CTE aliases when they appear as FROM/JOIN targets.
-            if len(parts) == 1 and table_name in cte_aliases:
-                continue
-
-            if table_name:
-                entry = (schema_name, table_name)
-                if entry not in seen:
-                    seen.add(entry)
-                    references.append(entry)
-    return references
-
-
-def _enforce_table_scope_for_sql(sql: str) -> None:
-    if not SETTINGS.table_scope_enforced:
-        return
-    for schema_name, table_name in _extract_referenced_tables(sql):
-        _enforce_table_scope_for_ident(schema_name, table_name)
-
-
-def _parse_schema_qualified_name(object_name: str, default_schema: str = "dbo") -> tuple[str, str]:
-    raw = (object_name or "").strip()
-    if not raw:
-        raise ValueError("object_name is required")
-
-    match = re.fullmatch(
-        r"\s*(?:\[(?P<schema_br>[^\]]+)\]|(?P<schema_plain>[^.\[\]]+))\s*\.\s*(?:\[(?P<table_br>[^\]]+)\]|(?P<table_plain>[^.\[\]]+))\s*",
-        raw,
-    )
-    if match:
-        schema_name = (match.group("schema_br") or match.group("schema_plain") or "").strip()
-        table_name = (match.group("table_br") or match.group("table_plain") or "").strip()
-        if not schema_name or not table_name:
-            raise ValueError(f"Invalid object_name: {object_name!r}")
-        return schema_name, table_name
-
-    table_name = raw
-    if table_name.startswith("[") and table_name.endswith("]") and len(table_name) >= 2:
-        table_name = table_name[1:-1].strip()
-    if not table_name:
-        raise ValueError(f"Invalid object_name: {object_name!r}")
-    return default_schema, table_name
-
-
-def _current_api_caller() -> str:
-    caller = (_API_CALLER_CONTEXT.get() or "").strip()
-    if not caller or caller.lower() == "unknown":
-        return _DEFAULT_API_CALLER
-    return caller
-
-
-def _extract_jwt_subject(token: str) -> str | None:
-    parts = token.split(".")
-    if len(parts) != 3:
-        return None
-    payload_part = parts[1]
-    padding = "=" * ((4 - len(payload_part) % 4) % 4)
+@contextlib.contextmanager
+def get_connection(db_name: Optional[str] = None, instance: int = 1):
+    instance_id = str(instance)
+    instance_config = get_instance_config(instance_id)
+    conn_str = get_connection_string(instance_config, db_name)
+    logging.debug(f"Attempting to connect with connection string: {conn_str}")
+    conn = None
     try:
-        payload_bytes = base64.urlsafe_b64decode((payload_part + padding).encode("ascii"))
-        payload = json.loads(payload_bytes.decode("utf-8"))
-    except Exception:
-        return None
-    subject = payload.get("sub")
-    if not isinstance(subject, str) or not subject.strip():
-        return None
-    return subject.strip()
+        conn = pyodbc.connect(conn_str, timeout=SETTINGS["query_timeout"])
+        yield conn
+    except pyodbc.Error as ex:
+        sqlstate = ex.args[0]
+        logging.error(f"Database connection error (SQLSTATE: {sqlstate}): {ex}")
+        raise
+    finally:
+        if conn:
+            conn.close()
 
-
-def _write_query_audit_record(
-    tool_name: str,
-    database_name: str,
-    sql: str,
-    params_json: str | None = None,
-    prompt_context: str | None = None,
-) -> None:
-    if not SETTINGS.audit_log_queries:
-        return
-
-    prompt_sha256: str | None = None
-    prompt_redaction_token: str | None = None
-    if prompt_context:
-        prompt_redaction_token, prompt_sha256 = sanitize_prompt(prompt_context)
-
-    sql_sha256 = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-    prompt_storage_mode = "raw_opt_in" if SETTINGS.allow_raw_prompts else "hashed_redacted"
-    redacted_sql = f"[REDACTED_SQL:{sql_sha256[:12]}]"
-
-    payload: dict[str, Any] = {
-        "timestamp": _now_utc_iso(),
-        "event": "query_execution",
-        "tool": tool_name,
-        "database": database_name,
-        "api_caller": _current_api_caller(),
-        "redacted_sql": redacted_sql,
-        "sql_sha256": sql_sha256,
-        "sql_anonymized_hash": f"sha256:{sql_sha256}",
-        "prompt_sha256": prompt_sha256,
-        "prompt_redaction_token": prompt_redaction_token,
-        "prompt_storage_mode": prompt_storage_mode,
-        # Use db_user from instance 1 config if available
-        "db_user": get_instance_config(1).get("db_user", "") if 1 in SETTINGS.db_instances else "",
-    }
-    if SETTINGS.allow_raw_prompts and prompt_context:
-        payload["prompt"] = prompt_context
-        payload["raw_prompt_storage_enabled"] = True
-    if SETTINGS.audit_log_include_params:
-        payload["params_json"] = params_json
-
-
-    line = json.dumps(payload, ensure_ascii=False, default=str)
-    handler = _get_audit_handler()
-    record = logging.LogRecord(
-        name="mcp_sqlserver.audit",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=0,
-        msg=line,
-        args=(),
-        exc_info=None
-    )
-    with _AUDIT_LOG_LOCK:
-        handler.emit(record)
-
-
-def sanitize_prompt(prompt_context: str) -> tuple[str, str]:
-    prompt_sha256 = hashlib.sha256(prompt_context.encode("utf-8")).hexdigest()
-    return f"[REDACTED_PROMPT:{prompt_sha256[:12]}]", prompt_sha256
-
-
-def _rate_limit_cleanup(now: float | None = None) -> int:
-    current = now if now is not None else time.monotonic()
-    stale_threshold = current - (SETTINGS.rate_limit_window_seconds + SETTINGS.rate_limit_breaker_seconds)
-
-    with _RATE_LIMIT_LOCK:
-        stale_keys: list[str] = []
-        for key, timestamps in _RATE_LIMIT_REQUESTS.items():
-            if not timestamps:
-                stale_keys.append(key)
-                continue
-            if max(timestamps) < stale_threshold:
-                stale_keys.append(key)
-
-        for key in stale_keys:
-            _RATE_LIMIT_REQUESTS.pop(key, None)
-            _RATE_LIMIT_VIOLATIONS.pop(key, None)
-            _RATE_LIMIT_BLOCKED_UNTIL.pop(key, None)
-
-    return len(stale_keys)
-
-
-def _rate_limit_check(client_key: str) -> tuple[bool, int | None]:
-    if not SETTINGS.rate_limit_enabled:
-        return True, None
-
-    global _RATE_LIMIT_CHECK_COUNTER
-    now = time.monotonic()
-
-    run_cleanup = False
-    with _RATE_LIMIT_LOCK:
-        _RATE_LIMIT_CHECK_COUNTER += 1
-        if _RATE_LIMIT_CHECK_COUNTER >= _RATE_LIMIT_CLEANUP_EVERY_REQUESTS:
-            _RATE_LIMIT_CHECK_COUNTER = 0
-            run_cleanup = True
-
-    if run_cleanup:
-        _rate_limit_cleanup(now)
-
-    with _RATE_LIMIT_LOCK:
-        blocked_until = _RATE_LIMIT_BLOCKED_UNTIL.get(client_key, 0.0)
-        if blocked_until > now:
-            retry_after = max(1, int(blocked_until - now))
-            return False, retry_after
-
-        request_times = _RATE_LIMIT_REQUESTS.get(client_key, [])
-        window_start = now - SETTINGS.rate_limit_window_seconds
-        request_times = [t for t in request_times if t >= window_start]
-
-        if len(request_times) >= SETTINGS.rate_limit_max_requests:
-            violations = _RATE_LIMIT_VIOLATIONS.get(client_key, 0) + 1
-            _RATE_LIMIT_VIOLATIONS[client_key] = violations
-            if violations >= SETTINGS.rate_limit_breaker_violations:
-                _RATE_LIMIT_BLOCKED_UNTIL[client_key] = now + SETTINGS.rate_limit_breaker_seconds
-                _RATE_LIMIT_REQUESTS[client_key] = request_times
-                return False, SETTINGS.rate_limit_breaker_seconds
-
-            retry_after = SETTINGS.rate_limit_window_seconds
-            if request_times:
-                oldest_request_time = request_times[0]
-                retry_after = max(
-                    1,
-                    int((oldest_request_time + SETTINGS.rate_limit_window_seconds) - now),
-                )
-            _RATE_LIMIT_REQUESTS[client_key] = request_times
-            return False, retry_after
-
-        request_times.append(now)
-        _RATE_LIMIT_REQUESTS[client_key] = request_times
-        if _RATE_LIMIT_VIOLATIONS.get(client_key, 0) > 0 and len(request_times) < SETTINGS.rate_limit_max_requests // 2:
-            _RATE_LIMIT_VIOLATIONS[client_key] = max(0, _RATE_LIMIT_VIOLATIONS.get(client_key, 0) - 1)
-        return True, None
-
-
-
-def _connection_string(database: str | None = None, instance: int = 1) -> str:
-    validate_instance(instance)
-    inst = SETTINGS.db_instances.get(instance)
-    if not inst:
-        raise RuntimeError(f"No database instance configured for instance={instance}. Valid options: 1 (SETTINGS.db_01), 2 (SETTINGS.db_02)")
-    db_name = database or inst["db_name"]
-    return (
-        f"DRIVER={{{inst['db_driver']}}};"
-        f"SERVER={inst['db_server']},{inst['db_port']};"
-        f"DATABASE={db_name};"
-        f"UID={inst['db_user']};"
-        f"PWD={inst['db_password']};"
-        f"Encrypt={inst['db_encrypt']};"
-        f"TrustServerCertificate={inst['db_trust_cert']};"
-    )
-
-
-
-
-from typing import Union
-
-def get_connection(database: str | None = None, instance: int = 1) -> Union[pyodbc.Connection, 'PooledConnection']:
-    validate_instance(instance)
-    pool = _CONN_POOLS.get(instance)
-    pool_lock = _CONN_POOL_LOCKS.get(instance)
-    if pool and pool_lock:
-        # Try to get a pooled connection, else create new if pool is empty
+def _execute_query(sql: str, db_name: Optional[str] = None, instance: int = 1, params: Optional[Tuple] = None, fetchall: bool = True) -> List[Dict[str, Any]]:
+    logging.debug(f"Executing SQL query:
+{sql}")
+    if params:
+        logging.debug(f"With parameters: {params}")
+    with get_connection(db_name, instance) as conn:
+        cursor = conn.cursor()
         try:
-            conn = pool.get(timeout=5)
-            # Validate connection is alive
-            try:
-                cur = conn.cursor()
-                cur.execute("SELECT 1")
-            except Exception:
-                # Connection is dead, replace
-                conn.close()
-                conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
-                conn.autocommit = True
-        except queue.Empty:
-            # Pool exhausted, create new connection (not pooled)
-            conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
-            conn.autocommit = True
-
-        # Return a wrapped connection with pooled close
-        return PooledConnection(conn, pool)
-    else:
-        # No pool, fallback to direct connect
-        if _PYODBC_CONNECT_LOCK is not None:
-            with _PYODBC_CONNECT_LOCK:
-                conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
-        else:
-            conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
-        conn.autocommit = True
-        return conn
-
-
-def _execute_safe(cur: pyodbc.Cursor, sql: str, params: list[Any] | tuple[Any, ...] | None = None) -> None:
-    if params is None:
-        cur.execute(sql)
-    else:
-        cur.execute(sql, params)
-
-
-def _fetch_limited(cur: pyodbc.Cursor, max_rows: int) -> list[Any]:
-    if max_rows <= 0:
-        return []
-    return cur.fetchmany(max_rows)
-
-
-def _rows_to_dicts(cur: pyodbc.Cursor, rows: Sequence[Any]) -> list[dict[str, Any]]:
-    if not rows or not cur.description:
-        return []
-    columns = [col[0] for col in cur.description]
-    out: list[dict[str, Any]] = []
-    for row in rows:
-        item: dict[str, Any] = {}
-        for index, value in enumerate(row):
-            if isinstance(value, (datetime,)):
-                item[columns[index]] = value.isoformat()
-            else:
-                item[columns[index]] = value
-        out.append(item)
-    return out
-
-
-DEFAULT_TOOL_PAGE_SIZE = 10
-MAX_TOOL_PAGE_SIZE = 200
-
-
-def _normalize_tool_pagination(page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> tuple[int, int]:
-    safe_page = page if isinstance(page, int) and page > 0 else 1
-    safe_page_size = page_size if isinstance(page_size, int) and page_size > 0 else DEFAULT_TOOL_PAGE_SIZE
-    safe_page_size = min(MAX_TOOL_PAGE_SIZE, safe_page_size)
-    return safe_page, safe_page_size
-
-
-def _paginate_sequence(items: Sequence[Any], page: int, page_size: int) -> tuple[list[Any], dict[str, int]]:
-    total_items = len(items)
-    total_pages = max(1, (total_items + page_size - 1) // page_size)
-    safe_page = min(page, total_pages)
-    start = (safe_page - 1) * page_size
-    paged_items = list(items[start:start + page_size])
-    return paged_items, {
-        "page": safe_page,
-        "page_size": page_size,
-        "total_items": total_items,
-        "total_pages": total_pages,
-    }
-
-
-def _paginate_lists_in_object(value: Any, page: int, page_size: int, path: str) -> tuple[Any, dict[str, dict[str, int]]]:
-    if isinstance(value, list):
-        paged_items, pagination = _paginate_sequence(value, page, page_size)
-        return paged_items, {path: pagination}
-
-    if isinstance(value, dict):
-        transformed: dict[str, Any] = {}
-        list_pagination: dict[str, dict[str, int]] = {}
-        for key, item in value.items():
-            transformed_item, item_pagination = _paginate_lists_in_object(item, page, page_size, f"{path}.{key}")
-            transformed[key] = transformed_item
-            list_pagination.update(item_pagination)
-        return transformed, list_pagination
-    
-    return value, {}
-
-
-def _paginate_tool_result(result: Any, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> Any:
-    safe_page, safe_page_size = _normalize_tool_pagination(page, page_size)
-
-    if isinstance(result, list):
-        paged_items, pagination = _paginate_sequence(result, safe_page, safe_page_size)
-        return {
-            "items": paged_items,
-            "pagination": pagination,
-        }
-
-    if isinstance(result, dict):
-        transformed, list_pagination = _paginate_lists_in_object(result, safe_page, safe_page_size, "root")
-        if list_pagination:
-            transformed["_pagination"] = {
-                "page": safe_page,
-                "page_size": safe_page_size,
-                "lists": list_pagination,
-            }
-        return transformed
-
-    return result
-
-
-def _estimate_tokens(value: Any) -> int:
-    try:
-        payload = json.dumps(value, default=str, ensure_ascii=False)
-    except Exception:
-        payload = str(value)
-    return max(1, len(payload) // 4)
-
-
-def _shrink_lists(value: Any, max_items: int) -> Any:
-    if isinstance(value, list):
-        return [_shrink_lists(item, max_items) for item in value[:max_items]]
-    if isinstance(value, dict):
-        return {key: _shrink_lists(item, max_items) for key, item in value.items()}
-    return value
-
-
-def _apply_token_budget(result: Any, token_budget: int | None) -> Any:
-    if token_budget is None or token_budget <= 0:
-        return result
-
-    estimated = _estimate_tokens(result)
-    if estimated <= token_budget:
-        return result
-
-    for max_items in (50, 25, 10, 5, 3, 1):
-        candidate = _shrink_lists(result, max_items)
-        estimated_candidate = _estimate_tokens(candidate)
-        if estimated_candidate <= token_budget:
-            if isinstance(candidate, dict):
-                candidate["_truncation"] = {
-                    "applied": True,
-                    "token_budget": token_budget,
-                    "estimated_tokens": estimated_candidate,
-                    "list_max_items": max_items,
-                }
-            return candidate
-
-    fallback = {
-        "summary": "Result exceeds token budget and was compacted to minimal payload.",
-        "_truncation": {
-            "applied": True,
-            "token_budget": token_budget,
-            "estimated_tokens": _estimate_tokens(result),
-            "list_max_items": 0,
-        },
-    }
-    if isinstance(result, dict):
-        for key in ("database", "schema", "table_info"):
-            if key in result:
-                fallback[key] = result.get(key)
-        if "summary" in result and isinstance(result.get("summary"), dict):
-            fallback["original_summary"] = result.get("summary")
-    return fallback
-
-
-def _build_projection_tree(paths: list[list[str]]) -> dict[str, Any]:
-    tree: dict[str, Any] = {}
-    for parts in paths:
-        node = tree
-        for part in parts:
-            node = node.setdefault(part, {})
-        node["__leaf__"] = True
-    return tree
-
-
-def _project_with_tree(value: Any, tree: dict[str, Any]) -> Any:
-    if not tree or tree.get("__leaf__"):
-        return value
-
-    if isinstance(value, dict):
-        projected: dict[str, Any] = {}
-        for key, subtree in tree.items():
-            if key == "__leaf__":
-                continue
-            if key not in value:
-                continue
-            child = _project_with_tree(value.get(key), subtree)
-            if child is not None:
-                projected[key] = child
-        return projected or None
-
-    if isinstance(value, list):
-        items: list[Any] = []
-        for item in value:
-            child = _project_with_tree(item, tree)
-            if child is not None:
-                items.append(child)
-        return items or None
-
-    return None
-
-
-def _apply_field_projection(result: Any, fields: str | None) -> Any:
-    if not fields or not isinstance(result, dict):
-        return result
-
-    parsed_fields = [item.strip() for item in fields.split(",") if item.strip()]
-    if not parsed_fields:
-        return result
-
-    path_parts = [[segment for segment in path.split(".") if segment] for path in parsed_fields]
-    path_parts = [parts for parts in path_parts if parts]
-    if not path_parts:
-        return result
-
-    projection_tree = _build_projection_tree(path_parts)
-    projected = _project_with_tree(result, projection_tree)
-    if not isinstance(projected, dict):
-        return result
-
-    for metadata_key in ("pagination", "_pagination", "_truncation"):
-        if metadata_key in result and metadata_key not in projected:
-            projected[metadata_key] = result[metadata_key]
-
-    return projected or result
-
-
-def _slice_query_text(value: Any, max_chars: int = 240) -> Any:
-    if not isinstance(value, str):
-        return value
-    compact = " ".join(value.split())
-    if len(compact) <= max_chars:
-        return compact
-    return f"{compact[:max_chars]}…"
-
-
-def _apply_top_queries_view(result: dict[str, Any], view: str) -> dict[str, Any]:
-    if view == "full":
-        return result
-
-    compact_keys = ["long_running_queries", "high_cpu_queries", "high_io_queries", "high_execution_queries"]
-    if view == "summary":
-        return {
-            "database": result.get("database"),
-            "query_store_enabled": result.get("query_store_enabled"),
-            "query_store_config": result.get("query_store_config"),
-            "summary": result.get("summary", {}),
-            "recommendations": result.get("recommendations", []),
-        }
-
-    transformed = dict(result)
-    for key in compact_keys:
-        queries = transformed.get(key)
-        if isinstance(queries, list):
-            transformed[key] = [
-                {
-                    **query,
-                    "query_sql_text": _slice_query_text(query.get("query_sql_text"), 240),
-                }
-                for query in queries
-            ]
-    return transformed
-
-
-def _apply_table_health_view(result: dict[str, Any], view: str) -> dict[str, Any]:
-    if view == "full":
-        return result
-
-    indexes = result.get("indexes", [])
-    foreign_keys = result.get("foreign_keys", [])
-    statistics_sample = result.get("statistics_sample", [])
-    health_analysis = result.get("health_analysis", {})
-    recommendations = result.get("recommendations", [])
-
-    if view == "summary":
-        return {
-            "table_info": result.get("table_info", {}),
-            "health_summary": {
-                "indexes_count": len(indexes) if isinstance(indexes, list) else 0,
-                "foreign_keys_count": len(foreign_keys) if isinstance(foreign_keys, list) else 0,
-                "statistics_count": len(statistics_sample) if isinstance(statistics_sample, list) else 0,
-                "constraint_issues_count": len(health_analysis.get("constraint_issues", [])) if isinstance(health_analysis, dict) else 0,
-                "recommendations_count": len(recommendations) if isinstance(recommendations, list) else 0,
-            },
-            "recommendations": recommendations,
-        }
-
-    transformed = dict(result)
-    if isinstance(indexes, list):
-        transformed["indexes"] = indexes[:10]
-    if isinstance(statistics_sample, list):
-        transformed["statistics_sample"] = statistics_sample[:10]
-    return transformed
-
-
-def _apply_logical_model_view(result: dict[str, Any], view: str) -> dict[str, Any]:
-    if view == "full":
-        return result
-
-    summary = result.get("summary", {})
-    logical_model = result.get("logical_model", {}) if isinstance(result.get("logical_model"), dict) else {}
-    recommendations = result.get("recommendations", {}) if isinstance(result.get("recommendations"), dict) else {}
-    issues = result.get("issues", {}) if isinstance(result.get("issues"), dict) else {}
-
-    if view == "summary":
-        return {
-            "summary": summary,
-            "sample_relationships": logical_model.get("relationships", [])[:10] if isinstance(logical_model.get("relationships"), list) else [],
-            "recommendations": {
-                "entities": recommendations.get("entities", [])[:5],
-                "attributes": recommendations.get("attributes", [])[:5],
-                "relationships": recommendations.get("relationships", [])[:5],
-                "identifiers": recommendations.get("identifiers", [])[:5],
-                "normalization": recommendations.get("normalization", [])[:5],
-            },
-        }
-
-    transformed = dict(result)
-    model_copy = dict(logical_model)
-    if isinstance(model_copy.get("entities"), list):
-        trimmed_entities: list[dict[str, Any]] = []
-        for entity in model_copy["entities"]:
-            if not isinstance(entity, dict):
-                continue
-            entity_copy = dict(entity)
-            attrs = entity_copy.get("attributes")
-            if isinstance(attrs, list):
-                entity_copy["attributes"] = attrs[:12]
-            trimmed_entities.append(entity_copy)
-        model_copy["entities"] = trimmed_entities
-    transformed["logical_model"] = model_copy
-
-    issues_copy = dict(issues)
-    for key in ("entities", "attributes", "relationships", "identifiers", "normalization"):
-        values = issues_copy.get(key)
-        if isinstance(values, list):
-            issues_copy[key] = values[:12]
-    transformed["issues"] = issues_copy
-    return transformed
-
-
-def _strip_sql_comments_and_literals(sql: str) -> str:
-    if not sql:
-        return ""
-    s = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
-    s = re.sub(r"--.*?(\r\n|\r|\n|$)", " ", s)
-    s = re.sub(r"'(?:''|[^'])*'", " ", s)
-    s = re.sub(r'"(?:""|[^"])*"', " ", s)
-    return s
-
-
-def _is_sql_readonly(sql: str) -> bool:
-    cleaned = _strip_sql_comments_and_literals(sql)
-    if not cleaned.strip():
-        return False
-    if re.search(
-        r"\b(insert|update|delete|merge|drop|create|alter|truncate|grant|revoke|deny|exec|execute|backup|restore|dbcc)\b",
-        cleaned,
-        flags=re.I,
-    ):
-        return False
-    return bool(re.search(r"\b(select|with)\b", cleaned, flags=re.I))
-
-
-def _require_readonly(sql: str) -> None:
-    if not _is_sql_readonly(sql):
-        raise ValueError("Write operations are disabled. Query contains write statements.")
-
-
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def _validate_identifier(value: str, label: str = "identifier") -> str:
-    if not value or not _IDENTIFIER_RE.fullmatch(value):
-        raise ValueError(f"Invalid {label}: {value!r}")
-    return value
-
-
-def _quoted_ident(value: str) -> str:
-    return f"[{value.replace(']', ']]')}]"
-
-
-def _execute_in_database(
-    cur: pyodbc.Cursor,
-    database_name: str,
-    sql: str,
-    params: list[Any] | tuple[Any, ...] | None = None,
-) -> None:
-    _validate_identifier(database_name, "database")
-    _execute_safe(cur, f"USE {_quoted_ident(database_name)}")
-    _execute_safe(cur, sql, params)
-
-
-def _ensure_write_enabled() -> None:
-    if not SETTINGS.allow_write:
-        raise ValueError("Write operations are disabled. Set MCP_ALLOW_WRITE=true and MCP_CONFIRM_WRITE=true.")
-
-
-
-# FastMCP app initialization
-MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server")
-mcp = FastMCP(name=MCP_SERVER_NAME)
-
-try:
-    import fastmcp
-    print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: {fastmcp.__version__}\n========================\n")
-except Exception:
-    print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: unknown\n========================\n")
-
-
-def _configure_tool_search_transform() -> None:
-    if not SETTINGS.tool_search_enabled:
-        return
-
-    strategy = SETTINGS.tool_search_strategy
-    kwargs: dict[str, Any] = {}
-    if SETTINGS.tool_search_max_results is not None:
-        kwargs["max_results"] = SETTINGS.tool_search_max_results
-
-    always_visible = [name.strip() for name in SETTINGS.tool_search_always_visible.split(",") if name.strip()]
-    if always_visible:
-        kwargs["always_visible"] = always_visible
-
-    if SETTINGS.tool_search_tool_name:
-        kwargs["search_tool_name"] = SETTINGS.tool_search_tool_name
-    if SETTINGS.tool_call_tool_name:
-        kwargs["call_tool_name"] = SETTINGS.tool_call_tool_name
-
-    try:
-        if strategy == "bm25":
-            from fastmcp.server.transforms.search import BM25SearchTransform as SearchTransform
-        else:
-            from fastmcp.server.transforms.search import RegexSearchTransform as SearchTransform
-    except Exception as exc:
-        logger.warning(
-            "Tool search transform requested but unavailable in current FastMCP runtime: %s",
-            exc,
-        )
-        return
-
-def _resolve_http_app() -> Any | None:
-    return None
-
-# --- db_sql2019_ping must be defined before registration ---
-
-# Place after get_instance_config
-def db_sql2019_ping(instance: int = 1) -> dict[str, Any]:
-    # Basic connectivity probe.
-    conn = get_connection(instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(cur, "SELECT 1 AS ok")
-        row = cur.fetchone()
-        inst_cfg = get_instance_config(instance)
-        return {
-            "status": "ok",
-            "database": inst_cfg.get("db_name"),
-            "server": inst_cfg.get("db_server"),
-            "result": int(row[0]) if row else 1,
-            "timestamp": _now_utc_iso(),
-        }
-    finally:
-        conn.close()
-
-
-def db_sql2019_list_databases(instance: int = 1, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
-    """List online databases visible to the current login."""
-    validate_instance(instance)
-    conn = get_connection("master", instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(
-            cur,
-            """
-            SELECT name
-            FROM sys.databases
-            WHERE state_desc = 'ONLINE'
-            ORDER BY name
-            """,
-        )
-        items = [row[0] for row in cur.fetchall()]
-        return _paginate_tool_result(items, page=page, page_size=page_size)
-    finally:
-        conn.close()
-
-
-def db_sql2019_list_tables(
-    instance: int = 1,
-    database_name: str | None = None,
-    schema_name: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """List tables for a database/schema."""
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = _normalize_db_name(db_name)
-    conn = get_connection(db_name_str, instance=instance)
-    try:
-        cur = conn.cursor()
-        if database_name:
-            _execute_safe(cur, f"USE [{database_name}]")
-        if schema_name:
-            _execute_safe(
-                cur,
-                """
-                SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date
-                FROM INFORMATION_SCHEMA.TABLES t
-                JOIN sys.tables p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)
-                WHERE t.TABLE_TYPE = 'BASE TABLE' AND t.TABLE_SCHEMA = ?
-                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
-                """,
-                [schema_name],
-            )
-        else:
-            _execute_safe(
-                cur,
-                """
-                SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date
-                FROM INFORMATION_SCHEMA.TABLES t
-                JOIN sys.tables p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)
-                WHERE t.TABLE_TYPE = 'BASE TABLE'
-                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
-                """,
-            )
-        rows = cur.fetchall()
-        items = [
-            {
-                "schema_name": row[0],
-                "table_name": row[1],
-                "create_date": row[2].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[2] else None,
-                "modify_date": row[3].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[3] else None,
-            }
-            for row in rows
-            if _is_table_allowed(str(row[0] or "dbo"), str(row[1] or ""))
-        ]
-        return _paginate_tool_result(items, page=page, page_size=page_size)
-    finally:
-        conn.close()
-
-
-def db_sql2019_get_schema(
-    instance: int = 1,
-    database_name: str | None = None,
-    table_name: str | None = None,
-    schema_name: str = "dbo",
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """Get column metadata for a table."""
-    if not table_name:
-        raise ValueError("table_name is required")
-    validate_instance(instance)
-    _enforce_table_scope_for_ident(schema_name, table_name)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = _normalize_db_name(db_name)
-    conn = get_connection(db_name_str, instance=instance)
-    try:
-        cur = conn.cursor()
-        if database_name:
-            _execute_safe(cur, f"USE [{database_name}]")
-        _execute_safe(
-            cur,
-            """
-            SELECT
-                c.COLUMN_NAME,
-                c.ORDINAL_POSITION,
-                c.DATA_TYPE,
-                c.IS_NULLABLE,
-                c.CHARACTER_MAXIMUM_LENGTH,
-                c.NUMERIC_PRECISION,
-                c.NUMERIC_SCALE,
-                c.COLUMN_DEFAULT
-            FROM INFORMATION_SCHEMA.COLUMNS c
-            WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
-            ORDER BY c.ORDINAL_POSITION
-            """,
-            [schema_name, table_name],
-        )
-        rows = cur.fetchall()
-        columns = [
-            {
-                "COLUMN_NAME": row[0],
-                "ORDINAL_POSITION": row[1],
-                "DATA_TYPE": row[2],
-                "IS_NULLABLE": row[3],
-                "CHARACTER_MAXIMUM_LENGTH": row[4],
-                "NUMERIC_PRECISION": row[5],
-                "NUMERIC_SCALE": row[6],
-                "COLUMN_DEFAULT": row[7],
-            }
-            for row in rows
-        ]
-        result = {
-            "database": db_name,
-            "schema": schema_name,
-            "table": table_name,
-            "columns": columns,
-        }
-        return _paginate_tool_result(result, page=page, page_size=page_size)
-    finally:
-        conn.close()
-
-
-def _parse_params_json(params_json: str | None) -> list[Any] | None:
-    if not params_json:
-        return None
-    decoded = json.loads(params_json)
-    if isinstance(decoded, list):
-        return decoded
-    if isinstance(decoded, dict):
-        return [decoded]
-    raise ValueError("params_json must decode to a list or object")
-
-
-def _run_query_internal(
-    instance: int,
-    database_name: str | None,
-    sql: str,
-    params_json: str | None = None,
-    max_rows: int | None = None,
-    enforce_readonly: bool = True,
-    tool_name: str = "db_sql2019_run_query",
-    prompt_context: str | None = None,
-) -> list[dict[str, Any]]:
-    validate_instance(instance)
-    if enforce_readonly and not SETTINGS.allow_write:
-        _require_readonly(sql)
-    _enforce_table_scope_for_sql(sql)
-    
-    db_name = database_name or get_instance_config(instance)["db_name"]
-
-    db_name_str = _normalize_db_name(db_name)
-    # Ensure database_name is str for audit record (never None)
-    audit_db_name = db_name_str if db_name_str is not None else ""
-    _write_query_audit_record(
-        tool_name=tool_name,
-        database_name=audit_db_name,
-        sql=sql,
-        params_json=params_json,
-        prompt_context=prompt_context,
-    )
-
-    params = _parse_params_json(params_json)
-    row_cap = max_rows if isinstance(max_rows, int) and max_rows > 0 else SETTINGS.max_rows
-
-    conn = get_connection(db_name_str, instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(cur, sql, params)
-        rows = _fetch_limited(cur, row_cap)
-        return _rows_to_dicts(cur, rows)
-    finally:
-        conn.close()
-
-
-def db_sql2019_execute_query(
-    instance: int = 1,
-    database_name: str | None = None,
-    sql: str | None = None,
-    params_json: str | None = None,
-    max_rows: int | None = None,
-    prompt_context: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """Legacy-compatible query executor (read-only unless write mode is enabled)."""
-    if not sql:
-        raise ValueError("sql is required")
-    rows = _run_query_internal(
-        instance=instance,
-        database_name=database_name,
-        sql=sql,
-        params_json=params_json,
-        max_rows=max_rows,
-        enforce_readonly=True,
-        tool_name="db_sql2019_execute_query",
-        prompt_context=prompt_context,
-    )
-    return _paginate_tool_result(rows, page=page, page_size=page_size)
-
-
-def db_sql2019_run_query(
-    instance: int = 1,
-    arg1: str | None = None,
-    arg2: str | None = None,
-    params_json: str | None = None,
-    max_rows: int | None = None,
-    prompt_context: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """Execute SQL; supports both legacy (db, sql) and new (sql only) signatures."""
-    if arg1 is None:
-         raise ValueError("At least one argument (sql) is required")
-         
-    if arg2 is None:
-        database_name = None
-        sql = arg1
-    else:
-        database_name = arg1
-        sql = arg2
-
-    rows = _run_query_internal(
-        instance=instance,
-        database_name=database_name,
-        sql=sql,
-        params_json=params_json,
-        max_rows=max_rows,
-        enforce_readonly=True,
-        tool_name="db_sql2019_run_query",
-        prompt_context=prompt_context,
-    )
-    return _paginate_tool_result(rows, page=page, page_size=page_size)
-
-
-def db_sql2019_list_objects(
-    instance: int = 1,
-    database_name: str | None = None,
-    object_type: str = "TABLE",
-    object_name: str | None = None,
-    schema: str | None = None,
-    order_by: str | None = None,
-    limit: int = 50,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """Unified object listing for database/schema/table/view/index/function/procedure/trigger."""
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = _normalize_db_name(db_name)
-    conn = get_connection(db_name_str, instance=instance)
-    recommendations: list[dict[str, Any]] = []
-    try:
-        cur = conn.cursor()
-        object_type_norm = object_type.strip().upper()
-        requested_page, requested_page_size = _normalize_tool_pagination(page, page_size)
-        max_items = max(1, limit)
-
-        def _build_table_scope_sql(schema_col: str, table_col: str) -> tuple[str, list[Any]]:
-            if not SETTINGS.table_scope_enforced:
-                return "", []
-
-            if not _TABLE_SCOPE_PATTERNS:
-                return " AND 1 = 0", []
-
-            clauses: list[str] = []
-            params_local: list[Any] = []
-            for pattern in _TABLE_SCOPE_PATTERNS:
-                pattern_schema, pattern_table = pattern.split(".", 1)
-                if pattern_schema == "*" and pattern_table == "*":
-                    return "", []
-                if pattern_schema == "*":
-                    clauses.append(f"LOWER({table_col}) = ?")
-                    params_local.append(pattern_table)
-                elif pattern_table == "*":
-                    clauses.append(f"LOWER({schema_col}) = ?")
-                    params_local.append(pattern_schema)
+            cursor.execute(sql, params or ())
+            if cursor.description:
+                columns = [column[0] for column in cursor.description]
+                if fetchall:
+                    return [dict(zip(columns, row)) for row in cursor.fetchall()]
                 else:
-                    clauses.append(f"(LOWER({schema_col}) = ? AND LOWER({table_col}) = ?)")
-                    params_local.extend([pattern_schema, pattern_table])
+                    # For operations that don't return results, like DDL/DML
+                    return []
+            else:
+                conn.commit()  # Commit changes for DDL/DML
+                return []
+        except pyodbc.Error as ex:
+            sqlstate = ex.args[0]
+            logging.error(f"SQL execution error (SQLSTATE: {sqlstate}): {ex}
+Query:
+{sql}")
+            raise
 
-            if not clauses:
-                return " AND 1 = 0", []
-            return " AND (" + " OR ".join(clauses) + ")", params_local
-
-        def _paginate_query(
-            count_sql: str,
-            count_params: list[Any],
-            data_sql: str,
-            data_params: list[Any],
-            row_mapper,
-        ) -> dict[str, Any]:
-            _execute_safe(cur, count_sql, count_params)
-            count_row = cur.fetchone()
-            total_count = int(count_row[0]) if count_row and count_row[0] is not None else 0
-            capped_total = min(total_count, max_items)
-            total_pages = max(1, (capped_total + requested_page_size - 1) // requested_page_size)
-            safe_page = min(requested_page, total_pages)
-            offset = (safe_page - 1) * requested_page_size
-
-            if capped_total == 0 or offset >= capped_total:
-                return {
-                    "items": [],
-                    "pagination": {
-                        "page": safe_page,
-                        "page_size": requested_page_size,
-                        "total_items": capped_total,
-                        "total_pages": total_pages,
-                    },
-                }
-
-            fetch_size = min(requested_page_size, capped_total - offset)
-            paged_sql = data_sql + " OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
-            _execute_safe(cur, paged_sql, data_params + [offset, fetch_size])
-            rows = cur.fetchall()
-            return {
-                "items": row_mapper(rows),
-                "pagination": {
-                    "page": safe_page,
-                    "page_size": requested_page_size,
-                    "total_items": capped_total,
-                    "total_pages": total_pages,
-                },
-            }
-
-        if object_type_norm in {"DATABASE", "DATABASES"}:
-            count_sql = """
-                SELECT COUNT(*)
-                FROM sys.databases
-                WHERE state_desc = 'ONLINE'
-            """
-            data_sql = """
-                SELECT name
-                FROM sys.databases
-                WHERE state_desc = 'ONLINE'
-                ORDER BY name
-            """
-            return _paginate_query(
-                count_sql=count_sql,
-                count_params=[],
-                data_sql=data_sql,
-                data_params=[],
-                row_mapper=lambda rows: [row[0] for row in rows],
-            )
-
-        if object_type_norm in {"SCHEMA", "SCHEMAS"}:
-            count_sql = "SELECT COUNT(*) FROM sys.schemas"
-            data_sql = "SELECT name FROM sys.schemas ORDER BY name"
-            return _paginate_query(
-                count_sql=count_sql,
-                count_params=[],
-                data_sql=data_sql,
-                data_params=[],
-                row_mapper=lambda rows: [row[0] for row in rows],
-            )
-
-        if object_type_norm == "TABLE":
-            join_clause = "JOIN sys.tables p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)"
-            where_sql = "WHERE t.TABLE_TYPE = ?"
-            params: list[Any] = ["BASE TABLE"]
-            if schema:
-                where_sql += " AND t.TABLE_SCHEMA = ?"
-                params.append(schema)
-            if object_name:
-                where_sql += " AND t.TABLE_NAME LIKE ?"
-                params.append(object_name)
-            scope_sql, scope_params = _build_table_scope_sql("t.TABLE_SCHEMA", "t.TABLE_NAME")
-            where_sql += scope_sql
-            query_params = params + scope_params
-
-            count_sql = f"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES t {join_clause} " + where_sql
-            data_sql = (
-                f"SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date "
-                f"FROM INFORMATION_SCHEMA.TABLES t {join_clause} "
-                + where_sql
-                + " ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME"
-            )
-            def row_mapper(rows):
-                return [
-                    {
-                        "schema_name": row[0],
-                        "table_name": row[1],
-                        "create_date": row[2].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[2] else None,
-                        "modify_date": row[3].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[3] else None,
-                    }
-                    for row in rows
-                ]
-            return _paginate_query(
-                count_sql=count_sql,
-                count_params=query_params,
-                data_sql=data_sql,
-                data_params=query_params,
-                row_mapper=row_mapper,
-            )
-        elif object_type_norm == "VIEW":
-            join_clause = "JOIN sys.views p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)"
-            where_sql = "WHERE t.TABLE_TYPE = ?"
-            params: list[Any] = ["VIEW"]
-            if schema:
-                where_sql += " AND t.TABLE_SCHEMA = ?"
-                params.append(schema)
-            if object_name:
-                where_sql += " AND t.TABLE_NAME LIKE ?"
-                params.append(object_name)
-            scope_sql, scope_params = _build_table_scope_sql("t.TABLE_SCHEMA", "t.TABLE_NAME")
-            where_sql += scope_sql
-            query_params = params + scope_params
-
-            count_sql = f"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES t {join_clause} " + where_sql
-            data_sql = (
-                f"SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date "
-                f"FROM INFORMATION_SCHEMA.TABLES t {join_clause} "
-                + where_sql
-                + " ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME"
-            )
-            def row_mapper(rows):
-                return [
-                    {
-                        "schema_name": row[0],
-                        "table_name": row[1],
-                        "create_date": row[2].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[2] else None,
-                        "modify_date": row[3].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[3] else None,
-                    }
-                    for row in rows
-                ]
-            return _paginate_query(
-                count_sql=count_sql,
-                count_params=query_params,
-                data_sql=data_sql,
-                data_params=query_params,
-                row_mapper=row_mapper,
-            )
-
-        if object_type_norm == "INDEX":
-            where_sql = """
-            WHERE i.name IS NOT NULL
-            """
-            params: list[Any] = []
-            if schema:
-                where_sql += " AND s.name = ?"
-                params.append(schema)
-            if object_name:
-                where_sql += " AND i.name LIKE ?"
-                params.append(object_name)
-
-            scope_sql, scope_params = _build_table_scope_sql("s.name", "t.name")
-            where_sql += scope_sql
-            params.extend(scope_params)
-
-            count_sql = """
-            SELECT COUNT(*)
-            FROM sys.indexes i
-            JOIN sys.tables t ON i.object_id = t.object_id
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
-            """ + where_sql
-
-            data_sql = """
-            SELECT
-                s.name AS schema_name,
-                t.name AS table_name,
-                i.name AS index_name,
-                i.type_desc AS index_type,
-                i.is_disabled
-            FROM sys.indexes i
-            JOIN sys.tables t ON i.object_id = t.object_id
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
-            """ + where_sql + " ORDER BY s.name, t.name, i.name"
-            return _paginate_query(
-                count_sql=count_sql,
-                count_params=params,
-                data_sql=data_sql,
-                data_params=params,
-                row_mapper=lambda rows: _rows_to_dicts(cur, rows),
-            )
-
-        if object_type_norm in {"FUNCTION", "PROCEDURE", "TRIGGER"}:
-            code = {"FUNCTION": "FN", "PROCEDURE": "P", "TRIGGER": "TR"}[object_type_norm]
-            where_sql = """
-            WHERE o.type = ?
-            """
-            params = [code]
-            if schema:
-                where_sql += " AND s.name = ?"
-                params.append(schema)
-            if object_name:
-                where_sql += " AND o.name LIKE ?"
-                params.append(object_name)
-
-            count_sql = """
-            SELECT COUNT(*)
-            FROM sys.objects o
-            JOIN sys.schemas s ON o.schema_id = s.schema_id
-            """ + where_sql
-
-            data_sql = """
-            SELECT s.name AS schema_name, o.name AS object_name, o.type_desc
-            FROM sys.objects o
-            JOIN sys.schemas s ON o.schema_id = s.schema_id
-            """ + where_sql + " ORDER BY s.name, o.name"
-            return _paginate_query(
-                count_sql=count_sql,
-                count_params=params,
-                data_sql=data_sql,
-                data_params=params,
-                row_mapper=lambda rows: _rows_to_dicts(cur, rows),
-            )
-
-        raise ValueError(f"Unsupported object_type: {object_type}")
-    finally:
-        conn.close()
-
-
-def _get_index_fragmentation_data(
-    instance: int,
-    database_name: str | None,
-    schema: str | None = None,
-    min_fragmentation: float = 10.0,
-    min_page_count: int = 100,
-    limit: int = 50,
-) -> list[dict[str, Any]]:
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = _normalize_db_name(db_name)
-    conn = get_connection(db_name_str, instance=instance)
+def _execute_safe(sql: str, db_name: Optional[str] = None, instance: int = 1, params: Optional[Tuple] = None) -> List[Dict[str, Any]]:
+    """Executes a query, fetches results, and handles common errors."""
     try:
-        cur = conn.cursor()
-        sql = f"""
-        SELECT TOP (?)
-            s.name AS schema_name,
-            t.name AS table_name,
-            i.name AS index_name,
-            ips.avg_fragmentation_in_percent,
-            ips.page_count,
-            i.type_desc AS index_type
-        FROM sys.dm_db_index_physical_stats(DB_ID('{db_name}'), NULL, NULL, NULL, 'SAMPLED') ips
-        JOIN [{db_name}].sys.indexes i
-            ON ips.object_id = i.object_id AND ips.index_id = i.index_id
-        JOIN [{db_name}].sys.tables t ON i.object_id = t.object_id
-        JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
-        WHERE i.name IS NOT NULL
-          AND ips.page_count >= ?
-          AND ips.avg_fragmentation_in_percent >= ?
-        """
-        params: list[Any] = [max(1, limit), min_page_count, min_fragmentation]
-        if schema:
-            sql += " AND s.name = ?"
-            params.append(schema)
-        sql += " ORDER BY ips.avg_fragmentation_in_percent DESC"
+        return _execute_query(sql, db_name, instance, params)
+    except pyodbc.ProgrammingError as e:
+        logging.warning(f"Caught ProgrammingError: {e}. Attempting to proceed without results.")
+        return []
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during query execution: {e}")
+        raise
 
-        _execute_safe(cur, sql, params)
-        return _rows_to_dicts(cur, cur.fetchall())
-    finally:
-        conn.close()
+def _normalize_db_name(db_name: str) -> str:
+    """Normalizes database name for consistent use."""
+    return db_name.strip().lower()
 
+def _escape_sql_identifier(identifier: str) -> str:
+    if identifier is None:
+        return ""
+    # Replace ']' with ']]' to escape it within square brackets
+    escaped_identifier = identifier.replace("]", "]]")
+    return escaped_identifier
 
-def db_sql2019_get_index_fragmentation(
-    instance: int = 1,
-    database_name: str | None = None,
-    schema: str | None = None,
-    min_fragmentation: float = 10.0,
-    min_page_count: int = 100,
-    limit: int = 50,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """Return index fragmentation rows from dm_db_index_physical_stats."""
-    items = _get_index_fragmentation_data(
-        instance=instance,
-        database_name=database_name,
-        schema=schema,
-        min_fragmentation=min_fragmentation,
-        min_page_count=min_page_count,
-        limit=limit,
-    )
-    return _paginate_tool_result(items, page=page, page_size=page_size)
+_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+def _validate_identifier(identifier: str, type_name: str) -> None:
+    if not _SQL_IDENTIFIER_RE.fullmatch(identifier):
+        raise ValueError(f"Invalid {type_name} identifier: {identifier!r}. Contains unsafe characters or is improperly formatted.")
 
-def db_sql2019_analyze_index_health(
-    instance: int = 1,
-    database_name: str | None = None,
-    schema: str | None = None,
-    min_fragmentation: float = 10.0,
-    min_page_count: int = 100,
-    limit: int = 50,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """High-level index health summary."""
-    items = _get_index_fragmentation_data(
-        instance=instance,
-        database_name=database_name,
-        schema=schema,
-        min_fragmentation=min_fragmentation,
-        min_page_count=min_page_count,
-        limit=limit,
-    )
+# --- API Endpoints ---
+@app.route("/ping", methods=["GET"])
+def ping():
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+    try:
+        with get_connection(instance=int(instance)):
+            return jsonify({"status": "success", "message": f"Connected to instance {instance}"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-    severe = [r for r in items if (r.get("avg_fragmentation_in_percent") or 0) >= 30]
-    medium = [r for r in items if 10 <= (r.get("avg_fragmentation_in_percent") or 0) < 30]
+@app.route("/list_databases", methods=["GET"])
+def list_databases():
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+    sql = "SELECT name AS DatabaseName FROM sys.databases WHERE state_desc = 'ONLINE'"
+    try:
+        databases = _execute_safe(sql, instance=int(instance))
+        return jsonify(databases)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    result = {
-        "database": db_name,
-        "schema": schema,
-        "fragmented_indexes": items,
-        "summary": {
-            "severe": len(severe),
-            "medium": len(medium),
-            "total": len(items),
-        },
+@app.route("/list_tables", methods=["GET"])
+def list_tables():
+    db_name = request.args.get("database_name")
+    schem-name = request.args.get("schem-name", "dbo")
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+
+    if not db_name:
+        return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
+    
+    _validate_identifier(db_name, "database")
+    _validate_identifier(schem_name, "schema")
+
+    sql = f"""
+    SELECT
+        t.name AS TableName,
+        s.name AS SchemaName,
+        DB_NAME() AS DatabaseName
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.tables t
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+    WHERE
+        s.name = ?
+    ORDER BY
+        s.name, t.name;
+    """
+    try:
+        tables = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(schem-name,))
+        return jsonify(tables)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/get_schema", methods=["GET"])
+def get_schema():
+    db_name = request.args.get("database_name")
+    schem-name = request.args.get("schem-name", "dbo")
+    table_name = request.args.get("table_name")
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+
+    if not db_name or not table_name:
+        return jsonify({"status": "error", "message": "database_name and table_name parameters are required"}), 400
+
+    sql = f"""
+    SELECT
+        c.name AS ColumnName,
+        ty.name AS DataType,
+        c.max_length AS MaxLength,
+        c.precision AS Precision,
+        c.scale AS Scale,
+        c.is_nullable AS IsNullable,
+        ic.is_primary_key AS IsPrimaryKey,
+        cc.definition AS DefaultValue,
+        obj_desc.value AS Description
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.columns c
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.tables t ON c.object_id = t.object_id
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.types ty ON c.user_type_id = ty.user_type_id
+    LEFT JOIN
+        [{_escape_sql_identifier(db_name)}].sys.index_columns ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id AND ic.is_included_column = 0
+    LEFT JOIN
+        [{_escape_sql_identifier(db_name)}].sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND i.is_primary_key = 1
+    LEFT JOIN
+        [{_escape_sql_identifier(db_name)}].sys.default_constraints dc ON c.default_object_id = dc.object_id
+    LEFT JOIN
+        [{_escape_sql_identifier(db_name)}].sys.check_constraints cc ON c.object_id = cc.parent_object_id AND c.column_id = cc.parent_column_id
+    OUTER APPLY
+        fn_listextendedproperty (N'MS_Description', N'SCHEMA', s.name, N'TABLE', t.name, N'COLUMN', c.name) AS obj_desc
+    WHERE
+        s.name = ? AND t.name = ?
+    ORDER BY
+        c.column_id;
+    """
+    try:
+        schema = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(schem-name, table_name))
+        return jsonify(schema)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/execute_query", methods=["POST"])
+def execute_query():
+    data = request.get_json()
+    sql = data.get("sql")
+    db_name = data.get("database_name")
+    instance = data.get("instance", SETTINGS["default_instance_id"])
+    params = data.get("params_json")
+
+    if not sql:
+        return jsonify({"status": "error", "message": "SQL query is required"}), 400
+
+    try:
+        parsed_params = json.loads(params) if params else None
+        results = _execute_safe(sql, db_name=db_name, instance=int(instance), params=parsed_params)
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/run_query", methods=["POST"])
+def run_query():
+    data = request.get_json()
+    sql = data.get("arg1") or data.get("sql") # Legacy support for 'arg1'
+    db_name = data.get("arg2") or data.get("database_name") # Legacy support for 'arg2'
+    instance = data.get("instance", SETTINGS["default_instance_id"])
+    params = data.get("params_json")
+
+    if not sql:
+        return jsonify({"status": "error", "message": "SQL query is required"}), 400
+
+    try:
+        parsed_params = json.loads(params) if params else None
+        results = _execute_safe(sql, db_name=db_name, instance=int(instance), params=parsed_params)
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/list_objects", methods=["GET"])
+def list_objects():
+    db_name = request.args.get("database_name")
+    schem-name = request.args.get("schema", "dbo")
+    object_type = request.args.get("object_type", "TABLE").upper()
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+    object_name_filter = request.args.get("object_name")
+
+    if not db_name:
+        return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
+    
+    _validate_identifier(db_name, "database")
+
+    object_type_map = {
+        "TABLE": "U", "VIEW": "V", "PROCEDURE": "P", "FUNCTION": "FN",
+        "INDEX": "ALL_INDEXES", # Special handling for indexes
+        "TRIGGER": "TR", "SEQUENCE": "SQ", "TYPE": "TT", "DEFAULT": "D",
+        "RULE": "R", "SYNONYM": "SN", "XML_SCHEMA_COLLECTION": "XSC",
+        "AGGREGATE_FUNCTION": "AF", "ASSEMBLY": "A", "SERVICE_QUEUE": "SQ",
+        "SERVICE_CONTRACT": "SC", "SERVICE_MESSAGE_TYPE": "SMT",
+        "SERVICE_ROUTE": "SR", "REMOTE_SERVICE_BINDING": "RSB",
+        "FULLTEXT_CATALOG": "FTC", "FULLTEXT_STOPLIST": "FTS",
+        "PARTITION_FUNCTION": "PF", "PARTITION_SCHEME": "PS",
+        "PLAN_GUIDE": "PG", "CERTIFICATE": "CERT", "ASYMMETRIC_KEY": "AK",
+        "SYMMETRIC_KEY": "SK", "DATABASE_ENCRYPTION_KEY": "DEK",
+        "CREDENTIAL": "CR", "MASTER_KEY": "MK", "SIGNATURE": "SIG",
+        "EVENT_SESSION": "ES", "EXTENDED_STORED_PROCEDURE": "X",
+        "INTERNAL_TABLE": "IT", "REPLICATION_FILTER_STORED_PROCEDURE": "RF",
+        "SERVICE_BROKER_PRIORITY": "SBP", "SQL_INLINE_TABLE_VALUED_FUNCTION": "IF",
+        "SQL_SCALAR_FUNCTION": "FS", "SQL_STORED_PROCEDURE": "P",
+        "SQL_TABLE_VALUED_FUNCTION": "TF", "CLR_SCALAR_FUNCTION": "FN",
+        "CLR_STORED_PROCEDURE": "PC", "CLR_TABLE_VALUED_FUNCTION": "FT",
+        "CLR_TRIGGER": "TR", "EXTENDED_STORED_PROCEDURE_XTYPE": "X"
     }
-    return _paginate_tool_result(result, page=page, page_size=page_size)
 
+    if object_type == "ALL_INDEXES":
+        sql = f"""
+        SELECT
+            i.name AS ObjectName,
+            s.name AS SchemaName,
+            t.name AS TableName,
+            'INDEX' AS ObjectType,
+            i.type_desc AS IndexType,
+            CASE
+                WHEN i.is_primary_key = 1 THEN 'PRIMARY KEY'
+                WHEN i.is_unique_constraint = 1 THEN 'UNIQUE CONSTRAINT'
+                ELSE 'NON-UNIQUE'
+            END AS IndexConstraintType,
+            STRING_AGG(c.name, ', ') WITHIN GROUP (ORDER BY ic.key_ordinal) AS KeyColumns,
+            STRING_AGG(inc.name, ', ') WITHIN GROUP (ORDER BY inc.index_column_id) AS IncludedColumns
+        FROM
+            [{_escape_sql_identifier(db_name)}].sys.indexes i
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.tables t ON i.object_id = t.object_id
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+        LEFT JOIN
+            [{_escape_sql_identifier(db_name)}].sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id AND ic.is_included_column = 0
+        LEFT JOIN
+            [{_escape_sql_identifier(db_name)}].sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+        LEFT JOIN
+            [{_escape_sql_identifier(db_name)}].sys.index_columns inc ON i.object_id = inc.object_id AND i.index_id = inc.index_id AND inc.is_included_column = 1
+        LEFT JOIN
+            [{_escape_sql_identifier(db_name)}].sys.columns col_inc ON inc.object_id = col_inc.object_id AND inc.column_id = col_inc.column_id
+        WHERE
+            i.is_hypothetical = 0 AND i.is_disabled = 0
+            AND s.name = ?
+            {f"AND i.name LIKE '%{object_name_filter}%'" if object_name_filter else ""}
+        GROUP BY
+            i.name, s.name, t.name, i.type_desc, i.is_primary_key, i.is_unique_constraint
+        ORDER BY
+            s.name, t.name, i.name;
+        """
+        params = (schem-name,)
+    else:
+        obj_type_code = object_type_map.get(object_type)
+        if not obj_type_code:
+            return jsonify({"status": "error", "message": f"Unsupported object type: {object_type}"}), 400
 
-def db_sql2019_analyze_table_health(
-    instance: int = 1,
-    database_name: str | None = None,
-    schema: str | None = None,
-    table_name: str | None = None,
-    view: Literal["summary", "standard", "full"] = "standard",
-    fields: str | None = None,
-    token_budget: int | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """Table-level storage/index/stats/constraint analysis."""
-    if not schema or not table_name:
-        raise ValueError("schema and table_name are required")
-    validate_instance(instance)
-    _enforce_table_scope_for_ident(schema, table_name)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = _normalize_db_name(db_name)
-    conn = get_connection(db_name_str, instance=instance)
-    recommendations: list[dict[str, Any]] = []
+        sql = f"""
+        SELECT
+            o.name AS ObjectName,
+            s.name AS SchemaName,
+            DB_NAME() AS DatabaseName,
+            o.type_desc AS ObjectType
+        FROM
+            [{_escape_sql_identifier(db_name)}].sys.objects o
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.schemas s ON o.schem-id = s.schem-id
+        WHERE
+            o.type = ? AND s.name = ?
+            {f"AND o.name LIKE '%{object_name_filter}%'" if object_name_filter else ""}
+        ORDER BY
+            s.name, o.name;
+        """
+        params = (obj_type_code, schem-name)
+
     try:
-        cur = conn.cursor()
-        # Table info
-        _execute_safe(
-            cur,
-            f"""
-            SELECT
-                t.name AS TableName,
-                s.name AS SchemaName,
-                SUM(p.rows) AS RowCounts,
-                SUM(a.total_pages) * 8 AS TotalSpaceKB,
-                SUM(a.used_pages) * 8 AS UsedSpaceKB,
-                (SUM(a.total_pages) - SUM(a.used_pages)) * 8 AS UnusedSpaceKB
-            FROM [{db_name}].sys.tables t
-            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
-            JOIN [{db_name}].sys.indexes i ON t.object_id = i.object_id
-            JOIN [{db_name}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-            JOIN [{db_name}].sys.allocation_units a ON p.partition_id = a.container_id
-            WHERE s.name = ? AND t.name = ?
-            GROUP BY t.name, s.name
-            """,
-            [schema, table_name],
-        )
-        table_info_rows = _rows_to_dicts(cur, cur.fetchall())
-        table_info = table_info_rows[0] if table_info_rows else {}
+        objects = _execute_safe(sql, db_name=db_name, instance=int(instance), params=params)
+        return jsonify(objects)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-        # Column metadata
-        _execute_safe(
-            cur,
-            f"""
-            SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, COLUMN_DEFAULT, NUMERIC_PRECISION, NUMERIC_SCALE
-            FROM [{db_name}].INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-            ORDER BY ORDINAL_POSITION
-            """,
-            [schema, table_name],
-        )
-        columns = _rows_to_dicts(cur, cur.fetchall())
+@app.route("/index_fragmentation", methods=["GET"])
+def index_fragmentation():
+    db_name = request.args.get("database_name")
+    schema = request.args.get("schema", "dbo")
+    min_fragmentation = float(request.args.get("min_fragmentation", MIN_FRAGMENTATION_PERCENT))
+    min_page_count = int(request.args.get("min_page_count", "100"))
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
-        # Indexes
-        _execute_safe(
-            cur,
-            f"""
-            SELECT i.name AS IndexName, i.type_desc AS IndexType,
-                   CAST(SUM(a.used_pages) * 8.0 / 1024 AS DECIMAL(18, 4)) AS IndexSizeMB,
-                   i.is_disabled
-            FROM [{db_name}].sys.indexes i
-            JOIN [{db_name}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-            JOIN [{db_name}].sys.allocation_units a ON p.partition_id = a.container_id
-            JOIN [{db_name}].sys.tables t ON i.object_id = t.object_id
-            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
-            WHERE s.name = ? AND t.name = ? AND i.name IS NOT NULL
-            GROUP BY i.name, i.type_desc, i.is_disabled
-            ORDER BY IndexSizeMB DESC
-            """,
-            [schema, table_name],
-        )
-        indexes = _rows_to_dicts(cur, cur.fetchall())
+    if not db_name:
+        return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
 
-        # Constraints (PK, unique, check, default)
-        _execute_safe(
-            cur,
-            f"""
-            SELECT tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, kcu.COLUMN_NAME
-            FROM [{db_name}].INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-            LEFT JOIN [{db_name}].INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
-              ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA AND tc.TABLE_NAME = kcu.TABLE_NAME
-            WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?
-            ORDER BY tc.CONSTRAINT_TYPE, tc.CONSTRAINT_NAME
-            """,
-            [schema, table_name],
-        )
-        constraints = _rows_to_dicts(cur, cur.fetchall())
+    sql = f"""
+    SELECT
+        OBJECT_NAME(ps.object_id) AS TableName,
+        si.name AS IndexName,
+        sch.name AS SchemaName,
+        ps.avg_fragmentation_in_percent AS FragmentationPercentage,
+        ps.page_count AS PageCount
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.dm_db_index_physical_stats(DB_ID('{_escape_sql_identifier(db_name)}'), NULL, NULL, NULL, 'DETAILED') ps
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.indexes si ON ps.object_id = si.object_id AND ps.index_id = si.index_id
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.tables st ON ps.object_id = st.object_id
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.schemas sch ON st.schem-id = sch.schem-id
+    WHERE
+        ps.avg_fragmentation_in_percent > ?
+        AND ps.page_count > ?
+        AND si.name IS NOT NULL
+        AND sch.name = ?
+    ORDER BY
+        ps.avg_fragmentation_in_percent DESC;
+    """
+    try:
+        fragmentation_data = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(min_fragmentation, min_page_count, schema))
+        return jsonify(fragmentation_data)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-        # Foreign keys
-        _execute_safe(
-            cur,
-            f"""
-            SELECT
-                fk.name AS FK_Name,
-                OBJECT_NAME(fk.parent_object_id) AS ParentTable,
-                pc.name AS ParentColumn,
-                OBJECT_NAME(fk.referenced_object_id) AS ReferencedTable,
-                rc.name AS ReferencedColumn
-            FROM [{db_name}].sys.foreign_keys fk
-            JOIN [{db_name}].sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-            JOIN [{db_name}].sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
-            JOIN [{db_name}].sys.columns rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
-            WHERE OBJECT_SCHEMA_NAME(fk.parent_object_id) = ?
-              AND OBJECT_NAME(fk.parent_object_id) = ?
-            ORDER BY fk.name
-            """,
-            [schema, table_name],
-        )
-        foreign_keys = _rows_to_dicts(cur, cur.fetchall())
+@app.route("/index_health", methods=["GET"])
+def index_health():
+    db_name = request.args.get("database_name")
+    schema = request.args.get("schema", "dbo")
+    min_fragmentation = float(request.args.get("min_fragmentation", MIN_FRAGMENTATION_PERCENT))
+    min_page_count = int(request.args.get("min_page_count", "100"))
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
-        # Object dependencies
-        _execute_safe(
-            cur,
-            """
-            SELECT referencing_schema_name, referencing_entity_name, referencing_class_desc, is_caller_dependent
-            FROM sys.dm_sql_referencing_entities (?, 'OBJECT')
-            UNION ALL
-            SELECT referenced_schema_name, referenced_entity_name, referenced_class_desc, NULL
-            FROM sys.dm_sql_referenced_entities (?, 'OBJECT')
-            """,
-            [f"{schema}.{table_name}", f"{schema}.{table_name}"],
-        )
-        dependencies = _rows_to_dicts(cur, cur.fetchall())
+    if not db_name:
+        return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
 
-        # Statistics sample
-        _execute_safe(
-            cur,
-            f"""
-            SELECT TOP 25
-                c.name AS ColumnName,
-                st.name AS StatsName,
-                sp.last_updated,
-                sp.rows,
-                sp.rows_sampled,
-                sp.modification_counter
-            FROM [{db_name}].sys.stats st
-            JOIN [{db_name}].sys.stats_columns sc ON st.object_id = sc.object_id AND st.stats_id = sc.stats_id
-            JOIN [{db_name}].sys.columns c ON sc.object_id = c.object_id AND sc.column_id = c.column_id
-            OUTER APPLY [{db_name}].sys.dm_db_stats_properties(st.object_id, st.stats_id) sp
-            JOIN [{db_name}].sys.tables t ON st.object_id = t.object_id
-            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
-            WHERE s.name = ? AND t.name = ?
-            ORDER BY st.name
-            """,
-            [schema, table_name],
-        )
-        statistics_sample = _rows_to_dicts(cur, cur.fetchall())
-
-        # Fragmentation checks
-        fragmentation_data = _get_index_fragmentation_data(
-            instance=instance, database_name=db_name, schema=schema, min_fragmentation=5.0
-        )
-        index_issues: list[dict[str, Any]] = []
-        for frag in fragmentation_data:
-            if frag.get("table_name") == table_name:
-                frag_percent = frag.get("avg_fragmentation_in_percent", 0.0) or 0.0
-                index_name = frag.get("index_name")
-                issue = {
-                    "type": "Index Fragmentation",
-                    "index_name": index_name,
-                    "fragmentation_percent": frag_percent,
-                }
-                if frag_percent > 30.0:
-                    issue["severity"] = "High"
-                    issue["message"] = f"Index '{index_name}' is highly fragmented ({frag_percent:.2f}%) and should be rebuilt."
-                    recommendations.append(
-                        {
-                            "severity": "High",
-                            "recommendation": f"Rebuild index '{index_name}' to improve performance.",
-                            "action": f"ALTER INDEX '{index_name}' ON [{schema}].[{table_name}] REBUILD;",
-                        }
+    sql = f"""
+    WITH IndexFragmentation AS (
+        SELECT
+            OBJECT_SCHEMA_NAME(ps.object_id, DB_ID('{_escape_sql_identifier(db_name)}')) AS SchemaName,
+            OBJECT_NAME(ps.object_id) AS TableName,
+            si.name AS IndexName,
+            ps.avg_fragmentation_in_percent AS FragmentationPercentage,
+            ps.page_count AS PageCount,
+            si.index_id,
+            si.object_id
+        FROM
+            [{_escape_sql_identifier(db_name)}].sys.dm_db_index_physical_stats(DB_ID('{_escape_sql_identifier(db_name)}'), NULL, NULL, NULL, 'DETAILED') ps
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.indexes si ON ps.object_id = si.object_id AND ps.index_id = si.index_id
+        WHERE
+            ps.alloc_unit_type_desc = 'IN_ROW_DATA' -- Focus on data pages
+            AND si.name IS NOT NULL
+            AND ps.page_count >= ?
+            AND OBJECT_SCHEMA_NAME(ps.object_id, DB_ID('{_escape_sql_identifier(db_name)}')) = ?
+    ),
+    MissingIndexes AS (
+        SELECT
+            mi.database_id,
+            DB_NAME(mi.database_id) AS DatabaseName,
+            OBJECT_SCHEMA_NAME(mi.object_id, mi.database_id) AS SchemaName,
+            OBJECT_NAME(mi.object_id) AS TableName,
+            migs.avg_total_user_cost * (migs.avg_user_impact / 100.0) AS estimated_impact,
+            migs.last_user_seek,
+            'CREATE INDEX IX_' + OBJECT_NAME(mi.object_id) + '_' + REPLACE(REPLACE(REPLACE(ISNULL(mid.equality_columns, '') + ISNULL(mid.inequality_columns, ''), ', ', '_'), '[', ''), ']', '')
+            + ' ON [' + OBJECT_SCHEMA_NAME(mi.object_id, mi.database_id) + '].[' + OBJECT_NAME(mi.object_id) + '] (' + ISNULL(mid.equality_columns, '')
+            + CASE WHEN mid.equality_columns IS NOT NULL AND mid.inequality_columns IS NOT NULL THEN ',' ELSE '' END + ISNULL(mid.inequality_columns, '') + ')'
+            + ISNULL(' INCLUDE (' + mid.included_columns + ')', '') AS CreateStatement,
+            mid.equality_columns,
+            mid.inequality_columns,
+            mid.included_columns,
+            migs.user_seeks,
+            migs.user_scans,
+            migs.last_user_seek,
+            migs.avg_user_impact,
+            migs.system_seeks,
+            migs.system_scans,
+            migs.last_system_seek
+        FROM
+            [{_escape_sql_identifier(db_name)}].sys.dm_db_missing_index_groups mig
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.dm_db_missing_index_details mid ON mig.index_handle = mid.index_handle
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
+        WHERE
+            mi.database_id = DB_ID('{_escape_sql_identifier(db_name)}')
+            AND OBJECT_SCHEMA_NAME(mi.object_id, mi.database_id) = ?
+    ),
+    DuplicateIndexes AS (
+        SELECT
+            OBJECT_SCHEMA_NAME(t.object_id, DB_ID('{_escape_sql_identifier(db_name)}')) AS SchemaName,
+            OBJECT_NAME(t.object_id) AS TableName,
+            i1.name AS Index1Name,
+            i2.name AS Index2Name,
+            'Consider dropping ' + i2.name + ' as it appears to be a duplicate or redundant of ' + i1.name AS Recommendation
+        FROM
+            [{_escape_sql_identifier(db_name)}].sys.tables t
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.indexes i1 ON t.object_id = i1.object_id
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.indexes i2 ON t.object_id = i2.object_id
+        WHERE
+            i1.index_id < i2.index_id -- Compare each pair once
+            AND i1.is_disabled = 0 AND i2.is_disabled = 0
+            AND i1.is_hypothetical = 0 AND i2.is_hypothetical = 0
+            AND OBJECT_SCHEMA_NAME(t.object_id, DB_ID('{_escape_sql_identifier(db_name)}')) = ?
+            AND EXISTS (
+                SELECT 1
+                FROM
+                    [{_escape_sql_identifier(db_name)}].sys.index_columns ic1
+                INNER JOIN
+                    [{_escape_sql_identifier(db_name)}].sys.index_columns ic2 ON ic1.object_id = ic2.object_id
+                                                         AND ic1.index_id = i1.index_id
+                                                         AND ic2.index_id = i2.index_id
+                                                         AND ic1.column_id = ic2.column_id
+                                                         AND ic1.key_ordinal = ic2.key_ordinal
+                                                         AND ic1.is_included_column = ic2.is_included_column
+                WHERE
+                    ic1.object_id = t.object_id
+                GROUP BY
+                    ic1.object_id
+                HAVING
+                    COUNT(*) = (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.index_columns WHERE object_id = t.object_id AND index_id = i1.index_id)
+                    AND COUNT(*) = (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.index_columns WHERE object_id = t.object_id AND index_id = i2.index_id)
+            )
+    ),
+    RedundantIndexes AS (
+        SELECT
+            OBJECT_SCHEMA_NAME(RedundantIndex.object_id, DB_ID('{_escape_sql_identifier(db_name)}')) AS SchemaName,
+            OBJECT_NAME(RedundantIndex.object_id) AS TableName,
+            RedundantIndex.name AS RedundantIndexName,
+            CoveringIndex.name AS CoveringIndexName,
+            'Consider dropping ' + RedundantIndex.name + ' as it is a subset of ' + CoveringIndex.name AS Recommendation
+        FROM
+            [{_escape_sql_identifier(db_name)}].sys.indexes AS RedundantIndex
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.index_columns AS ric_first ON RedundantIndex.object_id = ric_first.object_id
+                                                            AND RedundantIndex.index_id = ric_first.index_id
+                                                            AND ric_first.key_ordinal = 1
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.indexes AS CoveringIndex ON RedundantIndex.object_id = CoveringIndex.object_id
+        WHERE
+            RedundantIndex.index_id <> CoveringIndex.index_id
+            AND RedundantIndex.is_disabled = 0 AND CoveringIndex.is_disabled = 0
+            AND RedundantIndex.is_hypothetical = 0 AND CoveringIndex.is_hypothetical = 0
+            AND RedundantIndex.type_desc <> 'HEAP' AND CoveringIndex.type_desc <> 'HEAP'
+            AND RedundantIndex.is_primary_key = 0 -- Don't drop PKs
+            AND OBJECT_SCHEMA_NAME(RedundantIndex.object_id, DB_ID('{_escape_sql_identifier(db_name)}')) = ?
+            AND EXISTS (
+                SELECT 1
+                FROM [{_escape_sql_identifier(db_name)}].sys.index_columns AS cic_first
+                WHERE
+                    CoveringIndex.object_id = cic_first.object_id
+                    AND CoveringIndex.index_id = cic_first.index_id
+                    AND cic_first.key_ordinal = 1
+                    AND ric_first.column_id = cic_first.column_id
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM [{_escape_sql_identifier(db_name)}].sys.index_columns AS ric
+                WHERE
+                    ric.object_id = RedundantIndex.object_id
+                    AND ric.index_id = RedundantIndex.index_id
+                    AND ric.is_included_column = 0 -- Only key columns
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM [{_escape_sql_identifier(db_name)}].sys.index_columns AS cic
+                        WHERE
+                            cic.object_id = CoveringIndex.object_id
+                            AND cic.index_id = CoveringIndex.index_id
+                            AND cic.is_included_column = 0 -- Only key columns
+                            AND cic.column_id = ric.column_id
+                            AND cic.key_ordinal = ric.key_ordinal
                     )
-                elif frag_percent > 10.0:
-                    issue["severity"] = "Medium"
-                    issue["message"] = f"Index '{index_name}' is moderately fragmented ({frag_percent:.2f}%). Consider reorganizing."
-                    recommendations.append(
-                        {
-                            "severity": "Medium",
-                            "recommendation": f"Reorganize index '{index_name}' to improve performance.",
-                            "action": f"ALTER INDEX '{index_name}' ON [{schema}].[{table_name}] REORGANIZE;",
-                        }
-                    )
-                index_issues.append(issue)
+            )
+            AND (
+                SELECT COUNT(*)
+                FROM [{_escape_sql_identifier(db_name)}].sys.index_columns AS ric
+                WHERE
+                    ric.object_id = RedundantIndex.object_id
+                    AND ric.index_id = RedundantIndex.index_id
+                    AND ric.is_included_column = 0
+            ) <= (
+                SELECT COUNT(*)
+                FROM [{_escape_sql_identifier(db_name)}].sys.index_columns AS cic
+                WHERE
+                    cic.object_id = CoveringIndex.object_id
+                    AND cic.index_id = CoveringIndex.index_id
+                    AND cic.is_included_column = 0
+            )
+    )
+    SELECT
+        'Fragmentation' AS IssueType,
+        SchemaName,
+        TableName,
+        IndexName AS ObjectName,
+        FragmentationPercentage,
+        PageCount,
+        'Consider rebuilding or reorganizing index ' + IndexName + ' on ' + TableName +
+        CASE
+            WHEN FragmentationPercentage > ? THEN ' (High Fragmentation)'
+            WHEN FragmentationPercentage > ? THEN ' (Medium Fragmentation)'
+            ELSE ''
+        END AS Recommendation,
+        CASE
+            WHEN FragmentationPercentage > ? THEN 'ALTER INDEX [' + IndexName + '] ON [' + SchemaName + '].[' + TableName + '] REBUILD;'
+            WHEN FragmentationPercentage > ? THEN 'ALTER INDEX [' + IndexName + '] ON [' + SchemaName + '].[' + TableName + '] REORGANIZE;'
+            ELSE NULL
+        END AS Action
+    FROM
+        IndexFragmentation
+    WHERE
+        FragmentationPercentage > ?
 
-        # Stale statistics checks
-        for stat in statistics_sample:
-            mod_counter = stat.get("modification_counter", 0) or 0
-            row_count = table_info.get("RowCounts", 0) or 0
-            if row_count > 500 and mod_counter > (row_count * 0.1):  # 10% change
-                stats_name = stat.get("StatsName")
-                recommendations.append(
-                    {
-                        "severity": "Medium",
-                        "recommendation": f"Statistics '{stats_name}' are stale (approx. {mod_counter} modifications). Update statistics to improve query performance.",
-                        "action": f"UPDATE STATISTICS [{schema}].[{table_name}] ('{stats_name}');",
-                    }
-                )
+    UNION ALL
 
-        # Unused index checks
-        _execute_safe(
-            cur,
-            f"""
-            SELECT i.name AS index_name, us.user_seeks, us.user_scans, us.user_lookups, us.user_updates
-            FROM [{db_name}].sys.indexes i
-            LEFT JOIN [{db_name}].sys.dm_db_index_usage_stats us
-              ON us.database_id = DB_ID('{db_name}') AND us.object_id = i.object_id AND us.index_id = i.index_id
-            WHERE i.object_id = OBJECT_ID(?)
-              AND i.type_desc != 'HEAP'
-            """,
-            [f"[{db_name}].[{schema}].[{table_name}]"]
+    SELECT
+        'Missing Index' AS IssueType,
+        SchemaName,
+        TableName,
+        'N/A' AS ObjectName,
+        NULL AS FragmentationPercentage,
+        NULL AS PageCount,
+        'Missing index with estimated impact: ' + FORMAT(estimated_impact, 'N2') + '. ' + CreateStatement AS Recommendation,
+        CreateStatement AS Action
+    FROM
+        MissingIndexes
+    ORDER BY
+        estimated_impact DESC;
+
+    UNION ALL
+
+    SELECT
+        'Duplicate Index' AS IssueType,
+        SchemaName,
+        TableName,
+        Index2Name AS ObjectName,
+        NULL AS FragmentationPercentage,
+        NULL AS PageCount,
+        Recommendation,
+        'DROP INDEX [' + Index2Name + '] ON [' + SchemaName + '].[' + TableName + '];' AS Action
+    FROM
+        DuplicateIndexes
+
+    UNION ALL
+
+    SELECT
+        'Redundant Index' AS IssueType,
+        SchemaName,
+        TableName,
+        RedundantIndexName AS ObjectName,
+        NULL AS FragmentationPercentage,
+        NULL AS PageCount,
+        Recommendation,
+        'DROP INDEX [' + RedundantIndexName + '] ON [' + SchemaName + '].[' + TableName + '];' AS Action
+    FROM
+        RedundantIndexes
+    ORDER BY
+        SchemaName, TableName, ObjectName;
+    """
+    try:
+        health_data = _execute_safe(
+            sql,
+            db_name=db_name,
+            instance=int(instance),
+            params=(
+                min_page_count, schema,  # IndexFragmentation
+                schema,  # MissingIndexes
+                schema,  # DuplicateIndexes
+                schema, # RedundantIndexes
+                HIGH_FRAGMENTATION_THRESHOLD, MEDIUM_FRAGMENTATION_THRESHOLD, HIGH_FRAGMENTATION_THRESHOLD,
+                MEDIUM_FRAGMENTATION_THRESHOLD, MIN_FRAGMENTATION_PERCENT # Fragmentation thresholds
+            )
         )
-        index_usage = _rows_to_dicts(cur, cur.fetchall())
-        for usage in index_usage:
-            if (usage.get("user_seeks", 0) or 0) == 0 and (usage.get("user_scans", 0) or 0) == 0 and (usage.get("user_lookups", 0) or 0) == 0:
-                index_name = usage.get("index_name")
-                user_updates = usage.get("user_updates", 0) or 0
-                recommendations.append(
-                    {
-                        "severity": "Low",
-                        "recommendation": f"Index '{index_name}' is not being used for reads but is being maintained ({user_updates} updates). Consider dropping this index.",
-                        "action": f"DROP INDEX '{index_name}' ON [{schema}].[{table_name}];",
-                    }
-                )
+        return jsonify(health_data)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-        # Column cardinality and data type checks
-        for col in columns:
-            # High cardinality, not indexed
-            _execute_safe(cur, f"SELECT COUNT(DISTINCT [{col["COLUMN_NAME"]}]) FROM [{db_name}].[{schema}].[{table_name}]")
-            distinct_count = cur.fetchone()[0]
-            if row_count > 0 and (distinct_count / row_count) > 0.8:
-                # Check if part of any index
-                _execute_safe(cur, f"""
-                    SELECT COUNT(*)
-                    FROM [{db_name}].sys.index_columns ic
-                    JOIN [{db_name}].sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-                    WHERE ic.object_id = OBJECT_ID(?)
-                      AND c.name = ?
-                """, [f"[{db_name}].[{schema}].[{table_name}]", col['COLUMN_NAME']])
-                in_index_count = cur.fetchone()[0]
-                if in_index_count == 0:
-                    recommendations.append(
-                        {
-                            "severity": "Medium",
-                            "recommendation": f"Column '{col['COLUMN_NAME']}' has high cardinality and is not indexed. Consider creating an index to improve performance.",
-                            "action": f"CREATE INDEX IX_{table_name}_{col['COLUMN_NAME']} ON [{schema}].[{table_name}] ('{col['COLUMN_NAME']}');",
-                        }
-                    )
+@app.route("/table_health", methods=["GET"])
+def table_health():
+    db_name = request.args.get("database_name")
+    schem-name = request.args.get("schema", "dbo")
+    table_name = request.args.get("table_name")
+    view = request.args.get("view", "standard") # summary, standard, full
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
-            # Data type checks
-            if col.get("DATA_TYPE", "").upper() in ("NVARCHAR", "VARCHAR") and (col.get("CHARACTER_MAXIMUM_LENGTH") is not None and col["CHARACTER_MAXIMUM_LENGTH"] > 255):
-                recommendations.append({
-                    "severity": "Low",
-                    "recommendation": f"Column '{col['COLUMN_NAME']}' is wide ({col['CHARACTER_MAXIMUM_LENGTH']} chars). Consider if max length can be reduced for performance."
-                })
-            if col.get("DATA_TYPE", "").upper() == "INT" and col.get("IS_NULLABLE", "NO") == "NO":
-                _execute_safe(cur, f"SELECT MAX([{col['COLUMN_NAME']}]) FROM [{db_name}].[{schema}].[{table_name}]")
-                max_val_row = cur.fetchone()
-                if max_val_row and max_val_row[0] is not None:
-                    max_val = max_val_row[0]
-                    if max_val < 32767:
-                        recommendations.append({
-                            "severity": "Info",
-                            "recommendation": f"Column '{col['COLUMN_NAME']}' is INT but max value is {max_val}. Consider using SMALLINT to save space."
-                        })
+    if not db_name or not table_name:
+        return jsonify({"status": "error", "message": "database_name and table_name parameters are required"}), 400
 
-        # FK index checks
-        _execute_safe(
-            cur,
-            f"""
-            SELECT
-                fk.name AS fk_name,
-                pc.name AS column_name,
-                CASE WHEN ix.index_id IS NULL THEN 1 ELSE 0 END AS missing_index
-            FROM [{db_name}].sys.foreign_keys fk
-            JOIN [{db_name}].sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-            JOIN [{db_name}].sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
-            LEFT JOIN [{db_name}].sys.index_columns ic
-              ON ic.object_id = fkc.parent_object_id AND ic.column_id = fkc.parent_column_id AND ic.key_ordinal = 1
-            LEFT JOIN [{db_name}].sys.indexes ix
-              ON ix.object_id = ic.object_id AND ix.index_id = ic.index_id
-            WHERE OBJECT_SCHEMA_NAME(fk.parent_object_id) = ?
-              AND OBJECT_NAME(fk.parent_object_id) = ?
-            """,
-            [schema, table_name],
-        )
-        fk_index_checks = _rows_to_dicts(cur, cur.fetchall())
+    _validate_identifier(db_name, "database")
+    _validate_identifier(schem-name, "schema")
+    _validate_identifier(table_name, "table")
 
-        constraint_issues: list[dict[str, Any]] = []
-        for fk in fk_index_checks:
-            if fk.get("missing_index") == 1:
-                fk_name = fk.get("fk_name")
-                column_name = fk.get("column_name")
-                constraint_issues.append(
-                    {
-                        "type": "Unindexed Foreign Key",
-                        "message": (
-                            f"Warning: Foreign key '{fk_name}' on column '{column_name}' "
-                            "is not indexed. This can impact joins and cascading operations."
-                        ),
-                    }
-                )
-                recommendations.append(
-                    {
-                        "severity": "Medium",
-                        "recommendation": f"Create index on '{column_name}' to support foreign key '{fk_name}'.",
-                    }
-                )
+    recommendations: List[Dict[str, Any]] = []
 
-        # Missing index checks
-        _execute_safe(
-            cur,
-            f"""
-            SELECT
-                mig.index_group_handle,
-                mid.object_id,
-                mid.database_id,
-                mid.equality_columns,
-                mid.inequality_columns,
-                mid.included_columns,
-                migs.unique_compiles,
-                migs.user_seeks,
-                migs.user_scans,
-                migs.last_user_seek,
-                migs.avg_total_user_cost,
-                migs.avg_user_impact
-            FROM [{db_name}].sys.dm_db_missing_index_groups mig
-            INNER JOIN [{db_name}].sys.dm_db_missing_index_details mid ON mig.index_handle = mid.index_handle
-            INNER JOIN [{db_name}].sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
-            WHERE mid.object_id = OBJECT_ID(N'[{db_name}].[{schema}].[{table_name}]')
-            ORDER BY migs.avg_total_user_cost * migs.avg_user_impact DESC;
-            """,
-        )
-        missing_indexes = _rows_to_dicts(cur, cur.fetchall())
+    # --- Table Info and Row Counts ---
+    table_info_sql = f"""
+    SELECT
+        t.name AS TableName,
+        s.name AS SchemaName,
+        SUM(p.rows) AS RowCounts,
+        SUM(au.data_pages) * 8 / 1024.0 AS DataSpaceMB,
+        SUM(au.used_pages) * 8 / 1024.0 AS UsedSpaceMB
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.tables t
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.partitions p ON t.object_id = p.object_id
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.allocation_units au ON (p.partition_id = au.container_id AND au.type IN (1, 3))
+            OR (p.partition_id = au.owner_id AND au.type IN (2, 4))
+    WHERE
+        t.name = ? AND s.name = ?
+    GROUP BY
+        t.name, s.name;
+    """
+    table_info_results = _execute_safe(table_info_sql, db_name=db_name, instance=int(instance), params=(table_name, schem-name))
+    table_info = table_info_results[0] if table_info_results else {}
+    recommendations.append({"type": "info", "message": f"Table: {schem-name}.{table_name}", "details": table_info})
 
-        for mi in missing_indexes:
-            columns_str = ""
-            if mi["equality_columns"]:
-                columns_str += mi["equality_columns"]
-            if mi["inequality_columns"]:
-                if columns_str:
-                    columns_str += ", "
-                columns_str += mi["inequality_columns"]
-            
-            include_str = ""
-            if mi["included_columns"]:
-                include_str = f" INCLUDE ({mi['included_columns']})"
-
-            if columns_str:
-                recommendations.append({
-                    "severity": "High",
-                    "recommendation": (
-                        f"Consider creating a missing index on columns ({columns_str}){include_str} "
-                        f"for an estimated impact of {mi['avg_user_impact']:.2f}."
-                    ),
-                    "action": f"CREATE INDEX IX_Missing_{table_name}_{mi['index_group_handle']} "
-                              f"ON [{schema}].[{table_name}] ({columns_str}){include_str};"
-                })
-
-        # Redundant index checks
-        _execute_safe(
-            cur,
-            f"""
-            SELECT
-                RedundantIndex.name AS RedundantIndexName,
-                CoveringIndex.name AS CoveringIndexName
-            FROM
-                [{db_name}].sys.indexes AS RedundantIndex
-            INNER JOIN
-                [{db_name}].sys.tables AS t ON RedundantIndex.object_id = t.object_id
-            INNER JOIN
-                [{db_name}].sys.schemas AS s ON t.schema_id = s.schema_id
-            INNER JOIN
-                [{db_name}].sys.indexes AS CoveringIndex ON RedundantIndex.object_id = CoveringIndex.object_id
-            WHERE
-                t.object_id = OBJECT_ID(N'[{db_name}].[{schema}].[{table_name}]')
-                AND RedundantIndex.index_id > 1 -- Only non-clustered indexes
-                AND CoveringIndex.index_id > 0 -- Clustered or non-clustered
-                AND RedundantIndex.index_id <> CoveringIndex.index_id
-                AND s.name = ?
-                AND t.name = ?
-                -- Check if RedundantIndex's key columns are a leading subset of CoveringIndex's key columns
-                AND NOT EXISTS (
-                    -- Check if there is any key column in RedundantIndex that is NOT a matching leading key column in CoveringIndex
-                    SELECT 1
-                    FROM [{db_name}].sys.index_columns AS ric
-                    WHERE
-                        ric.object_id = RedundantIndex.object_id
-                        AND ric.index_id = RedundantIndex.index_id
-                        AND ric.is_included_column = 0 -- Only key columns
-                        AND NOT EXISTS (
-                            SELECT 1
-                            FROM [{db_name}].sys.index_columns AS cic
-                            WHERE
-                                cic.object_id = CoveringIndex.object_id
-                                AND cic.index_id = CoveringIndex.index_id
-                                AND cic.is_included_column = 0 -- Only key columns
-                                AND cic.column_id = ric.column_id
-                                AND cic.key_ordinal = ric.key_ordinal
-                        )
-                )
-                -- Additionally, ensure that the number of key columns in RedundantIndex is less than or equal to CoveringIndex
-                AND (
-                    SELECT COUNT(*)
-                    FROM [{db_name}].sys.index_columns AS ric
-                    WHERE
-                        ric.object_id = RedundantIndex.object_id
-                        AND ric.index_id = RedundantIndex.index_id
-                        AND ric.is_included_column = 0
-                ) <= (
-                    SELECT COUNT(*)
-                    FROM [{db_name}].sys.index_columns AS cic
-                    WHERE
-                        cic.object_id = CoveringIndex.object_id
-                        AND cic.index_id = CoveringIndex.index_id
-                        AND cic.is_included_column = 0
-                )
-                -- Check if all included columns of RedundantIndex are also included in CoveringIndex (either as key or included)
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM
-                        [{db_name}].sys.index_columns AS ic_redundant_included
-                    WHERE
-                        ic_redundant_included.object_id = RedundantIndex.object_id
-                        AND ic_redundant_included.index_id = RedundantIndex.index_id
-                        AND ic_redundant_included.is_included_column = 1
-                        AND NOT EXISTS (
-                            SELECT 1
-                            FROM
-                                [{db_name}].sys.index_columns AS ic_covering_all
-                            WHERE
-                                ic_covering_all.object_id = CoveringIndex.object_id
-                                AND ic_covering_all.index_id = CoveringIndex.index_id
-                                AND ic_covering_all.column_id = ic_redundant_included.column_id
-                                AND (ic_covering_all.is_included_column = 1 OR ic_covering_all.key_ordinal > 0)
-                        )
-                )
-            ;""",
-            [schema, table_name],
-        )
-        redundant_indexes = _rows_to_dicts(cur, cur.fetchall())
-
-        for ri in redundant_indexes:
+    # --- Index Fragmentation Checks ---
+    frag_sql = f"""
+    SELECT
+        si.name AS IndexName,
+        ps.avg_fragmentation_in_percent AS FragmentationPercentage,
+        ps.page_count AS PageCount,
+        si.type_desc AS IndexType
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.dm_db_index_physical_stats(DB_ID('{_escape_sql_identifier(db_name)}'), OBJECT_ID(?), NULL, NULL, 'DETAILED') ps
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.indexes si ON ps.object_id = si.object_id AND ps.index_id = si.index_id
+    WHERE
+        ps.alloc_unit_type_desc = 'IN_ROW_DATA' -- Focus on data pages
+        AND si.name IS NOT NULL
+        AND ps.page_count >= ?;
+    """
+    index_fragmentation = _execute_safe(frag_sql, db_name=db_name, instance=int(instance), params=(f"{schem-name}.{table_name}", MIN_PAGE_COUNT))
+    for frag in index_fragmentation:
+        frag_percent = frag["FragmentationPercentage"]
+        index_name = _escape_sql_identifier(frag["IndexName"])
+        if frag_percent > HIGH_FRAGMENTATION_THRESHOLD:
             recommendations.append({
-                "severity": "Medium",
-                "recommendation": f"Index '{ri["RedundantIndexName"]}' might be redundant as its columns are covered by index '{ri["CoveringIndexName"]}'. Consider dropping '{ri["RedundantIndexName"]}'.",
-                "action": f"DROP INDEX [{ri["RedundantIndexName"]}] ON [{schema}].[{table_name}];"
+                "type": "warning",
+                "message": f"High fragmentation ({frag_percent:.2f}%) on index '{frag['IndexName']}'. Consider rebuilding.",
+                "action": f"ALTER INDEX [{index_name}] ON [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] REBUILD;",
+                "details": frag
+            })
+        elif frag_percent > MEDIUM_FRAGMENTATION_THRESHOLD:
+            recommendations.append({
+                "type": "info",
+                "message": f"Medium fragmentation ({frag_percent:.2f}%) on index '{frag['IndexName']}'. Consider reorganizing.",
+                "action": f"ALTER INDEX [{index_name}] ON [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] REORGANIZE;",
+                "details": frag
             })
 
-        # Additional tuning recommendations (datatype, wide columns, etc.)
-        for col in columns:
-            if col.get("DATA_TYPE", "").upper() in ("NVARCHAR", "VARCHAR") and (col.get("CHARACTER_MAXIMUM_LENGTH") is not None and col["CHARACTER_MAXIMUM_LENGTH"] > 255):
-                recommendations.append({
-                    "severity": "Low",
-                    "recommendation": f"Column '{col['COLUMN_NAME']}' is wide ({col['CHARACTER_MAXIMUM_LENGTH']} chars). Consider if max length can be reduced for performance."
-                })
-            if col.get("DATA_TYPE", "").upper() == "INT" and col.get("IS_NULLABLE", "NO") == "NO":
-                recommendations.append({
-                    "severity": "Info",
-                    "recommendation": f"Column '{col['COLUMN_NAME']}' is INT and NOT NULL. If values are small, consider using SMALLINT or TINYINT to save space."
-                })
-
-        result = {
-            "table_info": table_info,
-            "columns": columns,
-            "indexes": indexes,
-            "constraints": constraints,
-            "foreign_keys": foreign_keys,
-            "dependencies": dependencies,
-            "statistics_sample": statistics_sample,
-            "health_analysis": {
-                "constraint_issues": constraint_issues,
-                "index_issues": index_issues,
-            },
-            "recommendations": recommendations,
-        }
-        shaped = _apply_table_health_view(result, view)
-        budgeted = _apply_token_budget(shaped, token_budget)
-        projected = _apply_field_projection(budgeted, fields)
-        return _paginate_tool_result(projected, page=page, page_size=page_size)
-    finally:
-        conn.close()
-
-
-def db_sql2019_db_stats(instance: int = 1, database: str | None = None) -> dict[str, Any]:
-    """Database object counts."""
-    validate_instance(instance)
-    db_name = database or get_instance_config(instance)["db_name"]
-    db_name_str = _normalize_db_name(db_name)
-    conn = get_connection(db_name_str, instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(
-            cur,
-            f"""
-            SELECT
-                DB_NAME() AS DatabaseName,
-                (SELECT COUNT(*) FROM [{db_name}].sys.tables) AS TableCount,
-                (SELECT COUNT(*) FROM [{db_name}].sys.views) AS ViewCount,
-                (SELECT COUNT(*) FROM [{db_name}].sys.procedures) AS ProcedureCount,
-                (SELECT COUNT(*) FROM [{db_name}].sys.indexes WHERE name IS NOT NULL) AS IndexCount,
-                (SELECT COUNT(*) FROM [{db_name}].sys.schemas) AS SchemaCount
-            """,
-        )
-        row = cur.fetchone()
-        if not row:
-            return {"DatabaseName": db_name}
-        return {
-            "DatabaseName": row[0],
-            "TableCount": row[1],
-            "ViewCount": row[2],
-            "ProcedureCount": row[3],
-            "IndexCount": row[4],
-            "SchemaCount": row[5],
-        }
-    finally:
-        conn.close()
-
-
-def db_sql2019_server_info_mcp(
-    instance: int = 1,
-    server: Any = None,
-    headers: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """Get SQL Server and MCP runtime information."""
-    validate_instance(instance)
-    conn = get_connection("master", instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(
-            cur,
-            """
-            SELECT
-                @@VERSION AS server_version,
-                @@SERVERNAME AS server_name,
-                DB_NAME() AS database_name,
-                SUSER_SNAME() AS login_name,
-                CONVERT(varchar(128), SERVERPROPERTY('ProductVersion')) AS server_version_short,
-                CONVERT(varchar(128), SERVERPROPERTY('Edition')) AS server_edition
-            """,
-        )
-        row = cur.fetchone()
-        if not row:
-            raise RuntimeError("Could not retrieve server information")
-        inst_cfg = get_instance_config(instance)
-        return {
-            "server_version": row[0],
-            "server_name": row[1],
-            "database": row[2],
-            "user": row[3],
-            "server_version_short": row[4],
-            "server_edition": row[5],
-            "server_addr": inst_cfg.get("db_server"),
-            "server_port": inst_cfg.get("db_port"),
-            "mcp_transport": SETTINGS.transport,
-            "mcp_max_rows": SETTINGS.max_rows,
-            "mcp_allow_write": SETTINGS.allow_write,
-            "mcp_server_name": server.name if server else MCP_SERVER_NAME,
-            "http_user_agent": headers.get("user-agent", "") if headers else "",
-        }
-    finally:
-        conn.close()
-
-
-def _fetch_relationships(cur: pyodbc.Cursor, database: str) -> list[dict[str, Any]]:
-    sql = """
+    # --- Stale statistics checks ---
+    row_count = table_info.get("RowCounts", 0) or 0
+    stats_sql = f"""
     SELECT
-        fk.name AS constraint_name,
-        OBJECT_SCHEMA_NAME(fk.parent_object_id) AS parent_schema,
-        OBJECT_NAME(fk.parent_object_id) AS parent_table,
-        pc.name AS parent_column,
-        OBJECT_SCHEMA_NAME(fk.referenced_object_id) AS referenced_schema,
-        OBJECT_NAME(fk.referenced_object_id) AS referenced_table,
-        rc.name AS referenced_column
-    FROM sys.foreign_keys AS fk
-    INNER JOIN sys.foreign_key_columns AS fkc ON fk.object_id = fkc.constraint_object_id
-    INNER JOIN sys.columns AS pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
-    INNER JOIN sys.columns AS rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
+        sp.name AS StatisticsName,
+        sp.last_update AS LastUpdate,
+        sp.rows AS RowsInStats,
+        sp.rows_sampled AS RowsSampled,
+        sp.unfiltered_rows AS UnfilteredRows,
+        sp.modification_counter AS modification_counter
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.stats s
+    OUTER APPLY
+        [{_escape_sql_identifier(db_name)}].sys.dm_db_stats_properties(s.object_id, s.stats_id) sp
+    WHERE
+        s.object_id = OBJECT_ID(?) AND s.user_created = 1;
     """
-    _execute_safe(cur, sql)
-    return _rows_to_dicts(cur, cur.fetchall())
+    statistics_sample = _execute_safe(stats_sql, db_name=db_name, instance=int(instance), params=(f"{schem-name}.{table_name}",))
+
+    for stat in statistics_sample:
+        mod_counter = stat.get("modification_counter", 0) or 0
+        stats_name = _escape_sql_identifier(stat['StatisticsName'])
+        if row_count > MIN_ROWS_FOR_STALE_STATS_CHECK and mod_counter > (row_count * STALE_STATS_MODIFICATION_PERCENT):
+            recommendations.append({
+                "type": "warning",
+                "message": f"Statistics '{stat['StatisticsName']}' are stale ({mod_counter} modifications, {row_count} total rows). Consider updating.",
+                "action": f"UPDATE STATISTICS [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] ([{stats_name}]);",
+                "details": stat
+            })
+
+    # --- Missing Index Checks ---
+    missing_index_sql = f"""
+    SELECT
+        migs.avg_total_user_cost * (migs.avg_user_impact / 100.0) AS estimated_impact,
+        migs.last_user_seek,
+        mid.equality_columns,
+        mid.inequality_columns,
+        mid.included_columns,
+        migs.user_seeks,
+        migs.user_scans,
+        migs.avg_user_impact,
+        mig.index_group_handle
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.dm_db_missing_index_groups mig
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.dm_db_missing_index_details mid ON mig.index_handle = mid.index_handle
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
+    WHERE
+        mid.object_id = OBJECT_ID(?);
+    """
+    missing_indexes = _execute_safe(missing_index_sql, db_name=db_name, instance=int(instance), params=(f"{schem-name}.{table_name}",))
+    for mi in missing_indexes:
+        columns_str = ""
+        if mi['equality_columns']:
+            columns_str += mi['equality_columns']
+        if mi['inequality_columns']:
+            if columns_str:
+                columns_str += ", "
+            columns_str += mi['inequality_columns']
+        
+        # Escape column names for CREATE INDEX statement
+        escaped_columns_for_create = ", ".join([f"[{_escape_sql_identifier(col.strip())}]" for col in columns_str.split(',')]) if columns_str else ""
+
+        include_str = ""
+        if mi['included_columns']:
+            include_str = f" INCLUDE ({mi['included_columns']})"
+        
+        # Escape included column names for CREATE INDEX statement
+        escaped_include_str = ""
+        if mi['included_columns']:
+            escaped_include_str = " INCLUDE (" + ", ".join([f"[{_escape_sql_identifier(col.strip())}]" for col in mi['included_columns'].split(',')]) + ")"
 
 
-def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    issues: dict[str, list[dict[str, Any]]] = {
-        "entities": [],
-        "attributes": [],
-        "relationships": [],
-        "identifiers": [],
-        "normalization": [],
-    }
+        impact = mi.get('avg_user_impact', 0.0) # Handle None gracefully
+        recommendations.append({
+            "type": "suggestion",
+            "message": f"Missing index detected. Estimated improvement: {impact:.2f}%.",
+            "action": f"CREATE INDEX IX_{_escape_sql_identifier(table_name)}_{'_'.join(re.findall(r'\b\w+\b', columns_str))} ON [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] ({escaped_columns_for_create}){escaped_include_str};",
+            "details": mi
+        })
+    
+    # --- Column cardinality and data type checks (Batched) ---
+    check_cardinality_and_datatypes = True # This can be made configurable
+    if check_cardinality_and_datatypes:
+        columns_sql = f"""
+        SELECT
+            c.name AS ColumnName,
+            ty.name AS DataType,
+            c.max_length AS MaxLength
+        FROM
+            [{_escape_sql_identifier(db_name)}].sys.columns c
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.tables t ON c.object_id = t.object_id
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+        INNER JOIN
+            [{_escape_sql_identifier(db_name)}].sys.types ty ON c.user_type_id = ty.user_type_id
+        WHERE
+            s.name = ? AND t.name = ?
+        ORDER BY
+            c.column_id;
+        """
+        columns = _execute_safe(columns_sql, db_name=db_name, instance=int(instance), params=(schem-name, table_name))
 
-    for entity in entities:
-        table_name = entity.get("name")
-        schema_name = entity.get("schema")
-        cols = entity.get("columns", [])
+        if columns:
+            cardinality_queries = []
+            index_membership_queries = []
+            
+            for col in columns:
+                col_name_escaped = _escape_sql_identifier(col['ColumnName'])
+                
+                # Cardinality Query for batching
+                cardinality_queries.append(f"""
+                    SELECT
+                        '{col_name_escaped}' AS ColumnName,
+                        COUNT(DISTINCT [{col_name_escaped}]) AS DistinctCount,
+                        (SELECT SUM(p.rows) FROM [{_escape_sql_identifier(db_name)}].sys.tables t JOIN [{_escape_sql_identifier(db_name)}].sys.partitions p ON t.object_id = p.object_id WHERE t.name = ? AND p.index_id IN (0, 1)) AS TotalRows
+                    FROM
+                        [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}];
+                """)
 
-        if not any(c.get("is_primary_key") for c in cols):
-            issues["identifiers"].append(
-                {
-                    "entity": f"{schema_name}.{table_name}",
-                    "issue": "Missing primary key",
-                    "severity": "High",
-                    "impact": "Entity identity cannot be guaranteed, impacting data integrity and join performance.",
-                }
-            )
+                # Index Membership Query for batching
+                index_membership_queries.append(f"""
+                    SELECT
+                        '{col_name_escaped}' AS ColumnName,
+                        COUNT(DISTINCT i.name) AS NumIndexes
+                    FROM
+                        [{_escape_sql_identifier(db_name)}].sys.index_columns ic
+                    INNER JOIN
+                        [{_escape_sql_identifier(db_name)}].sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+                    INNER JOIN
+                        [{_escape_sql_identifier(db_name)}].sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
+                    WHERE
+                        ic.object_id = OBJECT_ID(?)
+                        AND c.name = ?
+                        AND i.is_hypothetical = 0 AND i.is_disabled = 0;
+                """)
 
-        if len(cols) > 30:
-            issues["normalization"].append(
-                {
-                    "entity": f"{schema_name}.{table_name}",
-                    "issue": "Large number of attributes",
-                    "severity": "Medium",
-                    "impact": "Possible violation of normalization; consider splitting into multiple entities.",
-                }
-            )
+            if cardinality_queries:
+                batched_cardinality_sql = " UNION ALL ".join(cardinality_queries)
+                cardinality_results = _execute_safe(batched_cardinality_sql, db_name=db_name, instance=int(instance), params=[table_name] * len(cardinality_queries))
+                
+                for res in cardinality_results:
+                    col_name = res['ColumnName']
+                    distinct_count = res['DistinctCount']
+                    total_rows = res['TotalRows'] or 1 # Avoid division by zero
+                    cardinality = distinct_count / total_rows if total_rows > 0 else 0
 
-    referenced_tables = {(r.get("referenced_schema"), r.get("referenced_table")) for r in relationships}
-    parent_tables = {(r.get("parent_schema"), r.get("parent_table")) for r in relationships}
-    all_modeled = {(e.get("schema"), e.get("name")) for e in entities}
+                    if cardinality > HIGH_CARDINALITY_THRESHOLD and total_rows > MIN_ROWS_FOR_STALE_STATS_CHECK:
+                        recommendations.append({
+                            "type": "info",
+                            "message": f"Column '{col_name}' has high cardinality ({cardinality:.2f}). Consider indexing if frequently used in WHERE/JOIN clauses.",
+                            "details": {"ColumnName": col_name, "Cardinality": cardinality}
+                        })
+            
+            if index_membership_queries:
+                batched_index_membership_sql = " UNION ALL ".join(index_membership_queries)
+                index_membership_params = []
+                for col in columns:
+                    index_membership_params.append(f"{schem-name}.{table_name}")
+                    index_membership_params.append(col['ColumnName'])
 
-    for schema, table in referenced_tables:
-        if (schema, table) not in all_modeled:
-            issues["relationships"].append(
-                {
-                    "issue": f"External reference to {schema}.{table}",
-                    "severity": "Low",
-                    "impact": "Relationship points to a table not included in the model scope.",
-                }
-            )
+                index_membership_results = _execute_safe(batched_index_membership_sql, db_name=db_name, instance=int(instance), params=tuple(index_membership_params))
 
-    return issues
+                for res in index_membership_results:
+                    col_name = res['ColumnName']
+                    num_indexes = res['NumIndexes']
+                    if num_indexes == 0:
+                        recommendations.append({
+                            "type": "suggestion",
+                            "message": f"Column '{col_name}' is not part of any index. Consider indexing if frequently used in WHERE/JOIN clauses.",
+                            "action": f"CREATE INDEX IX_{_escape_sql_identifier(table_name)}_{_escape_sql_identifier(col_name)} ON [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] ([{_escape_sql_identifier(col_name)}]);",
+                            "details": {"ColumnName": col_name, "NumIndexes": num_indexes}
+                        })
+
+            for col in columns:
+                col_name = col['ColumnName']
+                data_type = col['DataType']
+                max_length = col['MaxLength']
+                
+                # Check for wide string columns
+                if data_type in ['varchar', 'nvarchar'] and max_length > WIDE_COLUMN_MAX_LENGTH:
+                    recommendations.append({
+                        "type": "info",
+                        "message": f"Column '{col_name}' is a wide {data_type} ({max_length} chars). Consider alternative data types or limiting length if possible for performance.",
+                        "details": col
+                    })
+                
+                # Check for smallint/tinyint used for boolean or limited choices
+                if data_type in ['smallint', 'tinyint'] and max_length > 1 and max_length < SMALLINT_MAX_VALUE: # heuristic
+                    # Further check if values are actually limited (e.g., 0/1 or a few values)
+                    # This would require another query to get distinct values, which might be expensive.
+                    # For now, just a general suggestion based on type.
+                     recommendations.append({
+                        "type": "suggestion",
+                        "message": f"Column '{col_name}' is a {data_type}. If it stores only a few distinct values (e.g., boolean 0/1), consider 'bit' for storage optimization.",
+                        "details": col
+                    })
 
 
-def _render_data_model_html(model: dict[str, Any], issues: dict[str, list[dict[str, Any]]]) -> str:
-    # Minimal HTML rendering logic for open_logical_model
-    html = f"""
+    # --- Foreign Key Checks (for orphaned records - simplified) ---
+    fk_check_sql = f"""
+    SELECT
+        fk.name AS ForeignKeyName,
+        OBJECT_NAME(fkc.parent_object_id) AS ReferencingTable,
+        COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS ReferencingColumn,
+        OBJECT_NAME(fkc.referenced_object_id) AS ReferencedTable,
+        COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS ReferencedColumn
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.foreign_keys fk
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+    WHERE
+        OBJECT_NAME(fkc.referenced_object_id) = ? AND OBJECT_SCHEMA_NAME(fkc.referenced_object_id) = ?;
+    """
+    referencing_fks = _execute_safe(fk_check_sql, db_name=db_name, instance=int(instance), params=(table_name, schem-name))
+
+    for fk in referencing_fks:
+        # A more thorough check would involve querying for actual orphaned records.
+        # This is a placeholder to indicate the presence of FKs.
+        recommendations.append({
+            "type": "info",
+            "message": f"Table is referenced by foreign key '{fk['ForeignKeyName']}' from '{fk['ReferencingTable']}'. Ensure referential integrity is maintained.",
+            "details": fk
+        })
+
+    # Filter recommendations based on view level
+    if view == "summary":
+        # Only critical warnings and high-impact suggestions
+        recommendations = [r for r in recommendations if r["type"] in ["error", "warning"]]
+    elif view == "standard":
+        # All warnings and suggestions, but perhaps less detail
+        pass # currently 'standard' is default and includes everything
+    elif view == "full":
+        # All recommendations with full details
+        pass
+
+    return jsonify(recommendations)
+
+
+@app.route("/db_stats", methods=["GET"])
+def db_stats():
+    db_name = request.args.get("database")
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+
+    if not db_name:
+        return jsonify({"status": "error", "message": "database parameter is required"}), 400
+
+    sql = f"""
+    SELECT
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.tables) AS TableCount,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.views) AS ViewCount,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.procedures) AS StoredProcedureCount,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.functions) AS FunctionCount,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.indexes WHERE is_hypothetical = 0 AND is_disabled = 0) AS IndexCount,
+        (SELECT SUM(size_on_disk_bytes) FROM [{_escape_sql_identifier(db_name)}].sys.database_files) AS TotalSizeOnDiskBytes;
+    """
+    try:
+        stats = _execute_safe(sql, db_name=db_name, instance=int(instance))
+        return jsonify(stats[0] if stats else {})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/server_info_mcp", methods=["GET"])
+def server_info_mcp():
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+    try:
+        instance_config = get_instance_config(str(instance))
+        sql_version_query = "SELECT @@VERSION AS SqlServerVersion;"
+        version_info = _execute_safe(sql_version_query, instance=int(instance))
+
+        info = {
+            "mcp_service_version": "1.0.0", # Hardcoded for now
+            "sql_server_version": version_info[0]["SqlServerVersion"] if version_info else "Unknown",
+            "configured_instance_id": instance,
+            "server_address": instance_config.get("server"),
+            "database_driver": instance_config.get("driver"),
+            "query_timeout_seconds": SETTINGS["query_timeout"],
+            "log_level": SETTINGS["log_level"],
+            "current_utc_time": datetime.now(timezone.utc).isoformat()
+        }
+        return jsonify(info)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/show_top_queries", methods=["GET"])
+def show_top_queries():
+    db_name = request.args.get("database_name")
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+    metric = request.args.get("metric", "cpu").lower() # cpu, io, execution_count, duration
+    limit = int(request.args.get("limit", "10"))
+
+    if not db_name:
+        return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
+
+    order_by_clause = {
+        "cpu": "total_worker_time",
+        "io": "total_logical_reads + total_logical_writes",
+        "execution_count": "execution_count",
+        "duration": "total_elapsed_time"
+    }.get(metric, "total_worker_time")
+
+    sql = f"""
+    SELECT TOP (?)
+        qt.query_text_id,
+        SUBSTRING(qt.query_sql_text, 1, 500) AS query_sql_text,
+        q.query_id,
+        q.initial_plan_handle,
+        qs.creation_time,
+        qs.last_execution_time,
+        qs.execution_count,
+        qs.total_worker_time / 1000 AS total_cpu_time_ms,
+        qs.total_elapsed_time / 1000 AS total_duration_ms,
+        qs.total_logical_reads,
+        qs.total_logical_writes,
+        qs.total_physical_reads,
+        q.object_id,
+        OBJECT_SCHEMA_NAME(q.object_id, DB_ID('{_escape_sql_identifier(db_name)}')) AS SchemaName,
+        OBJECT_NAME(q.object_id) AS ObjectName,
+        q.is_function,
+        q.is_proc,
+        q.is_trigger,
+        q.is_plan_forcing_enabled,
+        q.force_failure_count,
+        q.last_force_failure_reason
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.query_store_query_text qt
+    JOIN
+        [{_escape_sql_identifier(db_name)}].sys.query_store_query q ON qt.query_text_id = q.query_text_id
+    JOIN
+        [{_escape_sql_identifier(db_name)}].sys.query_store_plan p ON q.query_id = p.query_id
+    JOIN
+        [{_escape_sql_identifier(db_name)}].sys.query_store_runtime_stats qs ON p.plan_id = qs.plan_id
+    WHERE
+        q.object_id IS NOT NULL -- Only include queries associated with objects
+    ORDER BY
+        {order_by_clause} DESC;
+    """
+    # Note: Query Store might not be enabled by default. Fallback to dm_exec_query_stats if QS is empty.
+    dm_exec_sql = f"""
+    SELECT TOP (?)
+        SUBSTRING(st.text, (qs.statement_start_offset / 2) + 1,
+            ((CASE qs.statement_end_offset
+                WHEN -1 THEN DATALENGTH(st.text)
+                ELSE qs.statement_end_offset
+            END - qs.statement_start_offset) / 2) + 1) AS query_sql_text,
+        qs.execution_count,
+        qs.total_worker_time / 1000 AS total_cpu_time_ms,
+        qs.total_elapsed_time / 1000 AS total_duration_ms,
+        qs.total_logical_reads,
+        qs.total_logical_writes,
+        qs.total_physical_reads,
+        qs.creation_time,
+        qs.last_execution_time,
+        DB_NAME(st.dbid) AS DatabaseName,
+        OBJECT_SCHEMA_NAME(st.objectid, st.dbid) AS SchemaName,
+        OBJECT_NAME(st.objectid) AS ObjectName
+    FROM
+        sys.dm_exec_query_stats qs
+    CROSS APPLY
+        sys.dm_exec_sql_text(qs.sql_handle) st
+    WHERE
+        st.dbid = DB_ID('{_escape_sql_identifier(db_name)}')
+    ORDER BY
+        {order_by_clause} DESC;
+    """
+    try:
+        queries = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(limit,))
+        if not queries: # Fallback if Query Store is not enabled or empty
+            logging.info(f"Query Store returned no results for {db_name}. Falling back to dm_exec_query_stats.")
+            queries = _execute_safe(dm_exec_sql, db_name=db_name, instance=int(instance), params=(limit,))
+
+        return jsonify(queries)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/check_fragmentation", methods=["GET"])
+def check_fragmentation():
+    db_name = request.args.get("database_name")
+    schem-name = request.args.get("schem-name", "dbo")
+    table_name = request.args.get("table_name")
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+
+    if not db_name:
+        return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
+
+    object_id_clause = f"OBJECT_ID('[{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}]')" if table_name else "NULL"
+
+    sql = f"""
+    SELECT
+        OBJECT_NAME(ps.object_id) AS TableName,
+        si.name AS IndexName,
+        sch.name AS SchemaName,
+        ps.avg_fragmentation_in_percent AS FragmentationPercentage,
+        ps.page_count AS PageCount
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.dm_db_index_physical_stats(DB_ID('{_escape_sql_identifier(db_name)}'), {object_id_clause}, NULL, NULL, 'DETAILED') ps
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.indexes si ON ps.object_id = si.object_id AND ps.index_id = si.index_id
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.tables st ON ps.object_id = st.object_id
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.schemas sch ON st.schem-id = sch.schem-id
+    WHERE
+        ps.alloc_unit_type_desc = 'IN_ROW_DATA' -- Focus on data pages
+        AND si.name IS NOT NULL
+        AND sch.name = ?
+        AND ps.avg_fragmentation_in_percent > {MIN_FRAGMENTATION_PERCENT} -- Only show significant fragmentation
+        AND ps.page_count > 8 -- Ignore very small indexes
+    ORDER BY
+        ps.avg_fragmentation_in_percent DESC;
+    """
+    try:
+        fragmentation_data = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(schem-name,))
+        return jsonify(fragmentation_data)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/db_sec_perf_metrics", methods=["GET"])
+def db_sec_perf_metrics():
+    db_name = request.args.get("database_name")
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+
+    if not db_name:
+        return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
+
+    sql = f"""
+    SELECT
+        DB_NAME() AS DatabaseName,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.database_principals WHERE type = 'S') AS SqlUserCount,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.database_principals WHERE type = 'U') AS WindowsUserCount,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.database_role_members) AS RoleMemberCount,
+        (SELECT SUM(size * 8 / 1024) FROM [{_escape_sql_identifier(db_name)}].sys.database_files WHERE type_desc = 'ROWS') AS DataFileSizeMB,
+        (SELECT SUM(size * 8 / 1024) FROM [{_escape_sql_identifier(db_name)}].sys.database_files WHERE type_desc = 'LOG') AS LogFileSizeMB,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.dm_exec_query_stats) AS CachedQueryPlanCount,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.dm_db_missing_index_details) AS MissingIndexCount;
+    """
+    try:
+        metrics = _execute_safe(sql, db_name=db_name, instance=int(instance))
+        return jsonify(metrics[0] if metrics else {})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/explain_query", methods=["POST"])
+def explain_query():
+    data = request.get_json()
+    sql = data.get("sql")
+    db_name = data.get("database_name")
+    instance = data.get("instance", SETTINGS["default_instance_id"])
+
+    if not sql:
+        return jsonify({"status": "error", "message": "SQL query is required"}), 400
+
+    try:
+        # Prepend SET SHOWPLAN_ALL ON to the query
+        explain_sql = f"SET SHOWPLAN_ALL ON;
+{sql}"
+        results = _execute_safe(explain_sql, db_name=db_name, instance=int(instance))
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/analyze_logical_data_model", methods=["GET"])
+def analyze_logical_data_model():
+    db_name = request.args.get("database_name")
+    schema = request.args.get("schema", "dbo")
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+    view = request.args.get("view", "standard") # summary, standard, full
+
+    if not db_name:
+        return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
+
+    # This is a placeholder for a complex data model analysis.
+    # A real implementation would involve checking for:
+    # - Tables without Primary Keys
+    # - Tables without Foreign Keys (potential isolated islands)
+    # - Naming convention inconsistencies
+    # - Data type consistency across related columns
+    # - Overly wide tables
+    # - Tables with no indexes
+    # - Circular relationships (if graph analysis is done)
+
+    # For now, let's just return some basic structural info
+    sql = f"""
+    SELECT
+        t.name AS TableName,
+        s.name AS SchemaName,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.columns c WHERE c.object_id = t.object_id) AS ColumnCount,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.indexes i WHERE i.object_id = t.object_id AND i.is_primary_key = 1) AS HasPrimaryKey,
+        (SELECT COUNT(*) FROM [{_escape_sql_identifier(db_name)}].sys.foreign_keys fk WHERE fk.parent_object_id = t.object_id OR fk.referenced_object_id = t.object_id) AS ForeignKeyCount
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.tables t
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+    WHERE
+        s.name = ?
+    ORDER BY
+        s.name, t.name;
+    """
+    try:
+        analysis_results = _execute_safe(sql, db_name=db_name, instance=int(instance), params=(schema,))
+        recommendations = []
+
+        for table in analysis_results:
+            table_name = table["TableName"]
+            schem-name = table["SchemaName"]
+            if not table["HasPrimaryKey"]:
+                recommendations.append({
+                    "type": "warning",
+                    "message": f"Table '{schem-name}.{table_name}' has no Primary Key. Consider adding one for data integrity and performance.",
+                    "action": f"ALTER TABLE [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] ADD PRIMARY KEY (ColumnName);"
+                })
+            if not table["ForeignKeyCount"] and view == "full": # Only suggest for full view
+                recommendations.append({
+                    "type": "info",
+                    "message": f"Table '{schem-name}.{table_name}' has no Foreign Keys. Ensure it's not an isolated table if relationships are expected.",
+                    "details": "Lack of foreign keys can lead to data inconsistency."
+                })
+        
+        # Combine basic info and recommendations
+        final_result = {"tables_overview": analysis_results, "recommendations": recommendations}
+
+        return jsonify(final_result)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/open_logical_model", methods=["GET"])
+def open_logical_model():
+    db_name = request.args.get("database_name")
+    schema = request.args.get("schema", "dbo")
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
+
+    if not db_name:
+        return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
+
+    # This endpoint would typically generate an HTML representation of the ERD.
+    # For a placeholder, we'll return a simple HTML structure.
+    # A real implementation would use a library like `SchemaCrawler` or custom logic
+    # to query metadata and build a graph, then render it using `mermaid.js` or `d3.js`.
+
+    html_content = f"""
+    <!DOCTYPE html>
     <html>
-    <head><style>body {{ font-family: sans-serif; }} .issue {{ color: red; }}</style></head>
+    <head>
+        <title>Logical Data Model for {db_name}.{schema}</title>
+        <script type="module">
+            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.js';
+            mermaid.initialize({{ startOnLoad: true }});
+        </script>
+        <style>
+            body {{ font-family: sans-serif; }}
+            .mermaid {{ margin: 20px; }}
+        </style>
+    </head>
     <body>
-        <h1>Logical Data Model: {model.get('database')}</h1>
-        <h2>Summary</h2>
-        <ul>
-            <li>Entities: {len(model.get('entities', []))}</li>
-            <li>Relationships: {len(model.get('relationships', []))}</li>
-        </ul>
-        <h2>Issues</h2>
-        {_render_issue_list_html(issues)}
+        <h1>Logical Data Model for {db_name}.{schema}</h1>
+        <p>This is a simplified representation. A full ERD would be dynamically generated.</p>
+        <div class="mermaid">
+            graph TD
+                A[Table A] --> B(Table B);
+                B --> C{Table C};
+                C -- has a --> A;
+                D[Another Table]
+        </div>
+        <p><i>Note: Actual model generation requires querying detailed schema and relationships.</i></p>
     </body>
     </html>
     """
-    return html
+    return Response(html_content, mimetype="text/html")
 
+@app.route("/generate_ddl", methods=["GET"])
+def generate_ddl():
+    db_name = request.args.get("database_name")
+    schem-name = request.args.get("schem-name", "dbo")
+    table_name = request.args.get("table_name")
+    instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
-def _render_issue_list_html(issues: dict[str, list[dict[str, Any]]]) -> str:
-    items = []
-    for category, list_obj in issues.items():
-        for issue in list_obj:
-            items.append(f"<li class='issue'><b>[{category.upper()}]</b> {issue.get('issue')} in {issue.get('entity', 'model')}</li>")
-    if not items:
-        return "<p>No issues found.</p>"
-    return "<ul>" + "".join(items) + "</ul>"
+    if not db_name or not table_name:
+        return jsonify({"status": "error", "message": "database_name and table_name parameters are required"}), 400
 
+    # This is a simplified DDL generation. A robust solution would use SQL Server's
+    # built-in `sp_helptext` or query `sys.columns`, `sys.tables`, `sys.types`,
+    # `sys.indexes`, `sys.foreign_keys`, etc., to reconstruct the full DDL.
+    # For now, we'll construct a basic CREATE TABLE statement.
 
-def _analyze_logical_data_model_internal(
-    instance: int,
-    database_name: str | None,
-    schema: str | None = None,
-) -> dict[str, Any]:
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
-    conn = get_connection(db_name_str, instance=instance)
+    columns_sql = f"""
+    SELECT
+        c.name AS ColumnName,
+        ty.name AS DataType,
+        c.max_length AS MaxLength,
+        c.precision AS Precision,
+        c.scale AS Scale,
+        c.is_nullable AS IsNullable,
+        ic.is_primary_key AS IsPrimaryKey,
+        cc.definition AS DefaultValue
+    FROM
+        [{_escape_sql_identifier(db_name)}].sys.columns c
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.tables t ON c.object_id = t.object_id
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.schemas s ON t.schem-id = s.schem-id
+    INNER JOIN
+        [{_escape_sql_identifier(db_name)}].sys.types ty ON c.user_type_id = ty.user_type_id
+    LEFT JOIN
+        [{_escape_sql_identifier(db_name)}].sys.index_columns ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id AND ic.is_included_column = 0
+    LEFT JOIN
+        [{_escape_sql_identifier(db_name)}].sys.indexes i ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND i.is_primary_key = 1
+    LEFT JOIN
+        [{_escape_sql_identifier(db_name)}].sys.default_constraints dc ON c.default_object_id = dc.object_id
+    LEFT JOIN
+        [{_escape_sql_identifier(db_name)}].sys.check_constraints cc ON c.object_id = cc.parent_object_id AND c.column_id = cc.parent_column_id
+    WHERE
+        s.name = ? AND t.name = ?
+    ORDER BY
+        c.column_id;
+    """
     try:
-        cur = conn.cursor()
-        
-        # Fetch entities (tables)
-        where_sql = ""
-        params = []
-        if schema:
-            where_sql = "WHERE s.name = ?"
-            params.append(schema)
-            
-        _execute_safe(
-            cur,
-            f"""
-            SELECT s.name AS schema_name, t.name AS table_name
-            FROM [{db_name}].sys.tables t
-            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
-            {where_sql}
-            """,
-            params,
-        )
-        tables = cur.fetchall()
-        
-        entities = []
-        for t_schema, t_name in tables:
-             _execute_safe(
-                 cur,
-                 f"""
-                 SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-                 FROM [{db_name}].INFORMATION_SCHEMA.COLUMNS
-                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-                 """,
-                 [t_schema, t_name],
-             )
-             cols = _rows_to_dicts(cur, cur.fetchall())
-             entities.append({
-                 "schema": t_schema,
-                 "name": t_name,
-                 "columns": cols
-             })
-             
-        relationships = _fetch_relationships(cur, str(db_name) if not isinstance(db_name, str) else db_name)
-        issues = _analyze_erd_issues(entities, relationships)
-        
-        return {
-            "database": db_name,
-            "entities": entities,
-            "relationships": relationships,
-            "issues": issues,
-            "summary": {
-                "entity_count": len(entities),
-                "relationship_count": len(relationships),
-                "total_issues": sum(len(v) for v in issues.values())
-            }
-        }
-    finally:
-        conn.close()
+        columns_data = _execute_safe(columns_sql, db_name=db_name, instance=int(instance), params=(schem-name, table_name))
 
+        if not columns_data:
+            return jsonify({"status": "error", "message": f"Table '{schem-name}.{table_name}' not found or has no columns."}), 404
 
-def db_sql2019_show_top_queries(
-    instance: int = 1,
-    database_name: str | None = None,
-    metric: Literal["cpu", "io", "execution_count", "duration"] = "cpu",
-    limit: int = 10,
-    view: Literal["summary", "standard", "full"] = "standard",
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """Performance analysis using Query Store or dm_exec_query_stats."""
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
-    conn = get_connection(db_name_str, instance=instance)
+        ddl_statements = [f"CREATE TABLE [{_escape_sql_identifier(schem-name)}].[{_escape_sql_identifier(table_name)}] ("]
+        pk_columns = []
+
+        for col in columns_data:
+            col_name = _escape_sql_identifier(col['ColumnName'])
+            data_type = col['DataType']
+            max_length = col['MaxLength']
+            precision = col['Precision']
+            scale = col['Scale']
+            is_nullable = "NULL" if col['IsNullable'] else "NOT NULL"
+            default_value = f"DEFAULT {col['DefaultValue']}" if col['DefaultValue'] else ""
+
+            type_def = data_type
+            if data_type in ["varchar", "nvarchar", "varbinary"]:
+                type_def += f"({max_length if max_length != -1 else 'MAX'})"
+            elif data_type in ["char", "nchar", "binary"]:
+                type_def += f"({max_length})"
+            elif data_type in ["decimal", "numeric"]:
+                type_def += f"({precision},{scale})"
+
+            ddl_statements.append(f"    [{col_name}] {type_def} {default_value} {is_nullable},")
+
+            if col['IsPrimaryKey']:
+                pk_columns.append(f"[{col_name}]")
+
+        # Remove trailing comma from the last column definition
+        if ddl_statements:
+            ddl_statements[-1] = ddl_statements[-1].rstrip(',')
+
+        if pk_columns:
+            ddl_statements.append(f"    PRIMARY KEY ({', '.join(pk_columns)})")
+
+        ddl_statements.append(");")
+
+        return jsonify({"ddl": "
+".join(ddl_statements)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# --- DDL/DML Operations (Requires write_mode_enabled) ---
+@app.route("/create_db_user", methods=["POST"])
+def create_db_user():
+    data = request.get_json()
+    db_name = data.get("database_name")
+    username = data.get("username")
+    password = data.get("password")
+    instance = data.get("instance", SETTINGS["default_instance_id"])
+
+    if not db_name or not username or not password:
+        return jsonify({"status": "error", "message": "database_name, username, and password parameters are required"}), 400
+
+    # Basic validation for username to prevent SQL injection
+    if not re.match(r"^[A-Za-z0-9_]+$", username):
+        return jsonify({"status": "error", "message": "Invalid username format. Only alphanumeric and underscore allowed."}), 400
+
+    # Important: This creates a login AND a user. For a more secure approach,
+    # consider creating the login separately with more robust password policies,
+    # and then mapping the login to a user in the specific database.
+    # This also assumes sysadmin or db_owner privileges for the connection.
+    sql_login = f"CREATE LOGIN [{username}] WITH PASSWORD = '{password}', CHECK_POLICY = ON;"
+    sql_user = f"CREATE USER [{username}] FOR LOGIN [{username}];"
+    sql_grant = f"ALTER ROLE db_datareader ADD MEMBER [{username}]; ALTER ROLE db_datawriter ADD MEMBER [{username}];"
+
     try:
-        cur = conn.cursor()
-        
-        # Check if Query Store is enabled
-        _execute_safe(cur, f"SELECT actual_state_desc FROM [{db_name}].sys.database_query_store_options")
-        qs_row = cur.fetchone()
-        qs_enabled = qs_row[0] != "OFF" if qs_row else False
-        
-        if qs_enabled:
-            # Query Store metrics
-            metric_cols = {
-                "cpu": "avg_cpu_time",
-                "io": "avg_logical_io_reads",
-                "execution_count": "count_executions",
-                "duration": "avg_duration"
-            }
-            sort_col = metric_cols.get(metric, "avg_cpu_time")
-            
-            sql = f"""
-            SELECT TOP (?)
-                q.query_id,
-                qt.query_sql_text,
-                rs.{sort_col} AS metric_value,
-                rs.count_executions,
-                CAST(rs.last_execution_time AS DATETIME2) AS last_execution_time
-            FROM [{db_name}].sys.query_store_query q
-            JOIN [{db_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN [{db_name}].sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN [{db_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
-            ORDER BY rs.{sort_col} DESC
-            """
-            _execute_safe(cur, sql, [limit])
-        else:
-            # DMV fallback
-            metric_cols = {
-                "cpu": "total_worker_time / execution_count",
-                "io": "total_logical_reads / execution_count",
-                "execution_count": "execution_count",
-                "duration": "total_elapsed_time / execution_count"
-            }
-            sort_col = metric_cols.get(metric, "total_worker_time / execution_count")
-            
-            sql = f"""
-            SELECT TOP (?)
-                NULL AS query_id,
-                st.text AS query_sql_text,
-                {sort_col} AS metric_value,
-                count.execution_count,
-                CAST(count.last_execution_time AS DATETIME2) AS last_execution_time
-            FROM [{db_name}].sys.dm_exec_query_stats count
-            CROSS APPLY [{db_name}].sys.dm_exec_sql_text(count.sql_handle) st
-            ORDER BY metric_value DESC
-            """
-            _execute_safe(cur, sql, [limit])
-            
-        rows = _rows_to_dicts(cur, cur.fetchall())
-        result = {
-            "database": db_name,
-            "query_store_enabled": qs_enabled,
-            "queries": rows,
-            "metric": metric
-        }
-        shaped = _apply_top_queries_view(result, view)
-        return _paginate_tool_result(shaped, page=page, page_size=page_size)
-    finally:
-        conn.close()
+        _execute_query(sql_login, instance=int(instance), fetchall=False)
+        _execute_query(sql_user, db_name=db_name, instance=int(instance), fetchall=False)
+        _execute_query(sql_grant, db_name=db_name, instance=int(instance), fetchall=False)
+        return jsonify({"status": "success", "message": f"User '{username}' created and granted data reader/writer in '{db_name}'."})
+    except pyodbc.ProgrammingError as e:
+        # Handle cases where login/user already exists or permission issues
+        return jsonify({"status": "error", "message": f"Failed to create user: {e}"}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route("/drop_db_user", methods=["POST"])
+def drop_db_user():
+    data = request.get_json()
+    db_name = data.get("database_name")
+    username = data.get("username")
+    instance = data.get("instance", SETTINGS["default_instance_id"])
 
-def db_sql2019_check_fragmentation(
-    instance: int = 1,
-    database_name: str | None = None,
-    schema_name: str | None = None,
-    table_name: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """Check fragmentation for a specific table or all tables in a schema."""
-    items = _get_index_fragmentation_data(
-        instance=instance,
-        database_name=str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name,
-        schema=schema_name,
-    )
-    if table_name:
-        items = [i for i in items if i.get("table_name", "").lower() == table_name.lower()]
-    return _paginate_tool_result(items, page=page, page_size=page_size)
+    if not db_name or not username:
+        return jsonify({"status": "error", "message": "database_name and username parameters are required"}), 400
 
+    if not re.match(r"^[A-Za-z0-9_]+$", username):
+        return jsonify({"status": "error", "message": "Invalid username format."}), 400
 
-def db_sql2019_db_sec_perf_metrics(
-    instance: int = 1,
-    database_name: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """Database security and basic performance metrics."""
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
-    conn = get_connection(db_name_str, instance=instance)
+    # Drop user from database first, then drop login from server
+    sql_drop_user = f"DROP USER [{username}];"
+    sql_drop_login = f"DROP LOGIN [{username}];"
+
     try:
-        cur = conn.cursor()
-        
-        metrics = {}
-        # User count
-        _execute_safe(cur, f"SELECT COUNT(*) FROM [{db_name}].sys.database_principals WHERE type IN ('S', 'U', 'G')")
-        user_count_row = cur.fetchone()
-        metrics["user_count"] = user_count_row[0] if user_count_row else 0
-        
-        # Open transactions
-        _execute_safe(cur, f"SELECT COUNT(*) FROM [{db_name}].sys.dm_tran_database_transactions WHERE database_id = DB_ID('{db_name}')")
-        open_tx_row = cur.fetchone()
-        metrics["open_transactions"] = open_tx_row[0] if open_tx_row else 0
-        
-        # Data file size
-        _execute_safe(cur, f"SELECT SUM(size) * 8 / 1024 FROM [{db_name}].sys.database_files WHERE type = 0")
-        data_size_row = cur.fetchone()
-        metrics["data_size_mb"] = data_size_row[0] if data_size_row else 0
-        
-        return _paginate_tool_result(metrics, page=page, page_size=page_size)
-    finally:
-        conn.close()
+        _execute_query(sql_drop_user, db_name=db_name, instance=int(instance), fetchall=False)
+        _execute_query(sql_drop_login, instance=int(instance), fetchall=False)
+        return jsonify({"status": "success", "message": f"User '{username}' and associated login dropped."})
+    except pyodbc.ProgrammingError as e:
+        return jsonify({"status": "error", "message": f"Failed to drop user: {e}"}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route("/kill_session", methods=["POST"])
+def kill_session():
+    data = request.get_json()
+    session_id = data.get("session_id")
+    instance = data.get("instance", SETTINGS["default_instance_id"])
 
-def db_sql2019_explain_query(
-    instance: int = 1,
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    """Execution plan analysis (SHOWPLAN_ALL)."""
+    if not session_id:
+        return jsonify({"status": "error", "message": "session_id parameter is required"}), 400
+
+    try:
+        session_id = int(session_id)
+        sql = f"KILL {session_id};"
+        _execute_query(sql, instance=int(instance), fetchall=False)
+        return jsonify({"status": "success", "message": f"Session ID {session_id} killed."})
+    except ValueError:
+        return jsonify({"status": "error", "message": "session_id must be an integer"}), 400
+    except pyodbc.ProgrammingError as e:
+        return jsonify({"status": "error", "message": f"Failed to kill session: {e}"}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/create_object", methods=["POST"])
+def create_object():
+    data = request.get_json()
+    sql = data.get("sql")
+    db_name = data.get("database_name")
+    instance = data.get("instance", SETTINGS["default_instance_id"])
+
     if not sql:
-        raise ValueError("sql is required")
-    validate_instance(instance)
-    _require_readonly(sql)
-    _enforce_table_scope_for_sql(sql)
-    
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
-    conn = get_connection(db_name_str, instance=instance)
+        return jsonify({"status": "error", "message": "SQL statement is required"}), 400
+    if not sql.strip().upper().startswith("CREATE"):
+        return jsonify({"status": "error", "message": "Only CREATE statements are allowed for this endpoint."}), 400
+
     try:
-        cur = conn.cursor()
-        _execute_safe(cur, "SET SHOWPLAN_ALL ON")
-        try:
-            _execute_safe(cur, sql)
-            plan_rows = _rows_to_dicts(cur, cur.fetchall())
-        finally:
-            _execute_safe(cur, "SET SHOWPLAN_ALL OFF")
-            
-        return {"database": db_name, "plan": plan_rows}
-    finally:
-        conn.close()
+        _execute_query(sql, db_name=db_name, instance=int(instance), fetchall=False)
+        return jsonify({"status": "success", "message": "Object created successfully."})
+    except pyodbc.ProgrammingError as e:
+        return jsonify({"status": "error", "message": f"Failed to create object: {e}"}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route("/alter_object", methods=["POST"])
+def alter_object():
+    data = request.get_json()
+    sql = data.get("sql")
+    db_name = data.get("database_name")
+    instance = data.get("instance", SETTINGS["default_instance_id"])
 
-def db_sql2019_analyze_logical_data_model(
-    instance: int = 1,
-    database_name: str | None = None,
-    schema: str | None = None,
-    view: Literal["summary", "standard", "full"] = "standard",
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    """Analyze database schema for logical data modeling issues."""
-    result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
-    shaped = _apply_logical_model_view(result, view)
-    return _paginate_tool_result(shaped, page=page, page_size=page_size)
-
-
-def db_sql2019_open_logical_model(
-    instance: int = 1,
-    database_name: str | None = None,
-    schema: str | None = None,
-) -> str:
-    """Returns an HTML visualization of the logical data model."""
-    result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
-    html = _render_data_model_html(result, result.get("issues", {}))
-    return html
-
-
-def db_sql2019_generate_ddl(
-    instance: int = 1,
-    database_name: str | None = None,
-    schema_name: str = "dbo",
-    table_name: str | None = None,
-) -> str:
-    """Generate T-SQL CREATE TABLE script."""
-    if not table_name:
-        raise ValueError("table_name is required")
-    validate_instance(instance)
-    _enforce_table_scope_for_ident(schema_name, table_name)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
-    conn = get_connection(db_name_str, instance=instance)
-    try:
-        cur = conn.cursor()
-        
-        def _render_type(row: Any) -> str:
-            t = str(row[1]).upper()
-            if t in ("VARCHAR", "NVARCHAR", "VARBINARY", "CHAR", "NCHAR"):
-                length = int(row[3]) if row[3] is not None else -1
-                return f"{t}({'MAX' if length == -1 else length})"
-            if t in ("DECIMAL", "NUMERIC"):
-                return f"{t}({row[4]}, {row[5]})"
-            return t
-
-        _execute_safe(
-            cur,
-            f"""
-            SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH,
-                   NUMERIC_PRECISION, NUMERIC_SCALE, COLUMN_DEFAULT
-            FROM [{db_name}].INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-            ORDER BY ORDINAL_POSITION
-            """,
-            [schema_name, table_name],
-        )
-        rows = cur.fetchall()
-        if not rows:
-            raise ValueError(f"Table not found: {schema_name}.{table_name}")
-
-        lines = [f"CREATE TABLE [{schema_name}]. [{table_name}] ("]
-        col_lines = []
-        for r in rows:
-            line = f"    [{r[0]}] {_render_type(r)}"
-            if str(r[2]).upper() == "NO":
-                line += " NOT NULL"
-            if r[6]:
-                line += f" DEFAULT {r[6]}"
-            col_lines.append(line)
-        lines.append(",\n".join(col_lines))
-        lines.append(");")
-        return "\n".join(lines)
-    finally:
-        conn.close()
-
-
-def db_sql2019_create_db_user(
-    instance: int = 1,
-    username: str | None = None,
-    password: str | None = None,
-    database_name: str | None = None,
-) -> dict[str, Any]:
-    """Create a database user."""
-    _ensure_write_enabled()
-    if not username or not password:
-        raise ValueError("username and password are required")
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
-    conn = get_connection(db_name_str, instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(cur, f"CREATE USER [{username}] WITH PASSWORD = ?", [password])
-        return {"status": "success", "username": username, "database": db_name}
-    finally:
-        conn.close()
-
-
-def db_sql2019_drop_db_user(
-    instance: int = 1,
-    username: str | None = None,
-    database_name: str | None = None,
-) -> dict[str, Any]:
-    """Drop a database user."""
-    _ensure_write_enabled()
-    if not username:
-        raise ValueError("username is required")
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
-    conn = get_connection(db_name_str, instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(cur, f"DROP USER [{username}]")
-        return {"status": "success", "username": username, "database": db_name}
-    finally:
-        conn.close()
-
-
-def db_sql2019_kill_session(instance: int = 1, session_id: int | None = None) -> dict[str, Any]:
-    """Kill a database session."""
-    _ensure_write_enabled()
-    if session_id is None:
-        raise ValueError("session_id is required")
-    validate_instance(instance)
-    conn = get_connection("master", instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(cur, f"KILL {int(session_id)}")
-        return {"status": "success", "session_id": session_id}
-    finally:
-        conn.close()
-
-
-def db_sql2019_create_object(
-    instance: int = 1,
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    """Execute CREATE statement."""
-    _ensure_write_enabled()
     if not sql:
-        raise ValueError("sql is required")
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    _run_query_internal(
-        instance=instance,
-        database_name=str(db_name) if not isinstance(db_name, str) else db_name,
-        sql=sql,
-        enforce_readonly=False,
-        tool_name="db_sql2019_create_object",
-    )
-    return {"status": "success", "database": db_name}
+        return jsonify({"status": "error", "message": "SQL statement is required"}), 400
+    if not sql.strip().upper().startswith("ALTER"):
+        return jsonify({"status": "error", "message": "Only ALTER statements are allowed for this endpoint."}), 400
 
+    try:
+        _execute_query(sql, db_name=db_name, instance=int(instance), fetchall=False)
+        return jsonify({"status": "success", "message": "Object altered successfully."})
+    except pyodbc.ProgrammingError as e:
+        return jsonify({"status": "error", "message": f"Failed to alter object: {e}"}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-def db_sql2019_alter_object(
-    instance: int = 1,
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    """Execute ALTER statement."""
-    _ensure_write_enabled()
+@app.route("/drop_object", methods=["POST"])
+def drop_object():
+    data = request.get_json()
+    sql = data.get("sql")
+    db_name = data.get("database_name")
+    instance = data.get("instance", SETTINGS["default_instance_id"])
+
     if not sql:
-        raise ValueError("sql is required")
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    _run_query_internal(
-        instance=instance,
-        database_name=str(db_name) if not isinstance(db_name, str) else db_name,
-        sql=sql,
-        enforce_readonly=False,
-        tool_name="db_sql2019_alter_object",
-    )
-    return {"status": "success", "database": db_name}
+        return jsonify({"status": "error", "message": "SQL statement is required"}), 400
+    if not sql.strip().upper().startswith("DROP"):
+        return jsonify({"status": "error", "message": "Only DROP statements are allowed for this endpoint."}), 400
 
+    try:
+        _execute_query(sql, db_name=db_name, instance=int(instance), fetchall=False)
+        return jsonify({"status": "success", "message": "Object dropped successfully."})
+    except pyodbc.ProgrammingError as e:
+        return jsonify({"status": "error", "message": f"Failed to drop object: {e}"}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-def db_sql2019_drop_object(
-    instance: int = 1,
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    """Execute DROP statement."""
-    _ensure_write_enabled()
-    if not sql:
-        raise ValueError("sql is required")
-    validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-    _run_query_internal(
-        instance=instance,
-        database_name=str(db_name) if not isinstance(db_name, str) else db_name,
-        sql=sql,
-        enforce_readonly=False,
-        tool_name="db_sql2019_drop_object",
-    )
-    return {"status": "success", "database": db_name}
-
-
-def _register_dual_instance_tools():
-    """Systematically register all tools for both db_01 and db_02 instances."""
-    tool_map = {
-        "ping": db_sql2019_ping,
-        "list_databases": db_sql2019_list_databases,
-        "list_tables": db_sql2019_list_tables,
-        "get_schema": db_sql2019_get_schema,
-        "execute_query": db_sql2019_execute_query,
-        "run_query": db_sql2019_run_query,
-        "list_objects": db_sql2019_list_objects,
-        "index_fragmentation": db_sql2019_get_index_fragmentation,
-        "index_health": db_sql2019_analyze_index_health,
-        "table_health": db_sql2019_analyze_table_health,
-        "db_stats": db_sql2019_db_stats,
-        "server_info_mcp": db_sql2019_server_info_mcp,
-        "show_top_queries": db_sql2019_show_top_queries,
-        "check_fragmentation": db_sql2019_check_fragmentation,
-        "db_sec_perf_metrics": db_sql2019_db_sec_perf_metrics,
-        "explain_query": db_sql2019_explain_query,
-        "analyze_logical_data_model": db_sql2019_analyze_logical_data_model,
-        "open_logical_model": db_sql2019_open_logical_model,
-        "generate_ddl": db_sql2019_generate_ddl,
-        "create_db_user": db_sql2019_create_db_user,
-        "drop_db_user": db_sql2019_drop_db_user,
-        "kill_session": db_sql2019_kill_session,
-        "create_object": db_sql2019_create_object,
-        "alter_object": db_sql2019_alter_object,
-        "drop_object": db_sql2019_drop_object,
-    }
-
-    for instance in [1, 2]:
-        prefix = "db_01_" if instance == 1 else "db_02_"
-        for name, func in tool_map.items():
-            tool_name = f"{prefix}{name}"
-            
-            # Use a closure to capture function and instance correctly
-            def make_wrapper(f, inst):
-                @wraps(f)
-                def wrapper(*args, **kwargs):
-                    # Remove instance from kwargs if it was passed by MCP (it shouldn't be, but just in case)
-                    kwargs.pop("instance", None)
-                    kwargs["instance"] = inst
-                    return f(*args, **kwargs)
-                return wrapper
-            
-            wrapped = make_wrapper(func, instance)
-            mcp.tool(name=tool_name)(wrapped)
-
-
-_register_dual_instance_tools()
-
-
+# --- Main Entry Point ---
 if __name__ == "__main__":
-    mcp.run()
+    app.run(host="0.0.0.0", port=5000, debug=True)
