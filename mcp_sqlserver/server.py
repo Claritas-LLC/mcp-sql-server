@@ -173,7 +173,8 @@ def list_tables():
         return jsonify({"status": "error", "message": "database_name parameter is required"}), 400
     
     _validate_identifier(db_name, "database")
-    _validate_identifier(schem_name, "schema")
+    if schema_name is not None:
+        _validate_identifier(schema_name, "schema")
 
     sql = f"""
     SELECT
@@ -206,8 +207,10 @@ def get_schema():
         return jsonify({"status": "error", "message": "database_name and table_name parameters are required"}), 400
 
     _validate_identifier(db_name, "database")
-    _validate_identifier(schem_name, "schema")
-    _validate_identifier(table_name, "table")
+    if schema_name is not None:
+        _validate_identifier(schema_name, "schema")
+    if table_name is not None:
+        _validate_identifier(table_name, "table")
 
     sql = f"""
     SELECT
@@ -392,11 +395,14 @@ def list_objects():
 @app.route("/index_fragmentation", methods=["GET"])
 def index_fragmentation():
     db_name = request.args.get("database_name")
-    _validate_identifier(db_name, "database")
+    if db_name is not None:
+        _validate_identifier(db_name, "database")
     schema = request.args.get("schema", "dbo")
-    _validate_identifier(schema, "schema")
+    if schema is not None:
+        _validate_identifier(schema, "schema")
     min_fragmentation = float(request.args.get("min_fragmentation", MIN_FRAGMENTATION_PERCENT))
-    min_page_count = int(request.args.get("min_page_count", "100"))
+    MIN_PAGE_COUNT = 100
+    min_page_count = int(request.args.get("min_page_count", str(MIN_PAGE_COUNT)))
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
     if not db_name:
@@ -434,9 +440,11 @@ def index_fragmentation():
 @app.route("/index_health", methods=["GET"])
 def index_health():
     db_name = request.args.get("database_name")
-    _validate_identifier(db_name, "database")
+    if db_name is not None:
+        _validate_identifier(db_name, "database")
     schema = request.args.get("schema", "dbo")
-    _validate_identifier(schema, "schema")
+    if schema is not None:
+        _validate_identifier(schema, "schema")
     min_fragmentation = float(request.args.get("min_fragmentation", MIN_FRAGMENTATION_PERCENT))
     min_page_count = int(request.args.get("min_page_count", "100"))
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
@@ -745,6 +753,7 @@ def table_health():
         AND si.name IS NOT NULL
         AND ps.page_count >= ?;
     """
+    MIN_PAGE_COUNT = 100
     index_fragmentation = _execute_safe(frag_sql, db_name=db_name, instance=int(instance), params=(f"{schema_name}.{table_name}", MIN_PAGE_COUNT))
     for frag in index_fragmentation:
         frag_percent = frag["FragmentationPercentage"]
@@ -905,7 +914,7 @@ def table_health():
 
             if cardinality_queries:
                 batched_cardinality_sql = " UNION ALL ".join(cardinality_queries)
-                cardinality_results = _execute_safe(batched_cardinality_sql, db_name=db_name, instance=int(instance), params=[table_name] * len(cardinality_queries))
+                cardinality_results = _execute_safe(batched_cardinality_sql, db_name=db_name, instance=int(instance), params=tuple([table_name] * len(cardinality_queries)))
                 
                 for res in cardinality_results:
                     col_name = res['ColumnName']
@@ -1008,7 +1017,8 @@ def table_health():
 @app.route("/db_stats", methods=["GET"])
 def db_stats():
     db_name = request.args.get("database")
-    _validate_identifier(db_name, "database")
+    if db_name is not None:
+        _validate_identifier(db_name, "database")
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
     if not db_name:
@@ -1054,7 +1064,8 @@ def server_info_mcp():
 @app.route("/show_top_queries", methods=["GET"])
 def show_top_queries():
     db_name = request.args.get("database_name")
-    _validate_identifier(db_name, "database")
+    if db_name is not None:
+        _validate_identifier(db_name, "database")
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
     metric = request.args.get("metric", "cpu").lower() # cpu, io, execution_count, duration
     limit = int(request.args.get("limit", "10"))
@@ -1193,7 +1204,8 @@ def check_fragmentation():
 @app.route("/db_sec_perf_metrics", methods=["GET"])
 def db_sec_perf_metrics():
     db_name = request.args.get("database_name")
-    _validate_identifier(db_name, "database")
+    if db_name is not None:
+        _validate_identifier(db_name, "database")
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
     if not db_name:
@@ -1229,6 +1241,7 @@ def explain_query():
     try:
         # Prepend SET SHOWPLAN_ALL ON to the query
         explain_sql = f"SET SHOWPLAN_ALL ON;\n{sql}"
+        instance = request.args.get("instance", SETTINGS["default_instance_id"])
         results = _execute_safe(explain_sql, db_name=db_name, instance=int(instance))
         return jsonify(results)
     except Exception as e:
