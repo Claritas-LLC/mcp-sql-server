@@ -395,7 +395,9 @@ def list_objects():
 @app.route("/index_fragmentation", methods=["GET"])
 def index_fragmentation():
     db_name = request.args.get("database_name")
+    _validate_identifier(db_name, "database")
     schema = request.args.get("schema", "dbo")
+    _validate_identifier(schema, "schema")
     min_fragmentation = float(request.args.get("min_fragmentation", MIN_FRAGMENTATION_PERCENT))
     min_page_count = int(request.args.get("min_page_count", "100"))
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
@@ -435,7 +437,9 @@ def index_fragmentation():
 @app.route("/index_health", methods=["GET"])
 def index_health():
     db_name = request.args.get("database_name")
+    _validate_identifier(db_name, "database")
     schema = request.args.get("schema", "dbo")
+    _validate_identifier(schema, "schema")
     min_fragmentation = float(request.args.get("min_fragmentation", MIN_FRAGMENTATION_PERCENT))
     min_page_count = int(request.args.get("min_page_count", "100"))
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
@@ -1053,6 +1057,7 @@ def server_info_mcp():
 @app.route("/show_top_queries", methods=["GET"])
 def show_top_queries():
     db_name = request.args.get("database_name")
+    _validate_identifier(db_name, "database")
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
     metric = request.args.get("metric", "cpu").lower() # cpu, io, execution_count, duration
     limit = int(request.args.get("limit", "10"))
@@ -1186,6 +1191,7 @@ def check_fragmentation():
 @app.route("/db_sec_perf_metrics", methods=["GET"])
 def db_sec_perf_metrics():
     db_name = request.args.get("database_name")
+    _validate_identifier(db_name, "database")
     instance = request.args.get("instance", SETTINGS["default_instance_id"])
 
     if not db_name:
@@ -1213,9 +1219,6 @@ def explain_query():
     data = request.get_json()
     sql = data.get("sql")
     db_name = data.get("database_name")
-    _validate_identifier(db_name, "database")
-    instance = data.get("instance", SETTINGS["default_instance_id"])
-
     _validate_identifier(db_name, "database")
 
     if not sql:
