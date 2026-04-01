@@ -1,5 +1,5 @@
 # Web framework
-flask
+flask==3.1.3
 # For server resource monitoring
 psutil==7.2.2
 # Azure Blob Storage

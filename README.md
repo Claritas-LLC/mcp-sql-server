@@ -704,7 +704,7 @@ Here are concise examples of calling the most-used tools from an MCP client.
 ```
 
 ### 3. Analyze Table Health
-**Prompt:** `using sqlserver_readonly, call db_01_table_health(database_name='USGISPRO_800', schema='dbo', table_name='Account') and display results`
+**Prompt:** `using sqlserver_readonly, call db_01_sql2019_analyze_table_health(database_name='USGISPRO_800', schema='dbo', table_name='Account') and display results`
 
 **Result:**
 ```json

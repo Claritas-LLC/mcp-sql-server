@@ -2036,11 +2036,9 @@ def db_sql2019_analyze_table_health(
         row_count = table_info.get("RowCounts", 0)
         for col in columns:
             # High cardinality, not indexed
-            _execute_safe(cur, f"SELECT COUNT(DISTINCT [{col['COLUMN_NAME']}]) FROM [{db_name}].[{schema}].[{table_name}]")
+            _execute_safe(cur, f"SELECT COUNT(DISTINCT {_quoted_ident(col['COLUMN_NAME'])}) FROM [{db_name}].[{schema}].[{table_name}]")
             row = cur.fetchone()
             distinct_count = row[0] if row is not None else 0
-            # Ensure row_count is set (fallback to table_info or 0)
-            # row_count is already set above
             if row_count > 0 and (distinct_count / row_count) > 0.8:
                 # Check if part of any index
                 _execute_safe(cur, f"""
