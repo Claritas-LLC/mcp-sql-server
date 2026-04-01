@@ -1955,8 +1955,10 @@ def db_sql2019_analyze_table_health(
         statistics_sample = _rows_to_dicts(cur, cur.fetchall())
 
         # Fragmentation checks
+        # Ensure db_name is always a string for _get_index_fragmentation_data
+        norm_db_name = _normalize_db_name(db_name)
         fragmentation_data = _get_index_fragmentation_data(
-            instance=instance, database_name=db_name, schema=schema, min_fragmentation=5.0
+            instance=instance, database_name=norm_db_name, schema=schema, min_fragmentation=5.0
         )
         index_issues: list[dict[str, Any]] = []
         for frag in fragmentation_data:
@@ -1993,9 +1995,9 @@ def db_sql2019_analyze_table_health(
         # Stale statistics checks
         for stat in statistics_sample:
             mod_counter = stat.get("modification_counter", 0) or 0
-            row_count = table_info.get("RowCounts", 0) or 0
-            if row_count > 500 and mod_counter > (row_count * 0.1):  # 10% change
-                stats_name = stat.get("StatsName")
+            stats_name = stat.get("StatsName")
+            # row_count will be set below for column checks
+            if table_info.get("RowCounts", 0) > 500 and mod_counter > (table_info.get("RowCounts", 0) * 0.1):  # 10% change
                 recommendations.append(
                     {
                         "severity": "Medium",
@@ -2031,10 +2033,14 @@ def db_sql2019_analyze_table_health(
                 )
 
         # Column cardinality and data type checks
+        row_count = table_info.get("RowCounts", 0)
         for col in columns:
             # High cardinality, not indexed
-            _execute_safe(cur, f"SELECT COUNT(DISTINCT [{col["COLUMN_NAME"]}]) FROM [{db_name}].[{schema}].[{table_name}]")
-            distinct_count = cur.fetchone()[0]
+            _execute_safe(cur, f"SELECT COUNT(DISTINCT [{col['COLUMN_NAME']}]) FROM [{db_name}].[{schema}].[{table_name}]")
+            row = cur.fetchone()
+            distinct_count = row[0] if row is not None else 0
+            # Ensure row_count is set (fallback to table_info or 0)
+            # row_count is already set above
             if row_count > 0 and (distinct_count / row_count) > 0.8:
                 # Check if part of any index
                 _execute_safe(cur, f"""
@@ -2044,7 +2050,8 @@ def db_sql2019_analyze_table_health(
                     WHERE ic.object_id = OBJECT_ID(?)
                       AND c.name = ?
                 """, [f"[{db_name}].[{schema}].[{table_name}]", col['COLUMN_NAME']])
-                in_index_count = cur.fetchone()[0]
+                row2 = cur.fetchone()
+                in_index_count = row2[0] if row2 is not None else 0
                 if in_index_count == 0:
                     recommendations.append(
                         {
