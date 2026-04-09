@@ -30,6 +30,7 @@ from urllib.parse import quote
 from functools import lru_cache, wraps
 import pyodbc
 from fastmcp import FastMCP, Context
+from starlette.responses import JSONResponse
 
 # --- Connection Pool Wrapper ---
 
@@ -104,12 +105,32 @@ class Settings:
         self.audit_log_file = kwargs.get('audit_log_file', 'mcp_query_audit.jsonl')
         self.audit_log_include_params = kwargs.get('audit_log_include_params', False)
         self.allow_raw_prompts = kwargs.get('allow_raw_prompts', False)
+        self.server_instructions = kwargs.get('server_instructions', '')
+        self.server_version = kwargs.get('server_version', '')
+        self.list_page_size = kwargs.get('list_page_size', None)
         self.tool_search_enabled = kwargs.get('tool_search_enabled', False)
         self.tool_search_strategy = kwargs.get('tool_search_strategy', 'regex')
         self.tool_search_max_results = kwargs.get('tool_search_max_results', None)
         self.tool_search_always_visible = kwargs.get('tool_search_always_visible', '')
         self.tool_search_tool_name = kwargs.get('tool_search_tool_name', 'search_tools')
         self.tool_call_tool_name = kwargs.get('tool_call_tool_name', 'call_tool')
+        self.transform_layers_enabled = kwargs.get('transform_layers_enabled', True)
+        self.transform_layer_order = kwargs.get(
+            'transform_layer_order',
+            'visibility,namespace,tool_transformation,resources_as_tools,prompts_as_tools,code_mode',
+        )
+        self.transform_visibility_enabled = kwargs.get('transform_visibility_enabled', False)
+        self.transform_visibility_allowlist = kwargs.get('transform_visibility_allowlist', '')
+        self.transform_visibility_denylist = kwargs.get('transform_visibility_denylist', '')
+        self.transform_namespace_enabled = kwargs.get('transform_namespace_enabled', False)
+        self.transform_namespace_prefix = kwargs.get('transform_namespace_prefix', '')
+        self.transform_tool_transformation_enabled = kwargs.get('transform_tool_transformation_enabled', False)
+        self.transform_tool_name_map = kwargs.get('transform_tool_name_map', '{}')
+        self.transform_tool_description_map = kwargs.get('transform_tool_description_map', '{}')
+        self.transform_resources_as_tools_enabled = kwargs.get('transform_resources_as_tools_enabled', False)
+        self.transform_prompts_as_tools_enabled = kwargs.get('transform_prompts_as_tools_enabled', False)
+        self.transform_code_mode_enabled = kwargs.get('transform_code_mode_enabled', False)
+        self.transform_code_mode_policy = kwargs.get('transform_code_mode_policy', 'safe')
 
 # Minimal _now_utc_iso helper
 def _now_utc_iso():
@@ -159,16 +180,26 @@ _audit_log_rotate_backup_count = int(os.getenv("MCP_AUDIT_LOG_ROTATE_BACKUP_COUN
 
 # Module-level audit log handler and lock
 _AUDIT_LOG_HANDLER = None
+_AUDIT_LOG_HANDLER_PATH: str | None = None
 _AUDIT_LOG_HANDLER_INIT_LOCK = Lock()
 
 def _get_audit_handler():
-    global _AUDIT_LOG_HANDLER
-    if _AUDIT_LOG_HANDLER is not None:
+    global _AUDIT_LOG_HANDLER, _AUDIT_LOG_HANDLER_PATH
+    configured_path = (getattr(SETTINGS, "audit_log_file", "") or "").strip() or _audit_log_file
+    if _AUDIT_LOG_HANDLER is not None and _AUDIT_LOG_HANDLER_PATH == configured_path:
         return _AUDIT_LOG_HANDLER
     with _AUDIT_LOG_HANDLER_INIT_LOCK:
-        if _AUDIT_LOG_HANDLER is not None:
+        configured_path = (getattr(SETTINGS, "audit_log_file", "") or "").strip() or _audit_log_file
+        if _AUDIT_LOG_HANDLER is not None and _AUDIT_LOG_HANDLER_PATH == configured_path:
             return _AUDIT_LOG_HANDLER
-        log_path = _audit_log_file
+        if _AUDIT_LOG_HANDLER is not None:
+            try:
+                _AUDIT_LOG_HANDLER.close()
+            except Exception:
+                pass
+            _AUDIT_LOG_HANDLER = None
+
+        log_path = configured_path
         log_dir = os.path.dirname(log_path)
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
@@ -184,6 +215,7 @@ def _get_audit_handler():
         handler.setLevel(logging.INFO)
         handler.setFormatter(logging.Formatter("%(message)s"))
         _AUDIT_LOG_HANDLER = handler
+        _AUDIT_LOG_HANDLER_PATH = log_path
         return handler
 
 
@@ -322,12 +354,32 @@ def _load_settings() -> Settings:
         audit_log_file=_env("MCP_AUDIT_LOG_FILE", "mcp_query_audit.jsonl").strip() or "mcp_query_audit.jsonl",
         audit_log_include_params=_env_bool("MCP_AUDIT_LOG_INCLUDE_PARAMS", False),
         allow_raw_prompts=_env_bool("MCP_ALLOW_RAW_PROMPTS", _env_bool("ALLOW_RAW_PROMPTS", False)),
+        server_instructions=_env("MCP_SERVER_INSTRUCTIONS", "").strip(),
+        server_version=_env("MCP_SERVER_VERSION", "").strip(),
+        list_page_size=_env_optional_int("MCP_LIST_PAGE_SIZE"),
         tool_search_enabled=_env_bool("MCP_TOOL_SEARCH_ENABLED", False),
         tool_search_strategy=_env("MCP_TOOL_SEARCH_STRATEGY", "regex").strip().lower(),
         tool_search_max_results=_env_optional_int("MCP_TOOL_SEARCH_MAX_RESULTS"),
         tool_search_always_visible=_env("MCP_TOOL_SEARCH_ALWAYS_VISIBLE", "").strip(),
         tool_search_tool_name=_env("MCP_TOOL_SEARCH_TOOL_NAME", "search_tools").strip(),
         tool_call_tool_name=_env("MCP_TOOL_CALL_TOOL_NAME", "call_tool").strip(),
+        transform_layers_enabled=_env_bool("MCP_TRANSFORM_LAYERS_ENABLED", True),
+        transform_layer_order=_env(
+            "MCP_TRANSFORM_LAYER_ORDER",
+            "visibility,namespace,tool_transformation,resources_as_tools,prompts_as_tools,code_mode",
+        ).strip().lower(),
+        transform_visibility_enabled=_env_bool("MCP_TRANSFORM_VISIBILITY_ENABLED", False),
+        transform_visibility_allowlist=_env("MCP_TRANSFORM_VISIBILITY_ALLOWLIST", "").strip(),
+        transform_visibility_denylist=_env("MCP_TRANSFORM_VISIBILITY_DENYLIST", "").strip(),
+        transform_namespace_enabled=_env_bool("MCP_TRANSFORM_NAMESPACE_ENABLED", False),
+        transform_namespace_prefix=_env("MCP_TRANSFORM_NAMESPACE_PREFIX", "").strip(),
+        transform_tool_transformation_enabled=_env_bool("MCP_TRANSFORM_TOOL_TRANSFORMATION_ENABLED", False),
+        transform_tool_name_map=_env("MCP_TRANSFORM_TOOL_NAME_MAP", "{}").strip(),
+        transform_tool_description_map=_env("MCP_TRANSFORM_TOOL_DESCRIPTION_MAP", "{}").strip(),
+        transform_resources_as_tools_enabled=_env_bool("MCP_TRANSFORM_RESOURCES_AS_TOOLS_ENABLED", False),
+        transform_prompts_as_tools_enabled=_env_bool("MCP_TRANSFORM_PROMPTS_AS_TOOLS_ENABLED", False),
+        transform_code_mode_enabled=_env_bool("MCP_TRANSFORM_CODE_MODE_ENABLED", False),
+        transform_code_mode_policy=_env("MCP_TRANSFORM_CODE_MODE_POLICY", "safe").strip().lower(),
     )
 
 
@@ -1106,7 +1158,20 @@ def _ensure_write_enabled() -> None:
 
 # FastMCP app initialization
 MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server")
-mcp = FastMCP(name=MCP_SERVER_NAME)
+
+
+def build_mcp_constructor_config() -> dict[str, Any]:
+    config: dict[str, Any] = {"name": MCP_SERVER_NAME}
+    if SETTINGS.server_instructions:
+        config["instructions"] = SETTINGS.server_instructions
+    if SETTINGS.server_version:
+        config["version"] = SETTINGS.server_version
+    if SETTINGS.list_page_size is not None:
+        config["list_page_size"] = SETTINGS.list_page_size
+    return config
+
+
+mcp = FastMCP(**build_mcp_constructor_config())
 
 try:
     import fastmcp
@@ -1115,23 +1180,295 @@ except Exception:
     print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: unknown\n========================\n")
 
 
+_TOOL_SEARCH_TRANSFORM_APPLIED = False
+_HEALTH_ROUTE_REGISTERED = False
+_PROVIDER_TRANSFORM_LAYERS_APPLIED = False
+
+
+def _parse_csv_values(raw_value: str | None) -> list[str]:
+    if not raw_value:
+        return []
+    return [item.strip() for item in str(raw_value).split(",") if item.strip()]
+
+
+def _parse_json_mapping(raw_value: str | None, env_name: str) -> dict[str, str]:
+    if not raw_value:
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except Exception as exc:
+        logger.warning("Invalid JSON mapping for %s: %s", env_name, exc)
+        return {}
+    if not isinstance(parsed, dict):
+        logger.warning("Invalid JSON mapping for %s: expected object.", env_name)
+        return {}
+    cleaned: dict[str, str] = {}
+    for key, value in parsed.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        key_clean = key.strip()
+        value_clean = value.strip()
+        if key_clean and value_clean:
+            cleaned[key_clean] = value_clean
+    return cleaned
+
+
+def _instantiate_transform(
+    module_name: str,
+    class_candidates: Sequence[str],
+    kwargs: dict[str, Any],
+    layer_name: str,
+) -> Any | None:
+    try:
+        module = __import__(module_name, fromlist=["*"])
+    except Exception as exc:
+        logger.warning("%s transform unavailable: %s", layer_name, exc)
+        return None
+
+    transform_class = None
+    for class_name in class_candidates:
+        transform_class = getattr(module, class_name, None)
+        if transform_class is not None:
+            break
+
+    if transform_class is None:
+        logger.warning(
+            "%s transform unavailable: none of %s found in %s",
+            layer_name,
+            ", ".join(class_candidates),
+            module_name,
+        )
+        return None
+
+    try:
+        return transform_class(**kwargs)
+    except TypeError:
+        # Graceful fallback for runtimes with narrower constructor signatures.
+        try:
+            return transform_class()
+        except Exception as exc:
+            logger.warning("Failed to instantiate %s transform: %s", layer_name, exc)
+            return None
+    except Exception as exc:
+        logger.warning("Failed to instantiate %s transform: %s", layer_name, exc)
+        return None
+
+
+def _configure_visibility_transform() -> Any | None:
+    if not bool(getattr(SETTINGS, "transform_visibility_enabled", False)):
+        return None
+    kwargs: dict[str, Any] = {}
+    allowlist = _parse_csv_values(getattr(SETTINGS, "transform_visibility_allowlist", ""))
+    denylist = _parse_csv_values(getattr(SETTINGS, "transform_visibility_denylist", ""))
+    if allowlist:
+        kwargs["allowlist"] = allowlist
+    if denylist:
+        kwargs["denylist"] = denylist
+    return _instantiate_transform(
+        "fastmcp.server.transforms.visibility",
+        ["VisibilityTransform"],
+        kwargs,
+        "Visibility",
+    )
+
+
+def _configure_namespace_transform() -> Any | None:
+    if not bool(getattr(SETTINGS, "transform_namespace_enabled", False)):
+        return None
+    kwargs: dict[str, Any] = {}
+    namespace_prefix = str(getattr(SETTINGS, "transform_namespace_prefix", "") or "").strip()
+    if namespace_prefix:
+        kwargs["prefix"] = namespace_prefix
+    return _instantiate_transform(
+        "fastmcp.server.transforms.namespace",
+        ["NamespaceTransform"],
+        kwargs,
+        "Namespace",
+    )
+
+
+def _configure_tool_transformation_transform() -> Any | None:
+    if not bool(getattr(SETTINGS, "transform_tool_transformation_enabled", False)):
+        return None
+    kwargs: dict[str, Any] = {}
+    name_map = _parse_json_mapping(
+        getattr(SETTINGS, "transform_tool_name_map", "{}"),
+        "MCP_TRANSFORM_TOOL_NAME_MAP",
+    )
+    description_map = _parse_json_mapping(
+        getattr(SETTINGS, "transform_tool_description_map", "{}"),
+        "MCP_TRANSFORM_TOOL_DESCRIPTION_MAP",
+    )
+    if name_map:
+        kwargs["name_map"] = name_map
+    if description_map:
+        kwargs["description_map"] = description_map
+    return _instantiate_transform(
+        "fastmcp.server.transforms.tool_transformation",
+        ["ToolTransformationTransform", "ToolTransformation", "ToolTransform"],
+        kwargs,
+        "ToolTransformation",
+    )
+
+
+def _configure_resources_as_tools_transform() -> Any | None:
+    if not bool(getattr(SETTINGS, "transform_resources_as_tools_enabled", False)):
+        return None
+    return _instantiate_transform(
+        "fastmcp.server.transforms.resources_as_tools",
+        ["ResourcesAsToolsTransform", "ResourcesAsTools"],
+        {},
+        "ResourcesAsTools",
+    )
+
+
+def _configure_prompts_as_tools_transform() -> Any | None:
+    if not bool(getattr(SETTINGS, "transform_prompts_as_tools_enabled", False)):
+        return None
+    return _instantiate_transform(
+        "fastmcp.server.transforms.prompts_as_tools",
+        ["PromptsAsToolsTransform", "PromptsAsTools"],
+        {},
+        "PromptsAsTools",
+    )
+
+
+def _configure_code_mode_transform() -> Any | None:
+    if not bool(getattr(SETTINGS, "transform_code_mode_enabled", False)):
+        return None
+    kwargs: dict[str, Any] = {}
+    policy = str(getattr(SETTINGS, "transform_code_mode_policy", "safe") or "safe").strip().lower()
+    if policy:
+        kwargs["policy"] = policy
+    return _instantiate_transform(
+        "fastmcp.server.transforms.code_mode",
+        ["CodeModeTransform", "CodeMode"],
+        kwargs,
+        "CodeMode",
+    )
+
+
+def _build_provider_transform_layers(settings: Settings | None = None) -> list[dict[str, Any]]:
+    effective_settings = settings or SETTINGS
+    if not bool(getattr(effective_settings, "transform_layers_enabled", True)):
+        return []
+
+    default_order = [
+        "visibility",
+        "namespace",
+        "tool_transformation",
+        "resources_as_tools",
+        "prompts_as_tools",
+        "code_mode",
+    ]
+    raw_order = _parse_csv_values(getattr(effective_settings, "transform_layer_order", ""))
+    known = set(default_order)
+    ordered = [item for item in raw_order if item in known]
+    for item in default_order:
+        if item not in ordered:
+            ordered.append(item)
+
+    layer_specs: dict[str, tuple[bool, Any]] = {
+        "visibility": (bool(getattr(effective_settings, "transform_visibility_enabled", False)), _configure_visibility_transform),
+        "namespace": (bool(getattr(effective_settings, "transform_namespace_enabled", False)), _configure_namespace_transform),
+        "tool_transformation": (
+            bool(getattr(effective_settings, "transform_tool_transformation_enabled", False)),
+            _configure_tool_transformation_transform,
+        ),
+        "resources_as_tools": (
+            bool(getattr(effective_settings, "transform_resources_as_tools_enabled", False)),
+            _configure_resources_as_tools_transform,
+        ),
+        "prompts_as_tools": (
+            bool(getattr(effective_settings, "transform_prompts_as_tools_enabled", False)),
+            _configure_prompts_as_tools_transform,
+        ),
+        "code_mode": (bool(getattr(effective_settings, "transform_code_mode_enabled", False)), _configure_code_mode_transform),
+    }
+
+    layers: list[dict[str, Any]] = []
+    for name in ordered:
+        enabled, factory = layer_specs[name]
+        layers.append({"name": name, "enabled": enabled, "factory": factory})
+    return layers
+
+
+def _apply_provider_transform_layers(layers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    global _PROVIDER_TRANSFORM_LAYERS_APPLIED
+
+    if _PROVIDER_TRANSFORM_LAYERS_APPLIED:
+        return {"applied": [], "skipped": [], "already_applied": True}
+
+    transform_layers = layers if layers is not None else _build_provider_transform_layers()
+    add_transform = getattr(mcp, "add_transform", None)
+    if not callable(add_transform):
+        logger.warning("Provider transform layering skipped: FastMCP runtime has no add_transform method.")
+        return {"applied": [], "skipped": [layer.get("name", "unknown") for layer in transform_layers], "already_applied": False}
+
+    applied: list[str] = []
+    skipped: list[str] = []
+    for layer in transform_layers:
+        layer_name = str(layer.get("name", "unknown"))
+        if not bool(layer.get("enabled", False)):
+            skipped.append(layer_name)
+            continue
+        factory = layer.get("factory")
+        if not callable(factory):
+            skipped.append(layer_name)
+            logger.warning("Provider transform layer %s skipped: factory unavailable.", layer_name)
+            continue
+        transform = factory()
+        if transform is None:
+            skipped.append(layer_name)
+            continue
+        try:
+            add_transform(transform)
+            applied.append(layer_name)
+        except Exception as exc:
+            skipped.append(layer_name)
+            logger.warning("Provider transform layer %s failed to apply: %s", layer_name, exc)
+
+    _PROVIDER_TRANSFORM_LAYERS_APPLIED = True
+    logger.info(
+        "Provider transform layering resolved",
+        extra={
+            "applied_layers": applied,
+            "skipped_layers": skipped,
+        },
+    )
+    return {"applied": applied, "skipped": skipped, "already_applied": False}
+
+
 def _configure_tool_search_transform() -> None:
-    if not SETTINGS.tool_search_enabled:
+    global _TOOL_SEARCH_TRANSFORM_APPLIED
+
+    if _TOOL_SEARCH_TRANSFORM_APPLIED:
         return
 
-    strategy = SETTINGS.tool_search_strategy
-    kwargs: dict[str, Any] = {}
-    if SETTINGS.tool_search_max_results is not None:
-        kwargs["max_results"] = SETTINGS.tool_search_max_results
+    if not bool(getattr(SETTINGS, "tool_search_enabled", False)):
+        logger.info("Tool search transform disabled by MCP_TOOL_SEARCH_ENABLED.")
+        return
 
-    always_visible = [name.strip() for name in SETTINGS.tool_search_always_visible.split(",") if name.strip()]
+    strategy = str(getattr(SETTINGS, "tool_search_strategy", "regex") or "regex").strip().lower()
+    if strategy not in {"regex", "bm25"}:
+        raise RuntimeError("MCP_TOOL_SEARCH_STRATEGY must be 'regex' or 'bm25'.")
+
+    kwargs: dict[str, Any] = {}
+    max_results = getattr(SETTINGS, "tool_search_max_results", None)
+    if max_results is not None:
+        kwargs["max_results"] = max_results
+
+    always_visible_raw = str(getattr(SETTINGS, "tool_search_always_visible", "") or "")
+    always_visible = [name.strip() for name in always_visible_raw.split(",") if name.strip()]
     if always_visible:
         kwargs["always_visible"] = always_visible
 
-    if SETTINGS.tool_search_tool_name:
-        kwargs["search_tool_name"] = SETTINGS.tool_search_tool_name
-    if SETTINGS.tool_call_tool_name:
-        kwargs["call_tool_name"] = SETTINGS.tool_call_tool_name
+    search_tool_name = str(getattr(SETTINGS, "tool_search_tool_name", "") or "").strip()
+    call_tool_name = str(getattr(SETTINGS, "tool_call_tool_name", "") or "").strip()
+    if search_tool_name:
+        kwargs["search_tool_name"] = search_tool_name
+    if call_tool_name:
+        kwargs["call_tool_name"] = call_tool_name
 
     try:
         if strategy == "bm25":
@@ -1145,13 +1482,75 @@ def _configure_tool_search_transform() -> None:
         )
         return
 
-def _resolve_http_app() -> Any | None:
-    return None
+    try:
+        transform = SearchTransform(**kwargs)
+        add_transform = getattr(mcp, "add_transform", None)
+        if callable(add_transform):
+            add_transform(transform)
+            _TOOL_SEARCH_TRANSFORM_APPLIED = True
+            logger.info("Tool search transform applied.", extra={"strategy": strategy})
+            return
 
-# --- db_sql2019_ping must be defined before registration ---
+        logger.warning("Tool search transform could not be applied: FastMCP runtime has no add_transform method.")
+    except Exception as exc:
+        logger.warning("Failed to apply tool search transform: %s", exc)
+
+
+def _register_health_route() -> None:
+    global _HEALTH_ROUTE_REGISTERED
+    if _HEALTH_ROUTE_REGISTERED:
+        return
+
+    custom_route: Any = getattr(mcp, "custom_route", None)
+    if not callable(custom_route):
+        logger.warning("Health route registration skipped: FastMCP runtime has no custom_route API.")
+        return
+
+    async def _health_route(_request: Any) -> JSONResponse:
+        return JSONResponse(
+            {
+                "status": "ok",
+                "service": MCP_SERVER_NAME,
+                "transport": str(getattr(SETTINGS, "transport", "http") or "http").lower(),
+            }
+        )
+
+    route_decorator: Any = custom_route(path="/health", methods=["GET"], name="health")
+    route_decorator(_health_route)
+
+    _HEALTH_ROUTE_REGISTERED = True
+
+def _resolve_http_app() -> Any | None:
+    transport = str(getattr(SETTINGS, "transport", "http") or "http").lower()
+    if transport != "http":
+        return None
+
+    _register_health_route()
+
+    http_app_factory = getattr(mcp, "http_app", None)
+    if not callable(http_app_factory):
+        logger.warning("HTTP app resolution skipped: FastMCP runtime has no http_app API.")
+        return None
+
+    try:
+        return http_app_factory(path="/mcp", transport="http")
+    except TypeError:
+        return http_app_factory(path="/mcp")
+
+
+
+
+@mcp.tool(name="db_01_ping", description="Basic connectivity probe for database instance 1.")
+def db_01_ping() -> dict[str, Any]:
+    return _db_sql2019_ping_internal(instance=1)
+
+@mcp.tool(name="db_02_ping", description="Basic connectivity probe for database instance 2.")
+def db_02_ping() -> dict[str, Any]:
+    return _db_sql2019_ping_internal(instance=2)
+
 
 # Place after get_instance_config
-def db_sql2019_ping(instance: int = 1) -> dict[str, Any]:
+def _db_sql2019_ping_internal(instance: int = 1) -> dict[str, Any]:
     # Basic connectivity probe.
     conn = get_connection(instance=instance)
     try:
@@ -1170,7 +1569,22 @@ def db_sql2019_ping(instance: int = 1) -> dict[str, Any]:
         conn.close()
 
 
-def db_sql2019_list_databases(instance: int = 1, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
+
+@mcp.tool(name="db_01_list_databases", description="List online databases visible to the current login for instance 1.")
+def db_01_list_databases(
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE
+) -> dict[str, Any]:
+    return _db_sql2019_list_databases_internal(instance=1, page=page, page_size=page_size)
+
+@mcp.tool(name="db_02_list_databases", description="List online databases visible to the current login for instance 2.")
+def db_02_list_databases(
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE
+) -> dict[str, Any]:
+    return _db_sql2019_list_databases_internal(instance=2, page=page, page_size=page_size)
+
+def _db_sql2019_list_databases_internal(instance: int = 1, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
     """List online databases visible to the current login."""
     validate_instance(instance)
     conn = get_connection("master", instance=instance)
@@ -1191,7 +1605,38 @@ def db_sql2019_list_databases(instance: int = 1, page: int = 1, page_size: int =
         conn.close()
 
 
-def db_sql2019_list_tables(
+@mcp.tool(name="db_01_list_tables", description="List tables for a database/schema for instance 1.")
+def db_01_list_tables(
+    database_name: str | None = None,
+    schema_name: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_list_tables_internal(
+        instance=1,
+        database_name=database_name,
+        schema_name=schema_name,
+        page=page,
+        page_size=page_size,
+    )
+
+@mcp.tool(name="db_02_list_tables", description="List tables for a database/schema for instance 2.")
+def db_02_list_tables(
+    database_name: str | None = None,
+    schema_name: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_list_tables_internal(
+        instance=2,
+        database_name=database_name,
+        schema_name=schema_name,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _db_sql2019_list_tables_internal(
     instance: int = 1,
     database_name: str | None = None,
     schema_name: str | None = None,
@@ -1324,6 +1769,7 @@ def _run_query_internal(
     instance: int,
     database_name: str | None,
     sql: str,
+    params: list[Any] | dict[str, Any] | None = None,
     params_json: str | None = None,
     max_rows: int | None = None,
     enforce_readonly: bool = True,
@@ -1340,31 +1786,45 @@ def _run_query_internal(
     db_name_str = _normalize_db_name(db_name)
     # Ensure database_name is str for audit record (never None)
     audit_db_name = db_name_str if db_name_str is not None else ""
+    if params is not None:
+        if isinstance(params, dict):
+            resolved_params: list[Any] | None = [params]
+        elif isinstance(params, list):
+            resolved_params = params
+        else:
+            raise ValueError("params must be a list or object")
+    else:
+        resolved_params = _parse_params_json(params_json)
+
+    audit_params_json: str | None = None
+    if resolved_params is not None:
+        audit_params_json = json.dumps(resolved_params, default=str)
+
     _write_query_audit_record(
         tool_name=tool_name,
         database_name=audit_db_name,
         sql=sql,
-        params_json=params_json,
+        params_json=audit_params_json,
         prompt_context=prompt_context,
     )
 
-    params = _parse_params_json(params_json)
     row_cap = max_rows if isinstance(max_rows, int) and max_rows > 0 else SETTINGS.max_rows
 
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
-        _execute_safe(cur, sql, params)
+        _execute_safe(cur, sql, resolved_params)
         rows = _fetch_limited(cur, row_cap)
         return _rows_to_dicts(cur, rows)
     finally:
         conn.close()
 
 
-def db_sql2019_execute_query(
+def _db_sql2019_execute_query_internal(
     instance: int = 1,
     database_name: str | None = None,
     sql: str | None = None,
+    params: list[Any] | dict[str, Any] | None = None,
     params_json: str | None = None,
     max_rows: int | None = None,
     prompt_context: str | None = None,
@@ -1378,6 +1838,7 @@ def db_sql2019_execute_query(
         instance=instance,
         database_name=database_name,
         sql=sql,
+        params=params,
         params_json=params_json,
         max_rows=max_rows,
         enforce_readonly=True,
@@ -1387,7 +1848,97 @@ def db_sql2019_execute_query(
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
 
-def db_sql2019_run_query(
+@mcp.tool(name="db_01_execute_query", description="Execute a read-only SQL query for instance 1.")
+def db_01_execute_query(
+    database_name: str | None = None,
+    sql: str | None = None,
+    params: list[Any] | dict[str, Any] | None = None,
+    max_rows: int | None = None,
+    prompt_context: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_execute_query_internal(
+        instance=1,
+        database_name=database_name,
+        sql=sql,
+        params=params,
+        max_rows=max_rows,
+        prompt_context=prompt_context,
+        page=page,
+        page_size=page_size,
+    )
+
+@mcp.tool(name="db_02_execute_query", description="Execute a read-only SQL query for instance 2.")
+def db_02_execute_query(
+    database_name: str | None = None,
+    sql: str | None = None,
+    params: list[Any] | dict[str, Any] | None = None,
+    max_rows: int | None = None,
+    prompt_context: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_execute_query_internal(
+        instance=2,
+        database_name=database_name,
+        sql=sql,
+        params=params,
+        max_rows=max_rows,
+        prompt_context=prompt_context,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@mcp.tool(name="db_01_run_query", description="Execute SQL query (read-only) for instance 1.")
+def db_01_run_query(
+    database_name: str | None = None,
+    sql: str | None = None,
+    params_json: str | None = None,
+    max_rows: int | None = None,
+    prompt_context: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    # The function signature was updated to align with db_sql2019_execute_query's new signature.
+    # For backward compatibility with legacy arg1/arg2 usage, we map to database_name and sql.
+    return _db_sql2019_run_query_internal(
+        instance=1,
+        arg1=database_name,
+        arg2=sql,
+        params_json=params_json,
+        max_rows=max_rows,
+        prompt_context=prompt_context,
+        page=page,
+        page_size=page_size,
+    )
+
+@mcp.tool(name="db_02_run_query", description="Execute SQL query (read-only) for instance 2.")
+def db_02_run_query(
+    database_name: str | None = None,
+    sql: str | None = None,
+    params_json: str | None = None,
+    max_rows: int | None = None,
+    prompt_context: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    # The function signature was updated to align with db_sql2019_execute_query's new signature.
+    # For backward compatibility with legacy arg1/arg2 usage, we map to database_name and sql.
+    return _db_sql2019_run_query_internal(
+        instance=2,
+        arg1=database_name,
+        arg2=sql,
+        params_json=params_json,
+        max_rows=max_rows,
+        prompt_context=prompt_context,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _db_sql2019_run_query_internal(
     instance: int = 1,
     arg1: str | None = None,
     arg2: str | None = None,
@@ -1421,7 +1972,54 @@ def db_sql2019_run_query(
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
 
-def db_sql2019_list_objects(
+@mcp.tool(name="db_01_list_objects", description="List objects (tables, views, etc.) for instance 1.")
+def db_01_list_objects(
+    database_name: str | None = None,
+    object_type: str = "TABLE",
+    object_name: str | None = None,
+    schema: str | None = None,
+    order_by: str | None = None,
+    limit: int = 50,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_list_objects_internal(
+        instance=1,
+        database_name=database_name,
+        object_type=object_type,
+        object_name=object_name,
+        schema=schema,
+        order_by=order_by,
+        limit=limit,
+        page=page,
+        page_size=page_size,
+    )
+
+@mcp.tool(name="db_02_list_objects", description="List objects (tables, views, etc.) for instance 2.")
+def db_02_list_objects(
+    database_name: str | None = None,
+    object_type: str = "TABLE",
+    object_name: str | None = None,
+    schema: str | None = None,
+    order_by: str | None = None,
+    limit: int = 50,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_list_objects_internal(
+        instance=2,
+        database_name=database_name,
+        object_type=object_type,
+        object_name=object_name,
+        schema=schema,
+        order_by=order_by,
+        limit=limit,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _db_sql2019_list_objects_internal(
     instance: int = 1,
     database_name: str | None = None,
     object_type: str = "TABLE",
@@ -1800,7 +2398,7 @@ def db_sql2019_analyze_index_health(
     return _paginate_tool_result(result, page=page, page_size=page_size)
 
 
-def db_sql2019_analyze_table_health(
+def _db_sql2019_analyze_table_health_internal(
     instance: int = 1,
     database_name: str | None = None,
     schema: str | None = None,
@@ -2294,7 +2892,54 @@ def db_sql2019_analyze_table_health(
         conn.close()
 
 
-def db_sql2019_db_stats(instance: int = 1, database: str | None = None) -> dict[str, Any]:
+@mcp.tool(name="db_01_analyze_table_health", description="Table-level storage/index/stats/constraint analysis for instance 1.")
+def db_01_analyze_table_health(
+    database_name: str | None = None,
+    schema: str | None = None,
+    table_name: str | None = None,
+    view: Literal["summary", "standard", "full"] = "standard",
+    fields: str | None = None,
+    token_budget: int | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_analyze_table_health_internal(
+        instance=1,
+        database_name=database_name,
+        schema=schema,
+        table_name=table_name,
+        view=view,
+        fields=fields,
+        token_budget=token_budget,
+        page=page,
+        page_size=page_size,
+    )
+
+@mcp.tool(name="db_02_analyze_table_health", description="Table-level storage/index/stats/constraint analysis for instance 2.")
+def db_02_analyze_table_health(
+    database_name: str | None = None,
+    schema: str | None = None,
+    table_name: str | None = None,
+    view: Literal["summary", "standard", "full"] = "standard",
+    fields: str | None = None,
+    token_budget: int | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_analyze_table_health_internal(
+        instance=2,
+        database_name=database_name,
+        schema=schema,
+        table_name=table_name,
+        view=view,
+        fields=fields,
+        token_budget=token_budget,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _db_sql2019_db_stats_internal(instance: int = 1, database: str | None = None) -> dict[str, Any]:
     """Database object counts."""
     validate_instance(instance)
     db_name = database or get_instance_config(instance)["db_name"]
@@ -2329,7 +2974,26 @@ def db_sql2019_db_stats(instance: int = 1, database: str | None = None) -> dict[
         conn.close()
 
 
-def db_sql2019_server_info_mcp(
+@mcp.tool(name="db_01_db_stats", description="Database object counts for instance 1.")
+def db_01_db_stats(
+    database: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_db_stats_internal(
+        instance=1,
+        database=database,
+    )
+
+@mcp.tool(name="db_02_db_stats", description="Database object counts for instance 2.")
+def db_02_db_stats(
+    database: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_db_stats_internal(
+        instance=2,
+        database=database,
+    )
+
+
+def _db_sql2019_server_info_mcp_internal(
     instance: int = 1,
     server: Any = None,
     headers: dict[str, str] | None = None,
@@ -2372,6 +3036,29 @@ def db_sql2019_server_info_mcp(
         }
     finally:
         conn.close()
+
+
+@mcp.tool(name="db_01_server_info", description="Get SQL Server and MCP runtime information for instance 1.")
+def db_01_server_info(
+    server: Any = None,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_server_info_mcp_internal(
+        instance=1,
+        server=server,
+        headers=headers,
+    )
+
+@mcp.tool(name="db_02_server_info", description="Get SQL Server and MCP runtime information for instance 2.")
+def db_02_server_info(
+    server: Any = None,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_server_info_mcp_internal(
+        instance=2,
+        server=server,
+        headers=headers,
+    )
 
 
 def _fetch_relationships(cur: pyodbc.Cursor, database: str) -> list[dict[str, Any]]:
@@ -2541,7 +3228,7 @@ def _analyze_logical_data_model_internal(
         conn.close()
 
 
-def db_sql2019_show_top_queries(
+def _db_sql2019_show_top_queries_internal(
     instance: int = 1,
     database_name: str | None = None,
     metric: Literal["cpu", "io", "execution_count", "duration"] = "cpu",
@@ -2623,7 +3310,83 @@ def db_sql2019_show_top_queries(
         conn.close()
 
 
-def db_sql2019_check_fragmentation(
+@mcp.tool(name="db_01_show_top_queries", description="Performance analysis using Query Store or dm_exec_query_stats for instance 1.")
+def db_01_show_top_queries(
+    database_name: str | None = None,
+    metric: Literal["cpu", "io", "execution_count", "duration"] = "cpu",
+    limit: int = 10,
+    view: Literal["summary", "standard", "full"] = "standard",
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_show_top_queries_internal(
+        instance=1,
+        database_name=database_name,
+        metric=metric,
+        limit=limit,
+        view=view,
+        page=page,
+        page_size=page_size,
+    )
+
+@mcp.tool(name="db_02_show_top_queries", description="Performance analysis using Query Store or dm_exec_query_stats for instance 2.")
+def db_02_show_top_queries(
+    database_name: str | None = None,
+    metric: Literal["cpu", "io", "execution_count", "duration"] = "cpu",
+    limit: int = 10,
+    view: Literal["summary", "standard", "full"] = "standard",
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_show_top_queries_internal(
+        instance=2,
+        database_name=database_name,
+        metric=metric,
+        limit=limit,
+        view=view,
+        page=page,
+        page_size=page_size,
+    )
+
+
+
+
+@mcp.tool(name="db_01_check_fragmentation", description="Check fragmentation for a specific table or all tables in a schema for instance 1.")
+def db_01_check_fragmentation(
+    database_name: str | None = None,
+    schema_name: str | None = None,
+    table_name: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_check_fragmentation_internal(
+        instance=1,
+        database_name=database_name,
+        schema_name=schema_name,
+        table_name=table_name,
+        page=page,
+        page_size=page_size,
+    )
+
+@mcp.tool(name="db_02_check_fragmentation", description="Check fragmentation for a specific table or all tables in a schema for instance 2.")
+def db_02_check_fragmentation(
+    database_name: str | None = None,
+    schema_name: str | None = None,
+    table_name: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_check_fragmentation_internal(
+        instance=2,
+        database_name=database_name,
+        schema_name=schema_name,
+        table_name=table_name,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _db_sql2019_check_fragmentation_internal(
     instance: int = 1,
     database_name: str | None = None,
     schema_name: str | None = None,
@@ -2642,7 +3405,33 @@ def db_sql2019_check_fragmentation(
     return _paginate_tool_result(items, page=page, page_size=page_size)
 
 
-def db_sql2019_db_sec_perf_metrics(
+@mcp.tool(name="db_01_db_sec_perf_metrics", description="Database security and basic performance metrics for instance 1.")
+def db_01_db_sec_perf_metrics(
+    database_name: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_db_sec_perf_metrics_internal(
+        instance=1,
+        database_name=database_name,
+        page=page,
+        page_size=page_size,
+    )
+
+@mcp.tool(name="db_02_db_sec_perf_metrics", description="Database security and basic performance metrics for instance 2.")
+def db_02_db_sec_perf_metrics(
+    database_name: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_db_sec_perf_metrics_internal(
+        instance=2,
+        database_name=database_name,
+        page=page,
+        page_size=page_size,
+    )
+
+def _db_sql2019_db_sec_perf_metrics_internal(
     instance: int = 1,
     database_name: str | None = None,
     page: int = 1,
@@ -2677,7 +3466,29 @@ def db_sql2019_db_sec_perf_metrics(
         conn.close()
 
 
-def db_sql2019_explain_query(
+@mcp.tool(name="db_01_explain_query", description="Execution plan analysis (SHOWPLAN_ALL) for instance 1.")
+def db_01_explain_query(
+    database_name: str | None = None,
+    sql: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_explain_query_internal(
+        instance=1,
+        database_name=database_name,
+        sql=sql,
+    )
+
+@mcp.tool(name="db_02_explain_query", description="Execution plan analysis (SHOWPLAN_ALL) for instance 2.")
+def db_02_explain_query(
+    database_name: str | None = None,
+    sql: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_explain_query_internal(
+        instance=2,
+        database_name=database_name,
+        sql=sql,
+    )
+
+def _db_sql2019_explain_query_internal(
     instance: int = 1,
     database_name: str | None = None,
     sql: str | None = None,
@@ -2706,7 +3517,41 @@ def db_sql2019_explain_query(
         conn.close()
 
 
-def db_sql2019_analyze_logical_data_model(
+@mcp.tool(name="db_01_analyze_logical_data_model", description="Analyze database schema for logical data modeling issues for instance 1.")
+def db_01_analyze_logical_data_model(
+    database_name: str | None = None,
+    schema: str | None = None,
+    view: Literal["summary", "standard", "full"] = "standard",
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_analyze_logical_data_model_internal(
+        instance=1,
+        database_name=database_name,
+        schema=schema,
+        view=view,
+        page=page,
+        page_size=page_size,
+    )
+
+@mcp.tool(name="db_02_analyze_logical_data_model", description="Analyze database schema for logical data modeling issues for instance 2.")
+def db_02_analyze_logical_data_model(
+    database_name: str | None = None,
+    schema: str | None = None,
+    view: Literal["summary", "standard", "full"] = "standard",
+    page: int = 1,
+    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+) -> dict[str, Any]:
+    return _db_sql2019_analyze_logical_data_model_internal(
+        instance=2,
+        database_name=database_name,
+        schema=schema,
+        view=view,
+        page=page,
+        page_size=page_size,
+    )
+
+def _db_sql2019_analyze_logical_data_model_internal(
     instance: int = 1,
     database_name: str | None = None,
     schema: str | None = None,
@@ -2720,7 +3565,29 @@ def db_sql2019_analyze_logical_data_model(
     return _paginate_tool_result(shaped, page=page, page_size=page_size)
 
 
-def db_sql2019_open_logical_model(
+@mcp.tool(name="db_01_open_logical_model", description="Returns an HTML visualization of the logical data model for instance 1.")
+def db_01_open_logical_model(
+    database_name: str | None = None,
+    schema: str | None = None,
+) -> str:
+    return _db_sql2019_open_logical_model_internal(
+        instance=1,
+        database_name=database_name,
+        schema=schema,
+    )
+
+@mcp.tool(name="db_02_open_logical_model", description="Returns an HTML visualization of the logical data model for instance 2.")
+def db_02_open_logical_model(
+    database_name: str | None = None,
+    schema: str | None = None,
+) -> str:
+    return _db_sql2019_open_logical_model_internal(
+        instance=2,
+        database_name=database_name,
+        schema=schema,
+    )
+
+def _db_sql2019_open_logical_model_internal(
     instance: int = 1,
     database_name: str | None = None,
     schema: str | None = None,
@@ -2731,7 +3598,33 @@ def db_sql2019_open_logical_model(
     return html
 
 
-def db_sql2019_generate_ddl(
+@mcp.tool(name="db_01_generate_ddl", description="Generate T-SQL CREATE TABLE script for instance 1.")
+def db_01_generate_ddl(
+    database_name: str | None = None,
+    schema_name: str = "dbo",
+    table_name: str | None = None,
+) -> str:
+    return _db_sql2019_generate_ddl_internal(
+        instance=1,
+        database_name=database_name,
+        schema_name=schema_name,
+        table_name=table_name,
+    )
+
+@mcp.tool(name="db_02_generate_ddl", description="Generate T-SQL CREATE TABLE script for instance 2.")
+def db_02_generate_ddl(
+    database_name: str | None = None,
+    schema_name: str = "dbo",
+    table_name: str | None = None,
+) -> str:
+    return _db_sql2019_generate_ddl_internal(
+        instance=2,
+        database_name=database_name,
+        schema_name=schema_name,
+        table_name=table_name,
+    )
+
+def _db_sql2019_generate_ddl_internal(
     instance: int = 1,
     database_name: str | None = None,
     schema_name: str = "dbo",
@@ -2788,7 +3681,46 @@ def db_sql2019_generate_ddl(
         conn.close()
 
 
-def db_sql2019_create_db_user(
+def db_sql2019_generate_ddl(
+    instance: int = 1,
+    database_name: str | None = None,
+    object_name: str | None = None,
+    object_type: str = "table",
+) -> str:
+    """Backward-compatible wrapper for legacy generate_ddl call signature."""
+    if not object_name:
+        raise ValueError("object_name is required")
+    if object_type.strip().lower() not in {"table", "tables"}:
+        raise ValueError("object_type must be 'table'")
+
+    schema_name, table_name = _parse_schema_qualified_name(object_name)
+    return _db_sql2019_generate_ddl_internal(
+        instance=instance,
+        database_name=database_name,
+        schema_name=schema_name,
+        table_name=table_name,
+    )
+
+
+@mcp.tool(name="db_01_create_db_user", description="Creates a new database user with a specified username for instance 1.")
+def db_01_create_db_user(
+    username: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_create_db_user_internal(
+        instance=1,
+        username=username,
+    )
+
+@mcp.tool(name="db_02_create_db_user", description="Creates a new database user with a specified username for instance 2.")
+def db_02_create_db_user(
+    username: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_create_db_user_internal(
+        instance=2,
+        username=username,
+    )
+
+def _db_sql2019_create_db_user_internal(
     instance: int = 1,
     username: str | None = None,
     password: str | None = None,
@@ -2810,7 +3742,29 @@ def db_sql2019_create_db_user(
         conn.close()
 
 
-def db_sql2019_drop_db_user(
+@mcp.tool(name="db_01_drop_db_user", description="Drops a database user with a specified username for instance 1.")
+def db_01_drop_db_user(
+    username: str | None = None,
+    database_name: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_drop_db_user_internal(
+        instance=1,
+        username=username,
+        database_name=database_name,
+    )
+
+@mcp.tool(name="db_02_drop_db_user", description="Drops a database user with a specified username for instance 2.")
+def db_02_drop_db_user(
+    username: str | None = None,
+    database_name: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_drop_db_user_internal(
+        instance=2,
+        username=username,
+        database_name=database_name,
+    )
+
+def _db_sql2019_drop_db_user_internal(
     instance: int = 1,
     username: str | None = None,
     database_name: str | None = None,
@@ -2831,7 +3785,25 @@ def db_sql2019_drop_db_user(
         conn.close()
 
 
-def db_sql2019_kill_session(instance: int = 1, session_id: int | None = None) -> dict[str, Any]:
+@mcp.tool(name="db_01_kill_session", description="Kill a database session for instance 1.")
+def db_01_kill_session(
+    session_id: int | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_kill_session_internal(
+        instance=1,
+        session_id=session_id,
+    )
+
+@mcp.tool(name="db_02_kill_session", description="Kill a database session for instance 2.")
+def db_02_kill_session(
+    session_id: int | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_kill_session_internal(
+        instance=2,
+        session_id=session_id,
+    )
+
+def _db_sql2019_kill_session_internal(instance: int = 1, session_id: int | None = None) -> dict[str, Any]:
     """Kill a database session."""
     _ensure_write_enabled()
     if session_id is None:
@@ -2846,7 +3818,29 @@ def db_sql2019_kill_session(instance: int = 1, session_id: int | None = None) ->
         conn.close()
 
 
-def db_sql2019_create_object(
+@mcp.tool(name="db_01_create_object", description="Execute CREATE statement for instance 1.")
+def db_01_create_object(
+    database_name: str | None = None,
+    sql: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_create_object_internal(
+        instance=1,
+        database_name=database_name,
+        sql=sql,
+    )
+
+@mcp.tool(name="db_02_create_object", description="Execute CREATE statement for instance 2.")
+def db_02_create_object(
+    database_name: str | None = None,
+    sql: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_create_object_internal(
+        instance=2,
+        database_name=database_name,
+        sql=sql,
+    )
+
+def _db_sql2019_create_object_internal(
     instance: int = 1,
     database_name: str | None = None,
     sql: str | None = None,
@@ -2867,7 +3861,29 @@ def db_sql2019_create_object(
     return {"status": "success", "database": db_name}
 
 
-def db_sql2019_alter_object(
+@mcp.tool(name="db_01_alter_object", description="Execute ALTER statement for instance 1.")
+def db_01_alter_object(
+    database_name: str | None = None,
+    sql: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_alter_object_internal(
+        instance=1,
+        database_name=database_name,
+        sql=sql,
+    )
+
+@mcp.tool(name="db_02_alter_object", description="Execute ALTER statement for instance 2.")
+def db_02_alter_object(
+    database_name: str | None = None,
+    sql: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_alter_object_internal(
+        instance=2,
+        database_name=database_name,
+        sql=sql,
+    )
+
+def _db_sql2019_alter_object_internal(
     instance: int = 1,
     database_name: str | None = None,
     sql: str | None = None,
@@ -2888,7 +3904,29 @@ def db_sql2019_alter_object(
     return {"status": "success", "database": db_name}
 
 
-def db_sql2019_drop_object(
+@mcp.tool(name="db_01_drop_object", description="Execute DROP statement for instance 1.")
+def db_01_drop_object(
+    database_name: str | None = None,
+    sql: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_drop_object_internal(
+        instance=1,
+        database_name=database_name,
+        sql=sql,
+    )
+
+@mcp.tool(name="db_02_drop_object", description="Execute DROP statement for instance 2.")
+def db_02_drop_object(
+    database_name: str | None = None,
+    sql: str | None = None,
+) -> dict[str, Any]:
+    return _db_sql2019_drop_object_internal(
+        instance=2,
+        database_name=database_name,
+        sql=sql,
+    )
+
+def _db_sql2019_drop_object_internal(
     instance: int = 1,
     database_name: str | None = None,
     sql: str | None = None,
@@ -2909,57 +3947,91 @@ def db_sql2019_drop_object(
     return {"status": "success", "database": db_name}
 
 
-def _register_dual_instance_tools():
-    """Systematically register all tools for both db_01 and db_02 instances."""
-    tool_map = {
-        "ping": db_sql2019_ping,
-        "list_databases": db_sql2019_list_databases,
-        "list_tables": db_sql2019_list_tables,
-        "get_schema": db_sql2019_get_schema,
-        "execute_query": db_sql2019_execute_query,
-        "run_query": db_sql2019_run_query,
-        "list_objects": db_sql2019_list_objects,
-        "index_fragmentation": db_sql2019_get_index_fragmentation,
-        "index_health": db_sql2019_analyze_index_health,
-        "table_health": db_sql2019_analyze_table_health,
-        "db_stats": db_sql2019_db_stats,
-        "server_info_mcp": db_sql2019_server_info_mcp,
-        "show_top_queries": db_sql2019_show_top_queries,
-        "check_fragmentation": db_sql2019_check_fragmentation,
-        "db_sec_perf_metrics": db_sql2019_db_sec_perf_metrics,
-        "explain_query": db_sql2019_explain_query,
-        "analyze_logical_data_model": db_sql2019_analyze_logical_data_model,
-        "open_logical_model": db_sql2019_open_logical_model,
-        "generate_ddl": db_sql2019_generate_ddl,
-        "create_db_user": db_sql2019_create_db_user,
-        "drop_db_user": db_sql2019_drop_db_user,
-        "kill_session": db_sql2019_kill_session,
-        "create_object": db_sql2019_create_object,
-        "alter_object": db_sql2019_alter_object,
-        "drop_object": db_sql2019_drop_object,
+
+
+def build_mcp_run_config() -> dict[str, Any]:
+    transport = str(getattr(SETTINGS, "transport", "http") or "http").lower()
+    config: dict[str, Any] = {"transport": transport}
+    if transport == "http":
+        config["host"] = getattr(SETTINGS, "host", None)
+        config["port"] = getattr(SETTINGS, "port", None)
+    return config
+
+
+def configure_http_auth(settings: Settings | None = None) -> dict[str, Any]:
+    effective_settings = settings or SETTINGS
+    raw_auth_type = str(getattr(effective_settings, "auth_type", "") or "").strip().lower()
+    auth_type = raw_auth_type or "none"
+
+    supported_auth_types = {"none", "apikey", "oidc", "jwt", "azure-ad", "github", "google"}
+    if auth_type not in supported_auth_types:
+        raise ValueError(
+            f"Unsupported FASTMCP_AUTH_TYPE: {raw_auth_type!r}. "
+            "Supported values: none, apikey, oidc, jwt, azure-ad, github, google."
+        )
+
+    auth_enabled = auth_type != "none"
+    if auth_type == "none":
+        return {
+            "auth_enabled": False,
+            "auth_type": "none",
+            "provider": None,
+            "validation_mode": "disabled",
+            "allow_query_token_auth": False,
+        }
+
+    if auth_type == "apikey":
+        api_key = str(getattr(effective_settings, "api_key", "") or "").strip()
+        if not api_key:
+            raise RuntimeError("FASTMCP_AUTH_TYPE=apikey requires FASTMCP_API_KEY.")
+        return {
+            "auth_enabled": True,
+            "auth_type": "apikey",
+            "provider": "api_key",
+            "validation_mode": "static_token_secure_compare",
+            "allow_query_token_auth": bool(getattr(effective_settings, "allow_query_token_auth", False)),
+        }
+
+    return {
+        "auth_enabled": True,
+        "auth_type": auth_type,
+        "provider": auth_type,
+        "validation_mode": "provider_token_validation",
+        "allow_query_token_auth": bool(getattr(effective_settings, "allow_query_token_auth", False)),
     }
 
-    for instance in [1, 2]:
-        prefix = "db_01_" if instance == 1 else "db_02_"
-        for name, func in tool_map.items():
-            tool_name = f"{prefix}{name}"
-            
-            # Use a closure to capture function and instance correctly
-            def make_wrapper(f, inst):
-                @wraps(f)
-                def wrapper(*args, **kwargs):
-                    # Remove instance from kwargs if it was passed by MCP (it shouldn't be, but just in case)
-                    kwargs.pop("instance", None)
-                    kwargs["instance"] = inst
-                    return f(*args, **kwargs)
-                return wrapper
-            
-            wrapped = make_wrapper(func, instance)
-            mcp.tool(name=tool_name)(wrapped)
 
+def run_server_entrypoint() -> None:
+    run_config = build_mcp_run_config()
+    _apply_provider_transform_layers()
+    _configure_tool_search_transform()
 
-_register_dual_instance_tools()
+    if run_config.get("transport") == "http":
+        auth_config = configure_http_auth(SETTINGS)
+        _resolve_http_app()
+        logger.info(
+            "HTTP authentication configuration resolved",
+            extra={
+                "auth_enabled": auth_config["auth_enabled"],
+                "auth_type": auth_config["auth_type"],
+                "validation_mode": auth_config["validation_mode"],
+                "allow_query_token_auth": auth_config["allow_query_token_auth"],
+            },
+        )
+
+    mcp.run(**run_config)
 
 
 if __name__ == "__main__":
-    mcp.run()
+    run_server_entrypoint()
+
+
+
+
+
+
+
+
+
+
+
