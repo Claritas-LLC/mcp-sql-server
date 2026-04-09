@@ -1,0 +1,3 @@
+stage=visibility,health=200,mcp=400
+stage=namespace,health=200,mcp=400
+stage=tool_transformation,health=200,mcp=400

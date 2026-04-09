@@ -8,6 +8,21 @@ This directory contains comprehensive test results from executing all 11 MCP SQL
 **Success Rate:** 11/11 (100%)  
 **Total Artifacts:** 12 JSON files
 
+## Release Validation Artifact Convention
+
+Store release-gate execution evidence in `testing/` using timestamped filenames:
+
+- `gate-startup-YYYYMMDD-HHMMSS.txt`
+- `gate-auth-YYYYMMDD-HHMMSS.txt`
+- `gate-transform-YYYYMMDD-HHMMSS.txt`
+- `gate-integration-YYYYMMDD-HHMMSS.txt`
+- `env-snapshot-redacted-YYYYMMDD-HHMMSS.txt`
+
+Retention note:
+
+- Keep at least the most recent successful release evidence set and the previous set for rollback analysis.
+- Redact secrets in all captured outputs before storing.
+
 ---
 
 ## 📁 Directory Structure

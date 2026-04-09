@@ -26,7 +26,7 @@
 To ensure robust, testable, and production-safe startup, the MCP SQL Server backend now uses a dedicated entrypoint script: `server_startup.py`. This script:
 
 - Initializes all database connection pools only at runtime (not on import), preventing side effects during testing or module import.
-- Starts the FastMCP server using the correct app instance (`mcp.run()`), avoiding import errors and ensuring proper lifecycle management.
+- Starts the FastMCP server through a canonical runtime entrypoint (`run_server_entrypoint`) so all startup paths use one transport mapping source.
 
 ## Usage
 
@@ -36,9 +36,16 @@ To launch the server, run:
 python server_startup.py
 ```
 
+Or run the module entrypoint directly:
+
+```
+python -m mcp_sqlserver.server
+```
+
 This will:
 - Initialize all DB connection pools (thread-safe, idempotent)
-- Start the MCP server (FastMCP main entrypoint)
+- Start the MCP server with transport selected by `MCP_TRANSPORT`
+- Use `MCP_HOST` and `MCP_PORT` when `MCP_TRANSPORT=http`
 
 ## Why this change?
 
@@ -360,6 +367,20 @@ This project includes a comprehensive test suite covering **Unit**, **Integratio
   pytest tests/test_hardening_controls.py tests/test_integration_tools.py tests/test_stress_tools.py -q
   ```
 
+### Final Alignment Validation Bundle
+
+Use this canonical bundle before release promotion:
+
+```bash
+python -m pytest tests/test_server_startup_config.py tests/test_blackbox_http.py tests/test_hardening_controls.py tests/test_readonly_sql.py -q
+```
+
+Release evidence checklist:
+
+- Command outputs captured and saved with timestamped filenames under `testing/`.
+- Environment snapshot captured with secrets redacted (`FASTMCP_API_KEY`, passwords, private keys).
+- Final gate summary table recorded (`GATE-STARTUP`, `GATE-AUTH`, `GATE-TRANSFORM`, `GATE-INTEGRATION`).
+
 ---
 
 ## ⚙️ Configuration
@@ -421,6 +442,18 @@ Additional hardening controls:
 4. **Abuse Protection (optional)**: Rate limiter + circuit breaker can reject runaway request loops with `429` and `Retry-After`.
 5. **Prompt-aware Audit Trail (optional)**: Query tools log immutable JSONL records with `prompt_sha256` and a redaction token by default; exact `prompt_context` is stored only when `MCP_ALLOW_RAW_PROMPTS=true`.
 
+### Transport/Auth Matrix
+
+| Transport | Auth Mode | Expected Behavior |
+|----------|-----------|-------------------|
+| `stdio` | Any configured `FASTMCP_AUTH_TYPE` | Local transport path; HTTP auth resolver is bypassed. |
+| `http` | `none` (or empty) | HTTP starts without auth enforcement. |
+| `http` | `apikey` | Requires `FASTMCP_API_KEY`; startup fails fast if missing. |
+| `http` | `oidc`, `jwt`, `azure-ad`, `github`, `google` | Provider-token validation mode is enabled. |
+| `sse` (legacy config value) | Any | Treated as HTTP-style network transport for write-mode guard checks. |
+
+Write-mode requirement: when `MCP_ALLOW_WRITE=true` over network transport (`http`/`sse`), `FASTMCP_AUTH_TYPE` must not be empty or `none`.
+
 > ⚠️ **Warning: Authentication Verification Pending**
 > **Token Auth** and **Azure AD Auth** have not been tested and are **not production-ready**.
 > While the implementation follows standard FastMCP patterns, end-to-end verification is pending.
@@ -429,6 +462,24 @@ Additional hardening controls:
 ### 🔐 Authentication & OAuth2
 
 The server supports several authentication modes via `FASTMCP_AUTH_TYPE`.
+
+#### Deterministic Runtime Auth Modes
+
+The runtime resolver in `mcp_sqlserver/server.py` currently supports these values:
+
+| `FASTMCP_AUTH_TYPE` | Supported | Behavior |
+|----------|-----------|----------|
+| `none` (or empty) | Yes | Auth disabled. HTTP endpoints are open unless blocked by external infrastructure. |
+| `apikey` | Yes | Requires `FASTMCP_API_KEY`. Missing key fails startup for HTTP transport. |
+| `oidc` | Yes | Provider-token validation mode (provider-specific vars still required). |
+| `jwt` | Yes | Provider-token validation mode (provider-specific vars still required). |
+| `azure-ad` | Yes | Provider-token validation mode (provider-specific vars still required). |
+| `github` | Yes | Provider-token validation mode (provider-specific vars still required). |
+| `google` | Yes | Provider-token validation mode (provider-specific vars still required). |
+
+Unsupported values fail startup with an explicit error.
+
+`MCP_ALLOW_QUERY_TOKEN_AUTH` controls whether query-token auth is allowed in apikey/provider modes and is ignored when auth is `none`.
 
 #### 1. Generic OAuth2 Proxy
 Bridge MCP dynamic registration with traditional OAuth2 providers.
@@ -535,6 +586,69 @@ Recommendations:
 - Use `supporting_files="template"` in production to keep resource listings compact.
 - Use `reload=True` only during active skill authoring/development.
 - Keep skills provider concerns separate from SQL audit logging (`MCP_AUDIT_LOG_*`).
+
+### Tool Search Transform (Optional)
+
+When `MCP_TOOL_SEARCH_ENABLED=true`, startup attempts to apply a FastMCP tool-search transform:
+
+- `MCP_TOOL_SEARCH_STRATEGY=regex` uses `RegexSearchTransform`
+- `MCP_TOOL_SEARCH_STRATEGY=bm25` uses `BM25SearchTransform`
+
+If transform classes are unavailable in the installed FastMCP version, startup continues and logs a warning. The server fails fast only when an unsupported strategy value is configured.
+
+### Provider-Layer Transform Suite (Phase 3c)
+
+The runtime supports an ordered provider-layer transform pipeline controlled by environment variables.
+
+Default layer order:
+
+1. `visibility`
+2. `namespace`
+3. `tool_transformation`
+4. `resources_as_tools`
+5. `prompts_as_tools`
+6. `code_mode`
+
+All transform feature flags are default-off for safety.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `MCP_TRANSFORM_LAYERS_ENABLED` | Master switch for provider-layer transform assembly | `true` |
+| `MCP_TRANSFORM_LAYER_ORDER` | Comma-separated execution order of known layers | `visibility,namespace,tool_transformation,resources_as_tools,prompts_as_tools,code_mode` |
+| `MCP_TRANSFORM_VISIBILITY_ENABLED` | Enable tool visibility filtering transform | `false` |
+| `MCP_TRANSFORM_NAMESPACE_ENABLED` | Enable namespace/prefix transform | `false` |
+| `MCP_TRANSFORM_TOOL_TRANSFORMATION_ENABLED` | Enable name/description mapping transform | `false` |
+| `MCP_TRANSFORM_RESOURCES_AS_TOOLS_ENABLED` | Enable resources-as-tools transform | `false` |
+| `MCP_TRANSFORM_PROMPTS_AS_TOOLS_ENABLED` | Enable prompts-as-tools transform | `false` |
+| `MCP_TRANSFORM_CODE_MODE_ENABLED` | Enable code-mode transform | `false` |
+
+Additional transform configuration:
+
+- `MCP_TRANSFORM_VISIBILITY_ALLOWLIST`
+- `MCP_TRANSFORM_VISIBILITY_DENYLIST`
+- `MCP_TRANSFORM_NAMESPACE_PREFIX`
+- `MCP_TRANSFORM_TOOL_NAME_MAP` (JSON object)
+- `MCP_TRANSFORM_TOOL_DESCRIPTION_MAP` (JSON object)
+- `MCP_TRANSFORM_CODE_MODE_POLICY`
+
+Compatibility behavior:
+
+- If a transform module/class is unavailable in the installed FastMCP runtime, startup logs a warning and continues with remaining layers.
+- With all transform feature flags disabled, startup preserves baseline tool exposure behavior.
+
+### HTTP Health Endpoint
+
+When `MCP_TRANSPORT=http`, the server registers `GET /health` with a minimal payload:
+
+```json
+{
+  "status": "ok",
+  "service": "SQL Server MCP Server",
+  "transport": "http"
+}
+```
+
+The payload intentionally excludes credentials and sensitive runtime configuration.
 
 ### HTTPS / SSL
 To enable HTTPS, provide both the certificate and key files.
