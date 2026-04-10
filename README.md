@@ -706,7 +706,7 @@ Related note:
 - `db_01_sql2019_explain_query(...)` does not use `view`; use `analyze` and `output_format` to control plan behavior and payload shape.
 
 ### 🏥 Health & Info (Always Available)
-- `db_01_sql2019_ping()`: Basic connectivity probe with server/database metadata.
+- `db_01_ping()`: Basic connectivity probe with server/database metadata.
 - `db_01_sql2019_server_info_mcp()`: SQL Server version/edition + MCP runtime settings.
 - `db_01_sql2019_db_stats(database: str | None = None)`: Core object counts for a database.
 

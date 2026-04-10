@@ -10,30 +10,18 @@ tags: [architecture, fastmcp, index, planning]
 
 # Introduction
 
-![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
-
-This index provides deterministic navigation across all FastMCP alignment plans and defines the execution order and linkage rules used by implementers.
-
-## Current State
+- Wildcard transforms extension status: Completed and tracked in `plan/architecture-fastmcp-transforms-wildcard-1.md` as the canonical `/servers/transforms/*` execution contract.
 
 - Validation bundle status: Passed on 2026-04-09 (`tests/test_server_startup_config.py`, `tests/test_blackbox_http.py`, `tests/test_hardening_controls.py`, `tests/test_readonly_sql.py`).
 - Working-tree validation status: Completed and documented in `plan/process-dirty-tree-validation-1.md`.
-- Plan tracking status: Index and execution checklist are now synchronized to completed baseline.
-- Phase 3b extension status: On Hold and tracked in `plan/architecture-fastmcp-transforms-phase3b-1.md` for constrained transform coverage expansion.
-- Phase 3c extension status: Completed and tracked in `plan/architecture-fastmcp-transforms-suite-phase3c-1.md` for full transform-suite and provider-layer implementation.
-
-### Release Evidence
-
-- Evidence timestamp: `20260409-020500`
-- `testing/gate-startup-20260409-020500.txt`
-- `testing/gate-auth-20260409-020500.txt`
-- `testing/gate-transform-20260409-020500.txt`
-- `testing/gate-integration-20260409-020500.txt`
-- `testing/env-snapshot-redacted-20260409-020500.txt`
-- `testing/staging-smoke-20260409-020500.txt`
-
-## 1. Requirements & Constraints
-
+- **DEP-010**: plan/architecture-fastmcp-transforms-wildcard-1.md
+- Latest wildcard evidence set:
+- `testing/gate-startup-20260409-143959.txt`
+- `testing/gate-auth-20260409-143959.txt`
+- `testing/gate-transform-20260409-143959.txt`
+- `testing/gate-integration-20260409-143959.txt`
+- `testing/env-snapshot-redacted-20260409-143959.txt`
+- **FILE-005**: plan/architecture-fastmcp-transforms-wildcard-1.md - wildcard transforms execution and validation plan.
 - **REQ-001**: Maintain one canonical index of all FastMCP alignment plan artifacts.
 - **REQ-002**: Declare deterministic phase execution order and dependency gates.
 - **REQ-003**: Include direct links to the master plan, phase plans, and checklist plan.
@@ -46,6 +34,7 @@ This index provides deterministic navigation across all FastMCP alignment plans 
 
 ### Implementation Phase 1
 
+plan/architecture-fastmcp-transforms-wildcard-1.md
 - GOAL-001: Create deterministic navigation and ordering for execution.
 
 | Task | Description | Completed | Date |
@@ -88,6 +77,7 @@ This index provides deterministic navigation across all FastMCP alignment plans 
 - **DEP-007**: plan/process-dirty-tree-validation-1.md
 - **DEP-008**: plan/architecture-fastmcp-transforms-phase3b-1.md
 - **DEP-009**: plan/architecture-fastmcp-transforms-suite-phase3c-1.md
+- **DEP-010**: plan/architecture-fastmcp-transforms-wildcard-1.md
 
 ## 5. Files
 
@@ -95,6 +85,7 @@ This index provides deterministic navigation across all FastMCP alignment plans 
 - **FILE-002**: plan/process-fastmcp-execution-checklist-1.md - owner and target-date mapping for all task IDs.
 - **FILE-003**: plan/architecture-fastmcp-transforms-phase3b-1.md - constrained transform coverage extension plan.
 - **FILE-004**: plan/architecture-fastmcp-transforms-suite-phase3c-1.md - full transform-suite and provider-layer implementation plan.
+- **FILE-005**: plan/architecture-fastmcp-transforms-wildcard-1.md - canonical wildcard transforms execution and evidence plan.
 
 ## 6. Testing
 

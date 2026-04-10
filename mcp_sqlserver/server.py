@@ -1257,16 +1257,28 @@ def _instantiate_transform(
 def _configure_visibility_transform() -> Any | None:
     if not bool(getattr(SETTINGS, "transform_visibility_enabled", False)):
         return None
-    kwargs: dict[str, Any] = {}
     allowlist = _parse_csv_values(getattr(SETTINGS, "transform_visibility_allowlist", ""))
     denylist = _parse_csv_values(getattr(SETTINGS, "transform_visibility_denylist", ""))
-    if allowlist:
-        kwargs["allowlist"] = allowlist
-    if denylist:
-        kwargs["denylist"] = denylist
+    kwargs: dict[str, Any] = {}
+    if allowlist and denylist:
+        logger.warning(
+            "Visibility transform: both MCP_TRANSFORM_VISIBILITY_ALLOWLIST and "
+            "MCP_TRANSFORM_VISIBILITY_DENYLIST are set. Using allowlist only (enabled=True, names=allowlist)."
+        )
+        kwargs["enabled"] = True
+        kwargs["names"] = set(allowlist)
+    elif allowlist:
+        kwargs["enabled"] = True
+        kwargs["names"] = set(allowlist)
+    elif denylist:
+        kwargs["enabled"] = False
+        kwargs["names"] = set(denylist)
+    else:
+        kwargs["enabled"] = True
+        kwargs["match_all"] = True
     return _instantiate_transform(
         "fastmcp.server.transforms.visibility",
-        ["VisibilityTransform"],
+        ["Visibility"],
         kwargs,
         "Visibility",
     )
@@ -1281,7 +1293,7 @@ def _configure_namespace_transform() -> Any | None:
         kwargs["prefix"] = namespace_prefix
     return _instantiate_transform(
         "fastmcp.server.transforms.namespace",
-        ["NamespaceTransform"],
+        ["Namespace"],
         kwargs,
         "Namespace",
     )
@@ -1290,7 +1302,6 @@ def _configure_namespace_transform() -> Any | None:
 def _configure_tool_transformation_transform() -> Any | None:
     if not bool(getattr(SETTINGS, "transform_tool_transformation_enabled", False)):
         return None
-    kwargs: dict[str, Any] = {}
     name_map = _parse_json_mapping(
         getattr(SETTINGS, "transform_tool_name_map", "{}"),
         "MCP_TRANSFORM_TOOL_NAME_MAP",
@@ -1299,38 +1310,52 @@ def _configure_tool_transformation_transform() -> Any | None:
         getattr(SETTINGS, "transform_tool_description_map", "{}"),
         "MCP_TRANSFORM_TOOL_DESCRIPTION_MAP",
     )
-    if name_map:
-        kwargs["name_map"] = name_map
-    if description_map:
-        kwargs["description_map"] = description_map
-    return _instantiate_transform(
-        "fastmcp.server.transforms.tool_transformation",
-        ["ToolTransformationTransform", "ToolTransformation", "ToolTransform"],
-        kwargs,
-        "ToolTransformation",
-    )
+    all_tool_names = set(name_map) | set(description_map)
+    if not all_tool_names:
+        logger.warning(
+            "ToolTransformation transform enabled but MCP_TRANSFORM_TOOL_NAME_MAP and "
+            "MCP_TRANSFORM_TOOL_DESCRIPTION_MAP are both empty. Skipping."
+        )
+        return None
+    try:
+        from fastmcp.server.transforms.tool_transform import ToolTransform, ToolTransformConfig
+
+        transforms_dict: dict[str, Any] = {}
+        for tool_name in all_tool_names:
+            config_kwargs: dict[str, str] = {}
+            if tool_name in name_map:
+                config_kwargs["name"] = name_map[tool_name]
+            if tool_name in description_map:
+                config_kwargs["description"] = description_map[tool_name]
+            transforms_dict[tool_name] = ToolTransformConfig(**config_kwargs)
+        return ToolTransform(transforms=transforms_dict)
+    except Exception as exc:
+        logger.warning("ToolTransformation transform unavailable: %s", exc)
+        return None
 
 
 def _configure_resources_as_tools_transform() -> Any | None:
     if not bool(getattr(SETTINGS, "transform_resources_as_tools_enabled", False)):
         return None
-    return _instantiate_transform(
-        "fastmcp.server.transforms.resources_as_tools",
-        ["ResourcesAsToolsTransform", "ResourcesAsTools"],
-        {},
-        "ResourcesAsTools",
-    )
+    try:
+        from fastmcp.server.transforms.resources_as_tools import ResourcesAsTools
+
+        return ResourcesAsTools(mcp)
+    except Exception as exc:
+        logger.warning("ResourcesAsTools transform unavailable: %s", exc)
+        return None
 
 
 def _configure_prompts_as_tools_transform() -> Any | None:
     if not bool(getattr(SETTINGS, "transform_prompts_as_tools_enabled", False)):
         return None
-    return _instantiate_transform(
-        "fastmcp.server.transforms.prompts_as_tools",
-        ["PromptsAsToolsTransform", "PromptsAsTools"],
-        {},
-        "PromptsAsTools",
-    )
+    try:
+        from fastmcp.server.transforms.prompts_as_tools import PromptsAsTools
+
+        return PromptsAsTools(mcp)
+    except Exception as exc:
+        logger.warning("PromptsAsTools transform unavailable: %s", exc)
+        return None
 
 
 def _configure_code_mode_transform() -> Any | None:
@@ -1364,6 +1389,12 @@ def _build_provider_transform_layers(settings: Settings | None = None) -> list[d
     raw_order = _parse_csv_values(getattr(effective_settings, "transform_layer_order", ""))
     known = set(default_order)
     ordered = [item for item in raw_order if item in known]
+    unknown = [item for item in raw_order if item not in known]
+    if unknown:
+        logger.warning(
+            "Unknown transform layer names in MCP_TRANSFORM_LAYER_ORDER will be ignored: %s",
+            ", ".join(unknown),
+        )
     for item in default_order:
         if item not in ordered:
             ordered.append(item)
@@ -1430,7 +1461,9 @@ def _apply_provider_transform_layers(layers: list[dict[str, Any]] | None = None)
 
     _PROVIDER_TRANSFORM_LAYERS_APPLIED = True
     logger.info(
-        "Provider transform layering resolved",
+        "Provider transform layering resolved. Applied: [%s]. Skipped: [%s].",
+        ", ".join(applied) if applied else "none",
+        ", ".join(skipped) if skipped else "none",
         extra={
             "applied_layers": applied,
             "skipped_layers": skipped,

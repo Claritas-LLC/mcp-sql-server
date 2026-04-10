@@ -12,7 +12,7 @@ tags: [process, checklist, execution, ownership, schedule]
 
 ![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
 
-This checklist is the canonical task execution mapping for the FastMCP alignment suite. It maps each source TASK identifier to a single owner and target date, and now reflects a completed alignment execution baseline.
+This checklist is the canonical task execution mapping for the FastMCP alignment suite. It maps each source TASK identifier to a single owner and target date, and now reflects a completed alignment execution baseline including wildcard transform evidence publication and governance linkage refresh on 2026-04-09.
 
 ## 1. Requirements & Constraints
 
@@ -107,6 +107,31 @@ This checklist is the canonical task execution mapping for the FastMCP alignment
 | TASK-059 | Register P4-TASK-011 owner Harry Valdez target 2026-05-26. | Yes | 2026-04-09 |
 | TASK-060 | Register P4-TASK-012 owner Harry Valdez target 2026-05-27. | Yes | 2026-04-09 |
 
+### Implementation Phase 5
+
+- GOAL-005: Map wildcard transform-suite tasks for `/servers/transforms/*` execution contract.
+
+| Task | Description | Completed | Date |
+| -------- | -------- | --------- | ---------- |
+| TASK-061 | Register WLD-TASK-001 owner Harry Valdez target 2026-05-28. | Yes | 2026-04-09 |
+| TASK-062 | Register WLD-TASK-002 owner Harry Valdez target 2026-05-29. | Yes | 2026-04-09 |
+| TASK-063 | Register WLD-TASK-003 owner Harry Valdez target 2026-05-30. | Yes | 2026-04-09 |
+| TASK-064 | Register WLD-TASK-004 owner Harry Valdez target 2026-05-31. | Yes | 2026-04-09 |
+| TASK-065 | Register WLD-TASK-005 owner Harry Valdez target 2026-06-01. | Yes | 2026-04-09 |
+| TASK-066 | Register WLD-TASK-006 owner Harry Valdez target 2026-06-02. | Yes | 2026-04-09 |
+| TASK-067 | Register WLD-TASK-007 owner Harry Valdez target 2026-06-03. | Yes | 2026-04-09 |
+| TASK-068 | Register WLD-TASK-008 owner Harry Valdez target 2026-06-04. | Yes | 2026-04-09 |
+| TASK-069 | Register WLD-TASK-009 owner Harry Valdez target 2026-06-05. | Yes | 2026-04-09 |
+| TASK-070 | Register WLD-TASK-010 owner Harry Valdez target 2026-06-06. | Yes | 2026-04-09 |
+| TASK-071 | Register WLD-TASK-011 owner Harry Valdez target 2026-06-07. | Yes | 2026-04-09 |
+| TASK-072 | Register WLD-TASK-012 owner Harry Valdez target 2026-06-08. | Yes | 2026-04-09 |
+| TASK-073 | Register WLD-TASK-013 owner Harry Valdez target 2026-06-09. | Yes | 2026-04-09 |
+| TASK-074 | Register WLD-TASK-014 owner Harry Valdez target 2026-06-10. | Yes | 2026-04-09 |
+| TASK-075 | Register WLD-TASK-015 owner Harry Valdez target 2026-06-11. | Yes | 2026-04-09 |
+| TASK-076 | Register WLD-TASK-016 owner Harry Valdez target 2026-06-12; validated by evidence set `testing/gate-startup-20260409-143959.txt`, `testing/gate-auth-20260409-143959.txt`, `testing/gate-transform-20260409-143959.txt`, and `testing/gate-integration-20260409-143959.txt`. | Yes | 2026-04-09 |
+| TASK-077 | Register WLD-TASK-017 owner Harry Valdez target 2026-06-13; linked in `plan/architecture-fastmcp-plan-index-1.md` as the canonical wildcard transforms reference. | Yes | 2026-04-09 |
+| TASK-078 | Register WLD-TASK-018 owner Harry Valdez target 2026-06-14. | Yes | 2026-04-09 |
+
 ### Implementation Phase 4
 
 - GOAL-004: Provide deterministic source mapping for every checklist reference.
@@ -173,6 +198,24 @@ This checklist is the canonical task execution mapping for the FastMCP alignment
 | P4-TASK-010 | plan/architecture-fastmcp-release-validation-phase4-1.md | TASK-010 | Harry Valdez | 2026-05-25 |
 | P4-TASK-011 | plan/architecture-fastmcp-release-validation-phase4-1.md | TASK-011 | Harry Valdez | 2026-05-26 |
 | P4-TASK-012 | plan/architecture-fastmcp-release-validation-phase4-1.md | TASK-012 | Harry Valdez | 2026-05-27 |
+| WLD-TASK-001 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-001 | Harry Valdez | 2026-05-28 |
+| WLD-TASK-002 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-002 | Harry Valdez | 2026-05-29 |
+| WLD-TASK-003 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-003 | Harry Valdez | 2026-05-30 |
+| WLD-TASK-004 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-004 | Harry Valdez | 2026-05-31 |
+| WLD-TASK-005 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-005 | Harry Valdez | 2026-06-01 |
+| WLD-TASK-006 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-006 | Harry Valdez | 2026-06-02 |
+| WLD-TASK-007 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-007 | Harry Valdez | 2026-06-03 |
+| WLD-TASK-008 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-008 | Harry Valdez | 2026-06-04 |
+| WLD-TASK-009 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-009 | Harry Valdez | 2026-06-05 |
+| WLD-TASK-010 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-010 | Harry Valdez | 2026-06-06 |
+| WLD-TASK-011 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-011 | Harry Valdez | 2026-06-07 |
+| WLD-TASK-012 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-012 | Harry Valdez | 2026-06-08 |
+| WLD-TASK-013 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-013 | Harry Valdez | 2026-06-09 |
+| WLD-TASK-014 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-014 | Harry Valdez | 2026-06-10 |
+| WLD-TASK-015 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-015 | Harry Valdez | 2026-06-11 |
+| WLD-TASK-016 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-016 | Harry Valdez | 2026-06-12 |
+| WLD-TASK-017 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-017 | Harry Valdez | 2026-06-13 |
+| WLD-TASK-018 | plan/architecture-fastmcp-transforms-wildcard-1.md | TASK-018 | Harry Valdez | 2026-06-14 |
 
 ## 3. Alternatives
 
@@ -187,6 +230,7 @@ This checklist is the canonical task execution mapping for the FastMCP alignment
 - **DEP-004**: plan/architecture-fastmcp-transforms-routes-phase3-1.md
 - **DEP-005**: plan/architecture-fastmcp-release-validation-phase4-1.md
 - **DEP-006**: plan/architecture-fastmcp-plan-index-1.md
+- **DEP-007**: plan/architecture-fastmcp-transforms-wildcard-1.md
 
 ## 5. Files
 
@@ -194,7 +238,7 @@ This checklist is the canonical task execution mapping for the FastMCP alignment
 
 ## 6. Testing
 
-- **TEST-001**: Verify checklist contains 60 mapped references matching 60 TASK rows from source plans.
+- **TEST-001**: Verify checklist contains 78 mapped references matching 78 TASK rows from source plans.
 - **TEST-002**: Verify each mapped reference uses valid source plan path and task ID.
 
 ## 7. Risks & Assumptions
@@ -210,3 +254,4 @@ plan/architecture-fastmcp-startup-phase1-1.md
 plan/architecture-fastmcp-auth-phase2-1.md
 plan/architecture-fastmcp-transforms-routes-phase3-1.md
 plan/architecture-fastmcp-release-validation-phase4-1.md
+plan/architecture-fastmcp-transforms-wildcard-1.md
