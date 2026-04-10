@@ -390,18 +390,10 @@ def test_configure_transforms_return_none_when_disabled(monkeypatch):
 
 
 def test_configure_tool_transformation_transform_uses_json_mappings(monkeypatch):
+    """ToolTransformation configurator builds ToolTransformConfig entries via correct module."""
     import mcp_sqlserver.server as server
+    from fastmcp.server.transforms.tool_transform import ToolTransform, ToolTransformConfig
 
-    captured: dict[str, object] = {}
-
-    def _fake_instantiate(module_name, class_candidates, kwargs, layer_name):
-        captured["module_name"] = module_name
-        captured["class_candidates"] = class_candidates
-        captured["kwargs"] = kwargs
-        captured["layer_name"] = layer_name
-        return object()
-
-    monkeypatch.setattr(server, "_instantiate_transform", _fake_instantiate)
     monkeypatch.setattr(
         server,
         "SETTINGS",
@@ -414,10 +406,245 @@ def test_configure_tool_transformation_transform_uses_json_mappings(monkeypatch)
 
     result = server._configure_tool_transformation_transform()
 
-    assert result is not None
-    assert captured["module_name"] == "fastmcp.server.transforms.tool_transformation"
-    assert captured["layer_name"] == "ToolTransformation"
-    assert captured["kwargs"] == {
-        "name_map": {"db_01_ping": "sql_ping"},
-        "description_map": {"db_01_ping": "SQL connectivity probe"},
-    }
+    assert isinstance(result, ToolTransform), "Must return a ToolTransform instance"
+    # Verify the transform config was correctly built
+    assert "db_01_ping" in result._transforms
+    config = result._transforms["db_01_ping"]
+    assert isinstance(config, ToolTransformConfig)
+    assert config.name == "sql_ping"
+    assert config.description == "SQL connectivity probe"
+
+
+def test_configure_tool_transformation_transform_name_only(monkeypatch):
+    """ToolTransformation configurator works with name-only mapping (no description)."""
+    import mcp_sqlserver.server as server
+    from fastmcp.server.transforms.tool_transform import ToolTransform, ToolTransformConfig
+
+    monkeypatch.setattr(
+        server,
+        "SETTINGS",
+        SimpleNamespace(
+            transform_tool_transformation_enabled=True,
+            transform_tool_name_map='{"db_01_ping":"sql_ping"}',
+            transform_tool_description_map="{}",
+        ),
+    )
+
+    result = server._configure_tool_transformation_transform()
+
+    assert isinstance(result, ToolTransform)
+    assert "db_01_ping" in result._transforms
+    assert result._transforms["db_01_ping"].name == "sql_ping"
+    assert result._transforms["db_01_ping"].description is None
+
+
+def test_configure_tool_transformation_transform_returns_none_when_maps_empty(monkeypatch):
+    """ToolTransformation configurator returns None when both maps are empty."""
+    import mcp_sqlserver.server as server
+
+    monkeypatch.setattr(
+        server,
+        "SETTINGS",
+        SimpleNamespace(
+            transform_tool_transformation_enabled=True,
+            transform_tool_name_map="{}",
+            transform_tool_description_map="{}",
+        ),
+    )
+
+    assert server._configure_tool_transformation_transform() is None
+
+
+def test_configure_visibility_transform_uses_correct_class(monkeypatch):
+    """Visibility configurator instantiates Visibility (not VisibilityTransform)."""
+    import mcp_sqlserver.server as server
+    from fastmcp.server.transforms.visibility import Visibility
+
+    monkeypatch.setattr(
+        server,
+        "SETTINGS",
+        SimpleNamespace(
+            transform_visibility_enabled=True,
+            transform_visibility_allowlist="db_01_ping,db_sql2019_list_objects",
+            transform_visibility_denylist="",
+        ),
+    )
+
+    result = server._configure_visibility_transform()
+
+    assert isinstance(result, Visibility), "Must return a Visibility instance (not VisibilityTransform)"
+    assert result._enabled is True
+    assert "db_01_ping" in result.names
+    assert "db_sql2019_list_objects" in result.names
+
+
+def test_configure_visibility_transform_denylist(monkeypatch):
+    """Visibility configurator with denylist sets enabled=False."""
+    import mcp_sqlserver.server as server
+    from fastmcp.server.transforms.visibility import Visibility
+
+    monkeypatch.setattr(
+        server,
+        "SETTINGS",
+        SimpleNamespace(
+            transform_visibility_enabled=True,
+            transform_visibility_allowlist="",
+            transform_visibility_denylist="db_internal_tool",
+        ),
+    )
+
+    result = server._configure_visibility_transform()
+
+    assert isinstance(result, Visibility)
+    assert result._enabled is False
+    assert "db_internal_tool" in result.names
+
+
+def test_configure_visibility_transform_match_all_when_no_filters(monkeypatch):
+    """Visibility configurator with no lists uses match_all=True, enabled=True."""
+    import mcp_sqlserver.server as server
+    from fastmcp.server.transforms.visibility import Visibility
+
+    monkeypatch.setattr(
+        server,
+        "SETTINGS",
+        SimpleNamespace(
+            transform_visibility_enabled=True,
+            transform_visibility_allowlist="",
+            transform_visibility_denylist="",
+        ),
+    )
+
+    result = server._configure_visibility_transform()
+
+    assert isinstance(result, Visibility)
+    assert result._enabled is True
+    assert result.match_all is True
+
+
+def test_configure_namespace_transform_uses_correct_class(monkeypatch):
+    """Namespace configurator instantiates Namespace (not NamespaceTransform)."""
+    import mcp_sqlserver.server as server
+    from fastmcp.server.transforms.namespace import Namespace
+
+    monkeypatch.setattr(
+        server,
+        "SETTINGS",
+        SimpleNamespace(
+            transform_namespace_enabled=True,
+            transform_namespace_prefix="sql",
+        ),
+    )
+
+    result = server._configure_namespace_transform()
+
+    assert isinstance(result, Namespace), "Must return a Namespace instance (not NamespaceTransform)"
+
+
+def test_configure_resources_as_tools_transform_uses_mcp_instance(monkeypatch):
+    """ResourcesAsTools configurator passes mcp server instance, not empty kwargs."""
+    import mcp_sqlserver.server as server
+    from fastmcp import FastMCP
+
+    fake_mcp = FastMCP("test-rat")
+    monkeypatch.setattr(server, "mcp", fake_mcp)
+    monkeypatch.setattr(
+        server,
+        "SETTINGS",
+        SimpleNamespace(transform_resources_as_tools_enabled=True),
+    )
+
+    from fastmcp.server.transforms.resources_as_tools import ResourcesAsTools
+    result = server._configure_resources_as_tools_transform()
+
+    assert isinstance(result, ResourcesAsTools), "Must return a ResourcesAsTools instance"
+    assert result._provider is fake_mcp
+
+
+def test_configure_prompts_as_tools_transform_uses_mcp_instance(monkeypatch):
+    """PromptsAsTools configurator passes mcp server instance, not empty kwargs."""
+    import mcp_sqlserver.server as server
+    from fastmcp import FastMCP
+
+    fake_mcp = FastMCP("test-pat")
+    monkeypatch.setattr(server, "mcp", fake_mcp)
+    monkeypatch.setattr(
+        server,
+        "SETTINGS",
+        SimpleNamespace(transform_prompts_as_tools_enabled=True),
+    )
+
+    from fastmcp.server.transforms.prompts_as_tools import PromptsAsTools
+    result = server._configure_prompts_as_tools_transform()
+
+    assert isinstance(result, PromptsAsTools), "Must return a PromptsAsTools instance"
+    assert result._provider is fake_mcp
+
+
+def test_configure_resources_as_tools_transform_logs_warning_on_wrong_provider(monkeypatch, caplog):
+    """ResourcesAsTools configurator logs a warning when the mcp instance is invalid."""
+    import logging
+    import mcp_sqlserver.server as server
+
+    monkeypatch.setattr(server, "mcp", object())  # Not a FastMCP — triggers TypeError inside
+    monkeypatch.setattr(
+        server,
+        "SETTINGS",
+        SimpleNamespace(transform_resources_as_tools_enabled=True),
+    )
+
+    import logging
+    with caplog.at_level(logging.WARNING, logger="mcp_sqlserver.server"):
+        result = server._configure_resources_as_tools_transform()
+
+    assert result is None
+    assert any("ResourcesAsTools" in r.message for r in caplog.records)
+
+
+def test_build_provider_transform_layers_warns_on_unknown_layer(monkeypatch, caplog):
+    """Unknown layer names in MCP_TRANSFORM_LAYER_ORDER emit a warning and are dropped."""
+    import logging
+    import mcp_sqlserver.server as server
+
+    settings = SimpleNamespace(
+        transform_layers_enabled=True,
+        transform_layer_order="visibility,typo_layer",
+        transform_visibility_enabled=True,
+        transform_namespace_enabled=False,
+        transform_tool_transformation_enabled=False,
+        transform_resources_as_tools_enabled=False,
+        transform_prompts_as_tools_enabled=False,
+        transform_code_mode_enabled=False,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="mcp_sqlserver.server"):
+        layers = server._build_provider_transform_layers(settings)
+
+    layer_names = [layer["name"] for layer in layers]
+    assert "typo_layer" not in layer_names
+    assert "visibility" in layer_names
+    assert any("typo_layer" in r.message for r in caplog.records)
+
+
+def test_apply_provider_transform_layers_emits_plain_text_log(monkeypatch, caplog):
+    """_apply_provider_transform_layers emits a plain-text INFO log with Applied/Skipped."""
+    import logging
+    import mcp_sqlserver.server as server
+
+    sentinel = object()
+    add_transform = Mock()
+    monkeypatch.setattr(server, "mcp", SimpleNamespace(add_transform=add_transform))
+    monkeypatch.setattr(server, "_PROVIDER_TRANSFORM_LAYERS_APPLIED", False)
+
+    layers = [
+        {"name": "visibility", "enabled": True, "factory": lambda: sentinel},
+        {"name": "namespace", "enabled": False, "factory": lambda: sentinel},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="mcp_sqlserver.server"):
+        server._apply_provider_transform_layers(layers)
+
+    matching = [r for r in caplog.records if "Applied" in r.message and "Skipped" in r.message]
+    assert matching, "Expected an INFO log with 'Applied' and 'Skipped' in plain-text message"
+    assert "visibility" in matching[0].message
+    assert "namespace" in matching[0].message

@@ -4,6 +4,31 @@
 **Date:** February 24, 2026  
 **Status:** Complete
 
+## Supplemental Artifact Set: FastMCP Wildcard Transforms
+
+**Date:** April 9, 2026  
+**Purpose:** Release-gate evidence for FastMCP wildcard transforms alignment
+
+### Evidence Files (`20260409-143959`)
+
+- `gate-startup-20260409-143959.txt`
+  - Purpose: Startup configuration and transform-layer parsing validation
+- `gate-auth-20260409-143959.txt`
+  - Purpose: HTTP auth, blackbox, and hardening coverage for transformed endpoints
+- `gate-transform-20260409-143959.txt`
+  - Purpose: Transform behavior plus readonly regression validation
+- `gate-integration-20260409-143959.txt`
+  - Purpose: Full combined validation bundle for startup, blackbox, hardening, and readonly tests
+- `env-snapshot-redacted-20260409-143959.txt`
+  - Purpose: Redacted environment snapshot for reproducibility and rollback analysis
+
+### Outcome Summary
+
+- Startup gate: PASS
+- Auth gate: PASS
+- Transform gate: PASS
+- Integration gate: PASS
+
 ---
 
 ## Test Suite Files Created
