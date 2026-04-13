@@ -765,11 +765,24 @@ When `MCP_ALLOW_WRITE=false`, write/admin components are hidden from MCP listing
  Generated on-demand via the `db_01_sql2019_analyze_logical_data_model` tool.
  
  **Access**: `http://localhost:8085/data-model-analysis?id=<UUID>`
+**Stats**: `http://localhost:8085/data-model-analysis/stats`
+
+Example stats response:
+```json
+{
+  "count": 2,
+  "oldest_age_seconds": 42,
+  "newest_age_seconds": 5,
+  "ttl_seconds": 3600,
+  "max_items": 100
+}
+```
  
  **Features**:
  - **Interactive ERD**: Zoomable Mermaid.js diagram of your schema.
  - **Health Score**: Automated grading of your schema design.
  - **Issues List**: Detailed breakdown of missing keys, normalization risks, and naming violations.
+- **Report Telemetry**: Inspect in-memory report count and age via the stats endpoint.
  
  ---
 
