@@ -1,130 +1,113 @@
 ---
-goal: Resolve all current Problems pane issues for the MCP SQL Server workspace and clear transient non-workspace diagnostics
+goal: Resolve all current Problems pane issues in workspace and transient chat buffers
 version: 1.0
 date_created: 2026-04-13
 last_updated: 2026-04-13
 owner: Harry Valdez
 status: 'In progress'
-tags: [process, diagnostics, typing, fastmcp, pyright, bug]
+tags: [process, diagnostics, pyright, fastmcp, bugfix]
 ---
 
 # Introduction
 
 ![Status: In progress](https://img.shields.io/badge/status-In%20progress-yellow)
 
-This plan defines the deterministic remediation sequence for all issues currently visible in the VS Code Problems pane as of 2026-04-13. The scope includes actionable workspace diagnostics in `mcp_sqlserver/server.py` and explicit handling of transient `vscode-chat-code-block:*` diagnostics that are not backed by repository files.
+This plan defines deterministic remediation steps for all issues currently shown in the Problems pane. Scope includes workspace-backed diagnostics in `mcp_sqlserver/server.py` and transient diagnostics from `vscode-chat-code-block:*` buffers.
 
 ## 1. Requirements & Constraints
 
-- **REQ-001**: Eliminate all workspace-backed Problems pane diagnostics reported for `mcp_sqlserver/server.py`.
-- **REQ-002**: Resolve the incorrect FastMCP import split in `_configure_tool_transformation_transform` so runtime imports and static analysis agree.
-- **REQ-003**: Remove the `ToolTransformConfig(**config_kwargs)` typing errors by replacing the untyped kwargs pattern with explicit constructor arguments that match the installed FastMCP model.
-- **REQ-004**: Remove all `custom_route(...)(handler)` callable diagnostics in `_register_dashboard_routes` without changing runtime route behavior.
-- **REQ-005**: Preserve existing HTTP route registration behavior for `/health`, `/sessions-monitor`, `/sessions-monitor/data`, `/data-model-analysis`, `/data-model-analysis/generate`, and `/data-model-analysis/stats`.
-- **REQ-006**: Distinguish repository diagnostics from transient `vscode-chat-code-block:*` diagnostics and define the exact cleanup action for the latter.
-- **REQ-007**: Verify the final Problems pane state with workspace diagnostics re-queried after implementation.
-- **SEC-001**: Do not weaken existing auth, read-only, or route registration safeguards while changing typing or import code.
-- **OPS-001**: Keep compatibility with the installed FastMCP package layout where `ToolTransform` is defined in `fastmcp.server.transforms.tool_transform` and `ToolTransformConfig` is defined in `fastmcp.tools.tool_transform`.
-- **OPS-002**: Preserve startup behavior when optional transform APIs are unavailable.
-- **CON-001**: Do not introduce `type: ignore`, blanket casts, or suppression-only fixes unless a code-level correction is impossible.
-- **CON-002**: Do not create new markdown documentation outside `plan/` for this remediation.
-- **CON-003**: Treat `vscode-chat-code-block:*` diagnostics as editor-buffer artifacts, not repository source files.
-- **GUD-001**: Reuse the existing typed route registration pattern already present in `_register_health_route` instead of inventing a new FastMCP integration style.
-- **PAT-001**: Prefer explicit constructor arguments and typed local helpers over broad `dict[str, str]` kwargs expansion for Pydantic/FastMCP models.
+- **REQ-001**: Remove all diagnostics reported against `mcp_sqlserver/server.py`.
+- **REQ-002**: Align imports in `_configure_tool_transformation_transform` with installed FastMCP module layout.
+- **REQ-003**: Replace broad `ToolTransformConfig(**config_kwargs)` usage with explicit, type-safe argument construction.
+- **REQ-004**: Keep existing runtime behavior for transform mapping while fixing static typing errors.
+- **REQ-005**: Ensure post-fix Problems pane has no repository-file diagnostics.
+- **REQ-006**: Include explicit cleanup steps for transient `vscode-chat-code-block:*` diagnostics.
+- **SEC-001**: Do not broaden write capabilities or change auth/readonly safeguards while fixing typing/import issues.
+- **OPS-001**: Preserve startup resilience when optional transform components are unavailable.
+- **CON-001**: Avoid suppression-only fixes (`# type: ignore`) unless no code-level correction exists.
+- **CON-002**: Keep changes minimal and localized to diagnostics-related code paths.
+- **GUD-001**: Follow existing transform configurator patterns in `mcp_sqlserver/server.py`.
+- **PAT-001**: Prefer explicit parameter passing and narrow types over untyped kwargs expansion.
 
 ## 2. Implementation Steps
 
 ### Implementation Phase 1
 
-- **GOAL-001**: Freeze the diagnostic scope and separate repository issues from transient editor issues.
+- GOAL-001: Capture and classify all current Problems pane diagnostics.
 
 | Task | Description | Completed | Date |
-| -------- | -------- | --------- | ---------- |
-| TASK-001 | Re-run workspace diagnostics and record the exact actionable repository issues in `mcp_sqlserver/server.py`: incorrect `ToolTransformConfig` import at line 1326, incorrect `dict[str, str]` kwargs expansion at line 1335, and callable inference failures at lines 1806-1810. | ✅ | 2026-04-13 |
-| TASK-002 | Record the two `vscode-chat-code-block:*` diagnostics as transient editor artifacts and exclude them from repository code changes. The remediation action for these artifacts is to close the chat scratch buffers or clear the corresponding chat code blocks after repository fixes are complete. | ✅ | 2026-04-13 |
-| TASK-003 | Define success criteria: `get_errors` returns no diagnostics for any repository file under the workspace root after code changes and targeted verification are complete. | ✅ | 2026-04-13 |
+|------|-------------|-----------|------|
+| TASK-001 | Re-run diagnostics and capture current entries; confirm one actionable workspace cluster in `mcp_sqlserver/server.py` and transient entries under `vscode-chat-code-block:*`. | ✅ | 2026-04-13 |
+| TASK-002 | Record root causes: incorrect `ToolTransformConfig` import location and overly broad `dict[str, str]` kwargs expansion into `ToolTransformConfig`. | ✅ | 2026-04-13 |
+| TASK-003 | Define acceptance criteria: no diagnostics in repository files, plus explicit closure/cleanup of transient chat buffers. | ✅ | 2026-04-13 |
 
 ### Implementation Phase 2
 
-- **GOAL-002**: Correct the FastMCP tool transformation import and constructor typing in `mcp_sqlserver/server.py`.
+- GOAL-002: Fix repository-backed diagnostics in transform configuration code.
 
 | Task | Description | Completed | Date |
-| -------- | -------- | --------- | ---------- |
-| TASK-004 | Update `_configure_tool_transformation_transform` in `mcp_sqlserver/server.py` so imports match the installed FastMCP package layout: import `ToolTransform` from `fastmcp.server.transforms.tool_transform` and import `ToolTransformConfig` from `fastmcp.tools.tool_transform`. | ✅ | 2026-04-13 |
-| TASK-005 | Replace `config_kwargs: dict[str, str] = {}` plus `ToolTransformConfig(**config_kwargs)` with explicit local values `mapped_name` and `mapped_description`, then construct `ToolTransformConfig(name=mapped_name, description=mapped_description)`. This removes false inference for `tags`, `meta`, `enabled`, and `arguments` while preserving runtime behavior. | ✅ | 2026-04-13 |
-| TASK-006 | Keep `transforms_dict` typed as `dict[str, ToolTransformConfig]` or an equivalent precise type instead of `dict[str, Any]` so the tool transform pipeline is statically validated end to end. | ✅ | 2026-04-13 |
+|------|-------------|-----------|------|
+| TASK-004 | Update import in `_configure_tool_transformation_transform` to import `ToolTransform` from `fastmcp.server.transforms.tool_transform` and `ToolTransformConfig` from `fastmcp.tools.tool_transform`. | ✅ | 2026-04-13 |
+| TASK-005 | Change `transforms_dict` to a precise type (`dict[str, ToolTransformConfig]`) for static correctness. | ✅ | 2026-04-13 |
+| TASK-006 | Replace `ToolTransformConfig(**config_kwargs)` with explicit constructor arguments (`name=...`, `description=...`) from parsed maps. | ✅ | 2026-04-13 |
+| TASK-007 | Verify no behavioral change in mapping semantics for tool names and descriptions. | ✅ | 2026-04-13 |
 
 ### Implementation Phase 3
 
-- **GOAL-003**: Correct dashboard route registration typing without changing HTTP behavior.
+- GOAL-003: Validate changes and lock in regression coverage.
 
 | Task | Description | Completed | Date |
-| -------- | -------- | --------- | ---------- |
-| TASK-007 | Refactor `_register_dashboard_routes` in `mcp_sqlserver/server.py` to mirror the `_register_health_route` pattern by storing each `custom_route(...)` result in a typed local `route_decorator` before applying it to the handler, or by introducing a small local helper that performs the same two-step registration for all dashboard routes. | ✅ | 2026-04-13 |
-| TASK-008 | Ensure the selected route-registration helper or local variable pattern uses the callable shape documented by FastMCP transport mixin: `Callable[[Callable[[Request], Awaitable[Response]]], Callable[[Request], Awaitable[Response]]]`. Use imports from `collections.abc` and Starlette only if needed to satisfy static analysis. | ✅ | 2026-04-13 |
-| TASK-009 | Verify that `_register_dashboard_routes` still registers exactly five dashboard routes: `/sessions-monitor`, `/sessions-monitor/data`, `/data-model-analysis`, `/data-model-analysis/generate`, and `/data-model-analysis/stats`. | ✅ | 2026-04-13 |
+|------|-------------|-----------|------|
+| TASK-008 | Run targeted diagnostics check for `mcp_sqlserver/server.py` and confirm zero errors. | ✅ | 2026-04-13 |
+| TASK-009 | Add/adjust tests in `tests/test_server_startup_config.py` to validate transform config creation and type-correct construction paths. | ✅ | 2026-04-13 |
+| TASK-010 | Run focused test suite (`tests/test_server_startup_config.py`) using workspace venv and repo PYTHONPATH. | ✅ | 2026-04-13 |
 
 ### Implementation Phase 4
 
-- **GOAL-004**: Add regression coverage for the corrected typing and route-registration behavior.
+- GOAL-004: Resolve non-repository transient diagnostics and close the plan.
 
 | Task | Description | Completed | Date |
-| -------- | -------- | --------- | ---------- |
-| TASK-010 | Extend `tests/test_server_startup_config.py` with a focused test for `_configure_tool_transformation_transform` that monkeypatches `SETTINGS` to enable the transform, supplies both name and description maps, and asserts the returned object is a `ToolTransform` configured for the expected tool keys. | ✅ | 2026-04-13 |
-| TASK-011 | Extend `tests/test_server_startup_config.py` or the most relevant existing HTTP test file to assert `_register_dashboard_routes` calls `mcp.custom_route` five times and does not raise when using the fake FastMCP instance shape already used in the test suite. | ✅ | 2026-04-13 |
-| TASK-012 | Keep existing `_resolve_http_app` and route-registration tests green by preserving the current `custom_route=Mock(side_effect=lambda **_kwargs: (lambda fn: fn))` contract used in tests. | ✅ | 2026-04-13 |
-
-### Implementation Phase 5
-
-- **GOAL-005**: Validate the remediation and clear non-repository diagnostics from the working session.
-
-| Task | Description | Completed | Date |
-| -------- | -------- | --------- | ---------- |
-| TASK-013 | Run targeted validation with `get_errors` against the workspace root and confirm `mcp_sqlserver/server.py` no longer reports import or callable diagnostics. | ✅ | 2026-04-13 |
-| TASK-014 | Run targeted tests covering the touched code paths, at minimum `pytest tests/test_server_startup_config.py`, and record pass/fail output. | ✅ | 2026-04-13 |
-| TASK-015 | Clear the remaining `vscode-chat-code-block:*` Problems entries by closing the corresponding chat scratch editors or removing the temporary code blocks that generated those non-workspace diagnostics. |  |  |
-| TASK-016 | Re-open the Problems pane and confirm the final state contains zero workspace diagnostics and zero remaining transient chat-buffer diagnostics for the current session. |  |  |
+|------|-------------|-----------|------|
+| TASK-011 | Close or clear the `vscode-chat-code-block:*` editor buffers generating transient parser/type errors. |  |  |
+| TASK-012 | Re-open Problems pane and confirm no remaining issues from repository files or transient chat code blocks. |  |  |
+| TASK-013 | Update plan status to `Completed` once all checks pass. |  |  |
 
 ## 3. Alternatives
 
-- **ALT-001**: Add `# type: ignore` to the import and route-registration lines. Rejected because it suppresses defects instead of aligning code with the installed FastMCP APIs.
-- **ALT-002**: Broaden `config_kwargs` from `dict[str, str]` to `dict[str, Any]` and keep `ToolTransformConfig(**config_kwargs)`. Rejected because it weakens type checking and still hides the true model contract.
-- **ALT-003**: Ignore `vscode-chat-code-block:*` diagnostics completely. Rejected because the user requested a plan for all Problems pane issues, so transient items must be explicitly triaged and cleared.
+- **ALT-001**: Add suppression comments for Pylance diagnostics. Rejected because this hides real import/type mismatches.
+- **ALT-002**: Use `dict[str, Any]` and keep kwargs expansion. Rejected because it weakens type safety and does not prevent future schema drift.
+- **ALT-003**: Ignore transient chat-buffer diagnostics. Rejected because request scope is all issues currently shown in Problems pane.
 
 ## 4. Dependencies
 
-- **DEP-001**: `mcp_sqlserver/server.py` contains the active diagnostics and the production code paths to update.
-- **DEP-002**: `tests/test_server_startup_config.py` already contains FastMCP mock patterns for `custom_route` and should be the primary regression harness.
-- **DEP-003**: Installed FastMCP package layout in `.venv/Lib/site-packages/fastmcp/` defines `ToolTransform` in `server/transforms/tool_transform.py` and `ToolTransformConfig` in `tools/tool_transform.py`.
-- **DEP-004**: VS Code Problems pane state must be re-queried after code and editor-buffer cleanup.
+- **DEP-001**: `mcp_sqlserver/server.py` transform configuration function.
+- **DEP-002**: `tests/test_server_startup_config.py` for focused regression coverage.
+- **DEP-003**: Installed FastMCP package layout in `.venv/Lib/site-packages/fastmcp`.
+- **DEP-004**: VS Code Problems pane state including transient `vscode-chat-code-block:*` entries.
 
 ## 5. Files
 
-- **FILE-001**: `mcp_sqlserver/server.py` - correct FastMCP imports, explicit `ToolTransformConfig` construction, and dashboard route registration typing.
-- **FILE-002**: `tests/test_server_startup_config.py` - add regression coverage for tool transformation configuration and dashboard route registration.
-- **FILE-003**: `plan/process-problem-pane-remediation-1.md` - execution plan and remediation record.
+- **FILE-001**: `mcp_sqlserver/server.py` - import/type-safe transform config fixes.
+- **FILE-002**: `tests/test_server_startup_config.py` - regression tests for transform config behavior.
+- **FILE-003**: `plan/process-problem-pane-remediation-1.md` - this execution plan.
 
 ## 6. Testing
 
-- **TEST-001**: `get_errors` for the workspace root returns no diagnostics for repository files after implementation.
-- **TEST-002**: `pytest tests/test_server_startup_config.py` passes with new transform and dashboard-route assertions.
-- **TEST-003**: Manual smoke of HTTP startup confirms `_resolve_http_app()` still registers the health route and dashboard routes without runtime exceptions.
-- **TEST-004**: Manual editor validation confirms `vscode-chat-code-block:*` diagnostics disappear after closing the transient chat buffers.
+- **TEST-001**: Diagnostics check for `mcp_sqlserver/server.py` returns zero errors.
+- **TEST-002**: `pytest tests/test_server_startup_config.py` passes using the workspace venv command prefix.
+- **TEST-003**: End-state Problems pane shows no repository-file diagnostics.
+- **TEST-004**: End-state Problems pane shows no remaining `vscode-chat-code-block:*` diagnostics.
 
 ## 7. Risks & Assumptions
 
-- **RISK-001**: A future FastMCP upgrade could move `ToolTransform` or `ToolTransformConfig` again, requiring import updates beyond this plan.
-- **RISK-002**: Over-tightening local callable annotations for `custom_route` could create unnecessary test friction if the fake MCP object in tests diverges from the runtime signature.
-- **RISK-003**: The chat-buffer diagnostics may reappear if the same invalid scratch code is reopened later in the session.
-- **ASSUMPTION-001**: The current Problems pane contains no additional workspace-backed diagnostics beyond `mcp_sqlserver/server.py`.
-- **ASSUMPTION-002**: The repository should treat transient `vscode-chat-code-block:*` issues as session artifacts, not source-controlled defects.
-- **ASSUMPTION-003**: Existing HTTP route behavior is correct; only static typing and registration shape require adjustment.
+- **RISK-001**: Future FastMCP package updates may move transform classes again.
+- **RISK-002**: Transient chat diagnostics can reappear if old scratch buffers are reopened.
+- **ASSUMPTION-001**: Current repository diagnostics are limited to the transform import/typing cluster in `mcp_sqlserver/server.py`.
+- **ASSUMPTION-002**: Existing runtime behavior should remain unchanged after typed-constructor refactor.
 
 ## 8. Related Specifications / Further Reading
 
-plan/architecture-fastmcp-plan-index-1.md
-plan/architecture-fastmcp-transforms-wildcard-1.md
-tests/test_server_startup_config.py
-.venv/Lib/site-packages/fastmcp/server/transforms/tool_transform.py
-.venv/Lib/site-packages/fastmcp/tools/tool_transform.py
-.venv/Lib/site-packages/fastmcp/server/mixins/transport.py
+- plan/architecture-fastmcp-transforms-wildcard-1.md
+- plan/architecture-fastmcp-plan-index-1.md
+- .venv/Lib/site-packages/fastmcp/server/transforms/tool_transform.py
+- .venv/Lib/site-packages/fastmcp/tools/tool_transform.py
