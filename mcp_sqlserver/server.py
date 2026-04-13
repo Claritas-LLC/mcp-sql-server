@@ -30,7 +30,7 @@ from urllib.parse import quote
 from functools import lru_cache, wraps
 import pyodbc
 from fastmcp import FastMCP, Context
-from starlette.responses import JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 # --- Connection Pool Wrapper ---
 
@@ -1183,6 +1183,11 @@ except Exception:
 _TOOL_SEARCH_TRANSFORM_APPLIED = False
 _HEALTH_ROUTE_REGISTERED = False
 _PROVIDER_TRANSFORM_LAYERS_APPLIED = False
+_DASHBOARD_ROUTES_REGISTERED = False
+_LOGICAL_MODEL_REPORTS_LOCK = Lock()
+_LOGICAL_MODEL_REPORTS: dict[str, tuple[float, str]] = {}
+_LOGICAL_MODEL_REPORT_TTL_SECONDS = max(60, int(os.getenv("MCP_LOGICAL_MODEL_REPORT_TTL_SECONDS", "3600")))
+_LOGICAL_MODEL_REPORT_MAX_ITEMS = max(1, int(os.getenv("MCP_LOGICAL_MODEL_REPORT_MAX_ITEMS", "100")))
 
 
 def _parse_csv_values(raw_value: str | None) -> list[str]:
@@ -1553,12 +1558,265 @@ def _register_health_route() -> None:
 
     _HEALTH_ROUTE_REGISTERED = True
 
+
+def _resolve_public_base_url() -> str:
+    configured = str(getattr(SETTINGS, "public_base_url", "") or "").strip()
+    if configured:
+        return configured.rstrip("/")
+    host = str(getattr(SETTINGS, "host", "localhost") or "localhost").strip()
+    if host in {"0.0.0.0", "::"}:
+        host = "localhost"
+    port = int(getattr(SETTINGS, "port", 8000) or 8000)
+    return f"http://{host}:{port}"
+
+
+def _parse_instance_from_request(request: Any, default: int = 1) -> int:
+    raw = str(getattr(request, "query_params", {}).get("instance", "") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except Exception as exc:
+        raise ValueError("instance must be an integer (1 or 2).") from exc
+    if value not in {1, 2}:
+        raise ValueError("instance must be 1 or 2.")
+    return value
+
+
+def _collect_session_monitor_stats(instance: int = 1) -> dict[str, Any]:
+    if instance not in SETTINGS.db_instances:
+        return {
+            "status": "unavailable",
+            "reason": f"Instance {instance} is not configured.",
+            "timestamp": _now_utc_iso(),
+        }
+
+    conn = get_connection("master", instance=instance)
+    try:
+        cur = conn.cursor()
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS active_sessions,
+                SUM(CASE WHEN status <> 'running' THEN 1 ELSE 0 END) AS idle_sessions,
+                COUNT(*) AS total_sessions
+            FROM sys.dm_exec_sessions
+            WHERE is_user_process = 1 AND session_id <> @@SPID
+            """,
+        )
+        row = cur.fetchone()
+        active = int(row[0]) if row and row[0] is not None else 0
+        idle = int(row[1]) if row and row[1] is not None else 0
+        total = int(row[2]) if row and row[2] is not None else 0
+        return {
+            "status": "ok",
+            "instance": instance,
+            "active_sessions": active,
+            "idle_sessions": idle,
+            "total_sessions": total,
+            "timestamp": _now_utc_iso(),
+        }
+    finally:
+        conn.close()
+
+
+def _prune_logical_model_reports() -> None:
+    now = time.time()
+    with _LOGICAL_MODEL_REPORTS_LOCK:
+        expired_ids = [
+            report_id
+            for report_id, (created_at, _html) in _LOGICAL_MODEL_REPORTS.items()
+            if (now - created_at) > _LOGICAL_MODEL_REPORT_TTL_SECONDS
+        ]
+        for report_id in expired_ids:
+            _LOGICAL_MODEL_REPORTS.pop(report_id, None)
+
+        if len(_LOGICAL_MODEL_REPORTS) <= _LOGICAL_MODEL_REPORT_MAX_ITEMS:
+            return
+
+        # Keep newest reports when max capacity is exceeded.
+        sorted_reports = sorted(_LOGICAL_MODEL_REPORTS.items(), key=lambda item: item[1][0], reverse=True)
+        keep_ids = {report_id for report_id, _ in sorted_reports[:_LOGICAL_MODEL_REPORT_MAX_ITEMS]}
+        for report_id in list(_LOGICAL_MODEL_REPORTS.keys()):
+            if report_id not in keep_ids:
+                _LOGICAL_MODEL_REPORTS.pop(report_id, None)
+
+
+def _logical_model_report_stats() -> dict[str, Any]:
+    _prune_logical_model_reports()
+    now = time.time()
+    with _LOGICAL_MODEL_REPORTS_LOCK:
+        timestamps = [created_at for created_at, _html in _LOGICAL_MODEL_REPORTS.values()]
+
+    if not timestamps:
+        return {
+            "count": 0,
+            "oldest_age_seconds": 0,
+            "newest_age_seconds": 0,
+            "ttl_seconds": _LOGICAL_MODEL_REPORT_TTL_SECONDS,
+            "max_items": _LOGICAL_MODEL_REPORT_MAX_ITEMS,
+        }
+
+    oldest = min(timestamps)
+    newest = max(timestamps)
+    return {
+        "count": len(timestamps),
+        "oldest_age_seconds": int(max(0.0, now - oldest)),
+        "newest_age_seconds": int(max(0.0, now - newest)),
+        "ttl_seconds": _LOGICAL_MODEL_REPORT_TTL_SECONDS,
+        "max_items": _LOGICAL_MODEL_REPORT_MAX_ITEMS,
+    }
+
+
+def _register_dashboard_routes() -> None:
+    global _DASHBOARD_ROUTES_REGISTERED
+    if _DASHBOARD_ROUTES_REGISTERED:
+        return
+
+    custom_route: Any = getattr(mcp, "custom_route", None)
+    if not callable(custom_route):
+        logger.warning("Dashboard route registration skipped: FastMCP runtime has no custom_route API.")
+        return
+
+    sessions_monitor_html = """
+    <html>
+    <head>
+      <title>SQL Session Monitor</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 24px; }
+        .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+        .muted { color: #666; }
+      </style>
+    </head>
+    <body>
+      <h1>Session Monitor</h1>
+      <p class="muted">Auto-refresh every 5 seconds.</p>
+      <div class="card">
+        Instance:
+        <select id="instance" onchange="refresh()">
+          <option value="1">Instance 1</option>
+          <option value="2">Instance 2</option>
+        </select>
+      </div>
+      <div class="card">Active sessions: <b id="active">-</b></div>
+      <div class="card">Idle sessions: <b id="idle">-</b></div>
+      <div class="card">Total sessions: <b id="total">-</b></div>
+      <div class="card">Status: <b id="status">-</b></div>
+      <div class="card muted">Last updated: <span id="updated">-</span></div>
+      <script>
+        const params = new URLSearchParams(window.location.search);
+        const initialInstance = params.get('instance');
+        if (initialInstance === '1' || initialInstance === '2') {
+          document.getElementById('instance').value = initialInstance;
+        }
+        async function refresh() {
+          const instance = document.getElementById('instance').value;
+          const next = new URL(window.location.href);
+          next.searchParams.set('instance', instance);
+          window.history.replaceState({}, '', next.toString());
+          try {
+            const res = await fetch('/sessions-monitor/data?instance=' + encodeURIComponent(instance));
+            const data = await res.json();
+            document.getElementById('active').textContent = data.active_sessions ?? '-';
+            document.getElementById('idle').textContent = data.idle_sessions ?? '-';
+            document.getElementById('total').textContent = data.total_sessions ?? '-';
+            document.getElementById('status').textContent = data.status ?? '-';
+            document.getElementById('updated').textContent = data.timestamp ?? '-';
+          } catch (e) {
+            document.getElementById('updated').textContent = 'Error loading data';
+          }
+        }
+        refresh();
+        setInterval(refresh, 5000);
+      </script>
+    </body>
+    </html>
+    """
+
+    async def _sessions_monitor_page(_request: Any) -> HTMLResponse:
+        return HTMLResponse(sessions_monitor_html)
+
+    async def _sessions_monitor_data(request: Any) -> JSONResponse:
+        try:
+            instance = _parse_instance_from_request(request, default=1)
+        except ValueError as exc:
+            return JSONResponse({"status": "error", "reason": str(exc)}, status_code=400)
+        return JSONResponse(_collect_session_monitor_stats(instance=instance))
+
+    async def _data_model_analysis_page(request: Any) -> HTMLResponse:
+        _prune_logical_model_reports()
+        report_id = str(getattr(request, "query_params", {}).get("id", "") or "").strip()
+        if not report_id:
+            form_html = """
+            <html>
+            <head><title>Logical Data Model</title></head>
+            <body style="font-family: Arial, sans-serif; margin: 24px;">
+              <h1>Generate Logical Data Model</h1>
+              <form method="get" action="/data-model-analysis/generate">
+                <label>Instance:
+                  <select name="instance">
+                    <option value="1">Instance 1</option>
+                    <option value="2">Instance 2</option>
+                  </select>
+                </label>
+                <br/><br/>
+                <label>Database name: <input type="text" name="database_name" /></label>
+                <br/><br/>
+                <label>Schema (optional): <input type="text" name="schema" /></label>
+                <br/><br/>
+                <button type="submit">Generate Report</button>
+              </form>
+            </body>
+            </html>
+            """
+            return HTMLResponse(form_html)
+        with _LOGICAL_MODEL_REPORTS_LOCK:
+            item = _LOGICAL_MODEL_REPORTS.get(report_id)
+        html = item[1] if item else None
+        if not html:
+            return HTMLResponse(
+                "<html><body><h2>Report not found</h2><p>Use open logical model tool for instance 1 or 2, or generate from /data-model-analysis.</p></body></html>",
+                status_code=404,
+            )
+        return HTMLResponse(html)
+
+    async def _data_model_analysis_generate(request: Any) -> JSONResponse | RedirectResponse:
+        try:
+            instance = _parse_instance_from_request(request, default=1)
+        except ValueError as exc:
+            return JSONResponse({"status": "error", "reason": str(exc)}, status_code=400)
+
+        database_name = str(getattr(request, "query_params", {}).get("database_name", "") or "").strip() or None
+        schema = str(getattr(request, "query_params", {}).get("schema", "") or "").strip() or None
+
+        try:
+            report_url = _db_sql2019_open_logical_model_internal(
+                instance=instance,
+                database_name=database_name,
+                schema=schema,
+            )
+            return RedirectResponse(url=report_url, status_code=302)
+        except Exception as exc:
+            return JSONResponse({"status": "error", "reason": str(exc)}, status_code=500)
+
+    async def _data_model_analysis_stats(_request: Any) -> JSONResponse:
+        return JSONResponse(_logical_model_report_stats())
+
+    custom_route(path="/sessions-monitor", methods=["GET"], name="sessions-monitor")(_sessions_monitor_page)
+    custom_route(path="/sessions-monitor/data", methods=["GET"], name="sessions-monitor-data")(_sessions_monitor_data)
+    custom_route(path="/data-model-analysis", methods=["GET"], name="data-model-analysis")(_data_model_analysis_page)
+    custom_route(path="/data-model-analysis/generate", methods=["GET"], name="data-model-analysis-generate")(_data_model_analysis_generate)
+    custom_route(path="/data-model-analysis/stats", methods=["GET"], name="data-model-analysis-stats")(_data_model_analysis_stats)
+    _DASHBOARD_ROUTES_REGISTERED = True
+
 def _resolve_http_app() -> Any | None:
     transport = str(getattr(SETTINGS, "transport", "http") or "http").lower()
     if transport != "http":
         return None
 
     _register_health_route()
+    _register_dashboard_routes()
 
     http_app_factory = getattr(mcp, "http_app", None)
     if not callable(http_app_factory):
@@ -3626,9 +3884,14 @@ def _db_sql2019_open_logical_model_internal(
     schema: str | None = None,
 ) -> str:
     """Returns an HTML visualization of the logical data model."""
+    _prune_logical_model_reports()
     result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
     html = _render_data_model_html(result, result.get("issues", {}))
-    return html
+    report_id = str(uuid.uuid4())
+    with _LOGICAL_MODEL_REPORTS_LOCK:
+        _LOGICAL_MODEL_REPORTS[report_id] = (time.time(), html)
+    base_url = _resolve_public_base_url()
+    return f"{base_url}/data-model-analysis?id={report_id}"
 
 
 @mcp.tool(name="db_01_generate_ddl", description="Generate T-SQL CREATE TABLE script for instance 1.")
@@ -3980,6 +4243,47 @@ def _db_sql2019_drop_object_internal(
     return {"status": "success", "database": db_name}
 
 
+
+
+def _register_sql2019_instance_aliases() -> None:
+    """
+    Backward-compatible tool aliases:
+    - db_01_* -> db_01_sql2019_*
+    - db_02_* -> db_02_sql2019_*
+    Also maps server_info -> server_info_mcp to match legacy prompts/docs.
+    """
+    tool_pattern = re.compile(r"^db_(0[12])_([a-z0-9_]+)$")
+
+    for symbol_name, tool_fn in list(globals().items()):
+        if not callable(tool_fn):
+            continue
+
+        match = tool_pattern.match(symbol_name)
+        if not match:
+            continue
+
+        if "_sql2019_" in symbol_name:
+            continue
+
+        instance_id, suffix = match.groups()
+        alias_suffix = "server_info_mcp" if suffix == "server_info" else suffix
+        alias_name = f"db_{instance_id}_sql2019_{alias_suffix}"
+
+        if alias_name in globals():
+            continue
+
+        globals()[alias_name] = tool_fn
+
+        try:
+            mcp.tool(
+                name=alias_name,
+                description=f"Compatibility alias for `{symbol_name}`.",
+            )(tool_fn)
+        except Exception as exc:
+            logger.warning("Failed to register compatibility alias %s: %s", alias_name, exc)
+
+
+_register_sql2019_instance_aliases()
 
 
 def build_mcp_run_config() -> dict[str, Any]:
