@@ -307,51 +307,6 @@ def test_api_key_middleware_uses_jwt_subject_for_authenticated_caller(monkeypatc
     assert middleware._api_caller_identity(request) == "sub:svc-mcp-user"
 
 
-def test_configure_http_auth_none_mode(monkeypatch):
-    class _Settings:
-        auth_type = "none"
-        api_key = ""
-        allow_query_token_auth = False
-
-    result = server.configure_http_auth(_Settings())
-
-    assert result == {
-        "auth_enabled": False,
-        "auth_type": "none",
-        "provider": None,
-        "validation_mode": "disabled",
-        "allow_query_token_auth": False,
-    }
-
-
-def test_configure_http_auth_apikey_requires_key(monkeypatch):
-    class _Settings:
-        auth_type = "apikey"
-        api_key = ""
-        allow_query_token_auth = False
-
-    try:
-        server.configure_http_auth(_Settings())
-    except RuntimeError as exc:
-        assert "requires FASTMCP_API_KEY" in str(exc)
-    else:
-        raise AssertionError("Expected missing api key error")
-
-
-def test_configure_http_auth_rejects_unsupported_mode(monkeypatch):
-    class _Settings:
-        auth_type = "custom-auth"
-        api_key = ""
-        allow_query_token_auth = False
-
-    try:
-        server.configure_http_auth(_Settings())
-    except ValueError as exc:
-        assert "Unsupported FASTMCP_AUTH_TYPE" in str(exc)
-    else:
-        raise AssertionError("Expected unsupported auth type error")
-
-
 def test_parse_schema_qualified_name_supports_explicit_and_default_schema():
     schema_name, table_name = server._parse_schema_qualified_name("sales.Customers")
     assert schema_name == "sales"

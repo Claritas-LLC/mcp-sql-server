@@ -30,7 +30,6 @@ from urllib.parse import quote
 from functools import lru_cache, wraps
 import pyodbc
 from fastmcp import FastMCP, Context
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 # --- Connection Pool Wrapper ---
 
@@ -105,32 +104,12 @@ class Settings:
         self.audit_log_file = kwargs.get('audit_log_file', 'mcp_query_audit.jsonl')
         self.audit_log_include_params = kwargs.get('audit_log_include_params', False)
         self.allow_raw_prompts = kwargs.get('allow_raw_prompts', False)
-        self.server_instructions = kwargs.get('server_instructions', '')
-        self.server_version = kwargs.get('server_version', '')
-        self.list_page_size = kwargs.get('list_page_size', None)
         self.tool_search_enabled = kwargs.get('tool_search_enabled', False)
         self.tool_search_strategy = kwargs.get('tool_search_strategy', 'regex')
         self.tool_search_max_results = kwargs.get('tool_search_max_results', None)
         self.tool_search_always_visible = kwargs.get('tool_search_always_visible', '')
         self.tool_search_tool_name = kwargs.get('tool_search_tool_name', 'search_tools')
         self.tool_call_tool_name = kwargs.get('tool_call_tool_name', 'call_tool')
-        self.transform_layers_enabled = kwargs.get('transform_layers_enabled', True)
-        self.transform_layer_order = kwargs.get(
-            'transform_layer_order',
-            'visibility,namespace,tool_transformation,resources_as_tools,prompts_as_tools,code_mode',
-        )
-        self.transform_visibility_enabled = kwargs.get('transform_visibility_enabled', False)
-        self.transform_visibility_allowlist = kwargs.get('transform_visibility_allowlist', '')
-        self.transform_visibility_denylist = kwargs.get('transform_visibility_denylist', '')
-        self.transform_namespace_enabled = kwargs.get('transform_namespace_enabled', False)
-        self.transform_namespace_prefix = kwargs.get('transform_namespace_prefix', '')
-        self.transform_tool_transformation_enabled = kwargs.get('transform_tool_transformation_enabled', False)
-        self.transform_tool_name_map = kwargs.get('transform_tool_name_map', '{}')
-        self.transform_tool_description_map = kwargs.get('transform_tool_description_map', '{}')
-        self.transform_resources_as_tools_enabled = kwargs.get('transform_resources_as_tools_enabled', False)
-        self.transform_prompts_as_tools_enabled = kwargs.get('transform_prompts_as_tools_enabled', False)
-        self.transform_code_mode_enabled = kwargs.get('transform_code_mode_enabled', False)
-        self.transform_code_mode_policy = kwargs.get('transform_code_mode_policy', 'safe')
 
 # Minimal _now_utc_iso helper
 def _now_utc_iso():
@@ -180,26 +159,16 @@ _audit_log_rotate_backup_count = int(os.getenv("MCP_AUDIT_LOG_ROTATE_BACKUP_COUN
 
 # Module-level audit log handler and lock
 _AUDIT_LOG_HANDLER = None
-_AUDIT_LOG_HANDLER_PATH: str | None = None
 _AUDIT_LOG_HANDLER_INIT_LOCK = Lock()
 
 def _get_audit_handler():
-    global _AUDIT_LOG_HANDLER, _AUDIT_LOG_HANDLER_PATH
-    configured_path = (getattr(SETTINGS, "audit_log_file", "") or "").strip() or _audit_log_file
-    if _AUDIT_LOG_HANDLER is not None and _AUDIT_LOG_HANDLER_PATH == configured_path:
+    global _AUDIT_LOG_HANDLER
+    if _AUDIT_LOG_HANDLER is not None:
         return _AUDIT_LOG_HANDLER
     with _AUDIT_LOG_HANDLER_INIT_LOCK:
-        configured_path = (getattr(SETTINGS, "audit_log_file", "") or "").strip() or _audit_log_file
-        if _AUDIT_LOG_HANDLER is not None and _AUDIT_LOG_HANDLER_PATH == configured_path:
-            return _AUDIT_LOG_HANDLER
         if _AUDIT_LOG_HANDLER is not None:
-            try:
-                _AUDIT_LOG_HANDLER.close()
-            except Exception:
-                pass
-            _AUDIT_LOG_HANDLER = None
-
-        log_path = configured_path
+            return _AUDIT_LOG_HANDLER
+        log_path = _audit_log_file
         log_dir = os.path.dirname(log_path)
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
@@ -215,7 +184,6 @@ def _get_audit_handler():
         handler.setLevel(logging.INFO)
         handler.setFormatter(logging.Formatter("%(message)s"))
         _AUDIT_LOG_HANDLER = handler
-        _AUDIT_LOG_HANDLER_PATH = log_path
         return handler
 
 
@@ -354,32 +322,12 @@ def _load_settings() -> Settings:
         audit_log_file=_env("MCP_AUDIT_LOG_FILE", "mcp_query_audit.jsonl").strip() or "mcp_query_audit.jsonl",
         audit_log_include_params=_env_bool("MCP_AUDIT_LOG_INCLUDE_PARAMS", False),
         allow_raw_prompts=_env_bool("MCP_ALLOW_RAW_PROMPTS", _env_bool("ALLOW_RAW_PROMPTS", False)),
-        server_instructions=_env("MCP_SERVER_INSTRUCTIONS", "").strip(),
-        server_version=_env("MCP_SERVER_VERSION", "").strip(),
-        list_page_size=_env_optional_int("MCP_LIST_PAGE_SIZE"),
         tool_search_enabled=_env_bool("MCP_TOOL_SEARCH_ENABLED", False),
         tool_search_strategy=_env("MCP_TOOL_SEARCH_STRATEGY", "regex").strip().lower(),
         tool_search_max_results=_env_optional_int("MCP_TOOL_SEARCH_MAX_RESULTS"),
         tool_search_always_visible=_env("MCP_TOOL_SEARCH_ALWAYS_VISIBLE", "").strip(),
         tool_search_tool_name=_env("MCP_TOOL_SEARCH_TOOL_NAME", "search_tools").strip(),
         tool_call_tool_name=_env("MCP_TOOL_CALL_TOOL_NAME", "call_tool").strip(),
-        transform_layers_enabled=_env_bool("MCP_TRANSFORM_LAYERS_ENABLED", True),
-        transform_layer_order=_env(
-            "MCP_TRANSFORM_LAYER_ORDER",
-            "visibility,namespace,tool_transformation,resources_as_tools,prompts_as_tools,code_mode",
-        ).strip().lower(),
-        transform_visibility_enabled=_env_bool("MCP_TRANSFORM_VISIBILITY_ENABLED", False),
-        transform_visibility_allowlist=_env("MCP_TRANSFORM_VISIBILITY_ALLOWLIST", "").strip(),
-        transform_visibility_denylist=_env("MCP_TRANSFORM_VISIBILITY_DENYLIST", "").strip(),
-        transform_namespace_enabled=_env_bool("MCP_TRANSFORM_NAMESPACE_ENABLED", False),
-        transform_namespace_prefix=_env("MCP_TRANSFORM_NAMESPACE_PREFIX", "").strip(),
-        transform_tool_transformation_enabled=_env_bool("MCP_TRANSFORM_TOOL_TRANSFORMATION_ENABLED", False),
-        transform_tool_name_map=_env("MCP_TRANSFORM_TOOL_NAME_MAP", "{}").strip(),
-        transform_tool_description_map=_env("MCP_TRANSFORM_TOOL_DESCRIPTION_MAP", "{}").strip(),
-        transform_resources_as_tools_enabled=_env_bool("MCP_TRANSFORM_RESOURCES_AS_TOOLS_ENABLED", False),
-        transform_prompts_as_tools_enabled=_env_bool("MCP_TRANSFORM_PROMPTS_AS_TOOLS_ENABLED", False),
-        transform_code_mode_enabled=_env_bool("MCP_TRANSFORM_CODE_MODE_ENABLED", False),
-        transform_code_mode_policy=_env("MCP_TRANSFORM_CODE_MODE_POLICY", "safe").strip().lower(),
     )
 
 
@@ -1158,20 +1106,7 @@ def _ensure_write_enabled() -> None:
 
 # FastMCP app initialization
 MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server")
-
-
-def build_mcp_constructor_config() -> dict[str, Any]:
-    config: dict[str, Any] = {"name": MCP_SERVER_NAME}
-    if SETTINGS.server_instructions:
-        config["instructions"] = SETTINGS.server_instructions
-    if SETTINGS.server_version:
-        config["version"] = SETTINGS.server_version
-    if SETTINGS.list_page_size is not None:
-        config["list_page_size"] = SETTINGS.list_page_size
-    return config
-
-
-mcp = FastMCP(**build_mcp_constructor_config())
+mcp = FastMCP(name=MCP_SERVER_NAME)
 
 try:
     import fastmcp
@@ -1180,334 +1115,23 @@ except Exception:
     print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: unknown\n========================\n")
 
 
-_TOOL_SEARCH_TRANSFORM_APPLIED = False
-_HEALTH_ROUTE_REGISTERED = False
-_PROVIDER_TRANSFORM_LAYERS_APPLIED = False
-_DASHBOARD_ROUTES_REGISTERED = False
-_LOGICAL_MODEL_REPORTS_LOCK = Lock()
-_LOGICAL_MODEL_REPORTS: dict[str, tuple[float, str]] = {}
-_LOGICAL_MODEL_REPORT_TTL_SECONDS = max(60, int(os.getenv("MCP_LOGICAL_MODEL_REPORT_TTL_SECONDS", "3600")))
-_LOGICAL_MODEL_REPORT_MAX_ITEMS = max(1, int(os.getenv("MCP_LOGICAL_MODEL_REPORT_MAX_ITEMS", "100")))
-
-
-def _parse_csv_values(raw_value: str | None) -> list[str]:
-    if not raw_value:
-        return []
-    return [item.strip() for item in str(raw_value).split(",") if item.strip()]
-
-
-def _parse_json_mapping(raw_value: str | None, env_name: str) -> dict[str, str]:
-    if not raw_value:
-        return {}
-    try:
-        parsed = json.loads(raw_value)
-    except Exception as exc:
-        logger.warning("Invalid JSON mapping for %s: %s", env_name, exc)
-        return {}
-    if not isinstance(parsed, dict):
-        logger.warning("Invalid JSON mapping for %s: expected object.", env_name)
-        return {}
-    cleaned: dict[str, str] = {}
-    for key, value in parsed.items():
-        if not isinstance(key, str) or not isinstance(value, str):
-            continue
-        key_clean = key.strip()
-        value_clean = value.strip()
-        if key_clean and value_clean:
-            cleaned[key_clean] = value_clean
-    return cleaned
-
-
-def _instantiate_transform(
-    module_name: str,
-    class_candidates: Sequence[str],
-    kwargs: dict[str, Any],
-    layer_name: str,
-) -> Any | None:
-    try:
-        module = __import__(module_name, fromlist=["*"])
-    except Exception as exc:
-        logger.warning("%s transform unavailable: %s", layer_name, exc)
-        return None
-
-    transform_class = None
-    for class_name in class_candidates:
-        transform_class = getattr(module, class_name, None)
-        if transform_class is not None:
-            break
-
-    if transform_class is None:
-        logger.warning(
-            "%s transform unavailable: none of %s found in %s",
-            layer_name,
-            ", ".join(class_candidates),
-            module_name,
-        )
-        return None
-
-    try:
-        return transform_class(**kwargs)
-    except TypeError:
-        # Graceful fallback for runtimes with narrower constructor signatures.
-        try:
-            return transform_class()
-        except Exception as exc:
-            logger.warning("Failed to instantiate %s transform: %s", layer_name, exc)
-            return None
-    except Exception as exc:
-        logger.warning("Failed to instantiate %s transform: %s", layer_name, exc)
-        return None
-
-
-def _configure_visibility_transform() -> Any | None:
-    if not bool(getattr(SETTINGS, "transform_visibility_enabled", False)):
-        return None
-    allowlist = _parse_csv_values(getattr(SETTINGS, "transform_visibility_allowlist", ""))
-    denylist = _parse_csv_values(getattr(SETTINGS, "transform_visibility_denylist", ""))
-    kwargs: dict[str, Any] = {}
-    if allowlist and denylist:
-        logger.warning(
-            "Visibility transform: both MCP_TRANSFORM_VISIBILITY_ALLOWLIST and "
-            "MCP_TRANSFORM_VISIBILITY_DENYLIST are set. Using allowlist only (enabled=True, names=allowlist)."
-        )
-        kwargs["enabled"] = True
-        kwargs["names"] = set(allowlist)
-    elif allowlist:
-        kwargs["enabled"] = True
-        kwargs["names"] = set(allowlist)
-    elif denylist:
-        kwargs["enabled"] = False
-        kwargs["names"] = set(denylist)
-    else:
-        kwargs["enabled"] = True
-        kwargs["match_all"] = True
-    return _instantiate_transform(
-        "fastmcp.server.transforms.visibility",
-        ["Visibility"],
-        kwargs,
-        "Visibility",
-    )
-
-
-def _configure_namespace_transform() -> Any | None:
-    if not bool(getattr(SETTINGS, "transform_namespace_enabled", False)):
-        return None
-    kwargs: dict[str, Any] = {}
-    namespace_prefix = str(getattr(SETTINGS, "transform_namespace_prefix", "") or "").strip()
-    if namespace_prefix:
-        kwargs["prefix"] = namespace_prefix
-    return _instantiate_transform(
-        "fastmcp.server.transforms.namespace",
-        ["Namespace"],
-        kwargs,
-        "Namespace",
-    )
-
-
-def _configure_tool_transformation_transform() -> Any | None:
-    if not bool(getattr(SETTINGS, "transform_tool_transformation_enabled", False)):
-        return None
-    name_map = _parse_json_mapping(
-        getattr(SETTINGS, "transform_tool_name_map", "{}"),
-        "MCP_TRANSFORM_TOOL_NAME_MAP",
-    )
-    description_map = _parse_json_mapping(
-        getattr(SETTINGS, "transform_tool_description_map", "{}"),
-        "MCP_TRANSFORM_TOOL_DESCRIPTION_MAP",
-    )
-    all_tool_names = set(name_map) | set(description_map)
-    if not all_tool_names:
-        logger.warning(
-            "ToolTransformation transform enabled but MCP_TRANSFORM_TOOL_NAME_MAP and "
-            "MCP_TRANSFORM_TOOL_DESCRIPTION_MAP are both empty. Skipping."
-        )
-        return None
-    try:
-        from fastmcp.server.transforms.tool_transform import ToolTransform
-        from fastmcp.tools.tool_transform import ToolTransformConfig
-
-        transforms_dict: dict[str, ToolTransformConfig] = {}
-        for tool_name in all_tool_names:
-            mapped_name = name_map.get(tool_name)
-            mapped_description = description_map.get(tool_name)
-            transforms_dict[tool_name] = ToolTransformConfig(
-                name=mapped_name,
-                description=mapped_description,
-            )
-        return ToolTransform(transforms=transforms_dict)
-    except Exception as exc:
-        logger.warning("ToolTransformation transform unavailable: %s", exc)
-        return None
-
-
-def _configure_resources_as_tools_transform() -> Any | None:
-    if not bool(getattr(SETTINGS, "transform_resources_as_tools_enabled", False)):
-        return None
-    try:
-        from fastmcp.server.transforms.resources_as_tools import ResourcesAsTools
-
-        return ResourcesAsTools(mcp)
-    except Exception as exc:
-        logger.warning("ResourcesAsTools transform unavailable: %s", exc)
-        return None
-
-
-def _configure_prompts_as_tools_transform() -> Any | None:
-    if not bool(getattr(SETTINGS, "transform_prompts_as_tools_enabled", False)):
-        return None
-    try:
-        from fastmcp.server.transforms.prompts_as_tools import PromptsAsTools
-
-        return PromptsAsTools(mcp)
-    except Exception as exc:
-        logger.warning("PromptsAsTools transform unavailable: %s", exc)
-        return None
-
-
-def _configure_code_mode_transform() -> Any | None:
-    if not bool(getattr(SETTINGS, "transform_code_mode_enabled", False)):
-        return None
-    kwargs: dict[str, Any] = {}
-    policy = str(getattr(SETTINGS, "transform_code_mode_policy", "safe") or "safe").strip().lower()
-    if policy:
-        kwargs["policy"] = policy
-    return _instantiate_transform(
-        "fastmcp.server.transforms.code_mode",
-        ["CodeModeTransform", "CodeMode"],
-        kwargs,
-        "CodeMode",
-    )
-
-
-def _build_provider_transform_layers(settings: Settings | None = None) -> list[dict[str, Any]]:
-    effective_settings = settings or SETTINGS
-    if not bool(getattr(effective_settings, "transform_layers_enabled", True)):
-        return []
-
-    default_order = [
-        "visibility",
-        "namespace",
-        "tool_transformation",
-        "resources_as_tools",
-        "prompts_as_tools",
-        "code_mode",
-    ]
-    raw_order = _parse_csv_values(getattr(effective_settings, "transform_layer_order", ""))
-    known = set(default_order)
-    ordered = [item for item in raw_order if item in known]
-    unknown = [item for item in raw_order if item not in known]
-    if unknown:
-        logger.warning(
-            "Unknown transform layer names in MCP_TRANSFORM_LAYER_ORDER will be ignored: %s",
-            ", ".join(unknown),
-        )
-    for item in default_order:
-        if item not in ordered:
-            ordered.append(item)
-
-    layer_specs: dict[str, tuple[bool, Any]] = {
-        "visibility": (bool(getattr(effective_settings, "transform_visibility_enabled", False)), _configure_visibility_transform),
-        "namespace": (bool(getattr(effective_settings, "transform_namespace_enabled", False)), _configure_namespace_transform),
-        "tool_transformation": (
-            bool(getattr(effective_settings, "transform_tool_transformation_enabled", False)),
-            _configure_tool_transformation_transform,
-        ),
-        "resources_as_tools": (
-            bool(getattr(effective_settings, "transform_resources_as_tools_enabled", False)),
-            _configure_resources_as_tools_transform,
-        ),
-        "prompts_as_tools": (
-            bool(getattr(effective_settings, "transform_prompts_as_tools_enabled", False)),
-            _configure_prompts_as_tools_transform,
-        ),
-        "code_mode": (bool(getattr(effective_settings, "transform_code_mode_enabled", False)), _configure_code_mode_transform),
-    }
-
-    layers: list[dict[str, Any]] = []
-    for name in ordered:
-        enabled, factory = layer_specs[name]
-        layers.append({"name": name, "enabled": enabled, "factory": factory})
-    return layers
-
-
-def _apply_provider_transform_layers(layers: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    global _PROVIDER_TRANSFORM_LAYERS_APPLIED
-
-    if _PROVIDER_TRANSFORM_LAYERS_APPLIED:
-        return {"applied": [], "skipped": [], "already_applied": True}
-
-    transform_layers = layers if layers is not None else _build_provider_transform_layers()
-    add_transform = getattr(mcp, "add_transform", None)
-    if not callable(add_transform):
-        logger.warning("Provider transform layering skipped: FastMCP runtime has no add_transform method.")
-        return {"applied": [], "skipped": [layer.get("name", "unknown") for layer in transform_layers], "already_applied": False}
-
-    applied: list[str] = []
-    skipped: list[str] = []
-    for layer in transform_layers:
-        layer_name = str(layer.get("name", "unknown"))
-        if not bool(layer.get("enabled", False)):
-            skipped.append(layer_name)
-            continue
-        factory = layer.get("factory")
-        if not callable(factory):
-            skipped.append(layer_name)
-            logger.warning("Provider transform layer %s skipped: factory unavailable.", layer_name)
-            continue
-        transform = factory()
-        if transform is None:
-            skipped.append(layer_name)
-            continue
-        try:
-            add_transform(transform)
-            applied.append(layer_name)
-        except Exception as exc:
-            skipped.append(layer_name)
-            logger.warning("Provider transform layer %s failed to apply: %s", layer_name, exc)
-
-    _PROVIDER_TRANSFORM_LAYERS_APPLIED = True
-    logger.info(
-        "Provider transform layering resolved. Applied: [%s]. Skipped: [%s].",
-        ", ".join(applied) if applied else "none",
-        ", ".join(skipped) if skipped else "none",
-        extra={
-            "applied_layers": applied,
-            "skipped_layers": skipped,
-        },
-    )
-    return {"applied": applied, "skipped": skipped, "already_applied": False}
-
-
 def _configure_tool_search_transform() -> None:
-    global _TOOL_SEARCH_TRANSFORM_APPLIED
-
-    if _TOOL_SEARCH_TRANSFORM_APPLIED:
+    if not SETTINGS.tool_search_enabled:
         return
 
-    if not bool(getattr(SETTINGS, "tool_search_enabled", False)):
-        logger.info("Tool search transform disabled by MCP_TOOL_SEARCH_ENABLED.")
-        return
-
-    strategy = str(getattr(SETTINGS, "tool_search_strategy", "regex") or "regex").strip().lower()
-    if strategy not in {"regex", "bm25"}:
-        raise RuntimeError("MCP_TOOL_SEARCH_STRATEGY must be 'regex' or 'bm25'.")
-
+    strategy = SETTINGS.tool_search_strategy
     kwargs: dict[str, Any] = {}
-    max_results = getattr(SETTINGS, "tool_search_max_results", None)
-    if max_results is not None:
-        kwargs["max_results"] = max_results
+    if SETTINGS.tool_search_max_results is not None:
+        kwargs["max_results"] = SETTINGS.tool_search_max_results
 
-    always_visible_raw = str(getattr(SETTINGS, "tool_search_always_visible", "") or "")
-    always_visible = [name.strip() for name in always_visible_raw.split(",") if name.strip()]
+    always_visible = [name.strip() for name in SETTINGS.tool_search_always_visible.split(",") if name.strip()]
     if always_visible:
         kwargs["always_visible"] = always_visible
 
-    search_tool_name = str(getattr(SETTINGS, "tool_search_tool_name", "") or "").strip()
-    call_tool_name = str(getattr(SETTINGS, "tool_call_tool_name", "") or "").strip()
-    if search_tool_name:
-        kwargs["search_tool_name"] = search_tool_name
-    if call_tool_name:
-        kwargs["call_tool_name"] = call_tool_name
+    if SETTINGS.tool_search_tool_name:
+        kwargs["search_tool_name"] = SETTINGS.tool_search_tool_name
+    if SETTINGS.tool_call_tool_name:
+        kwargs["call_tool_name"] = SETTINGS.tool_call_tool_name
 
     try:
         if strategy == "bm25":
@@ -1521,333 +1145,13 @@ def _configure_tool_search_transform() -> None:
         )
         return
 
-    try:
-        transform = SearchTransform(**kwargs)
-        add_transform = getattr(mcp, "add_transform", None)
-        if callable(add_transform):
-            add_transform(transform)
-            _TOOL_SEARCH_TRANSFORM_APPLIED = True
-            logger.info("Tool search transform applied.", extra={"strategy": strategy})
-            return
-
-        logger.warning("Tool search transform could not be applied: FastMCP runtime has no add_transform method.")
-    except Exception as exc:
-        logger.warning("Failed to apply tool search transform: %s", exc)
-
-
-def _register_health_route() -> None:
-    global _HEALTH_ROUTE_REGISTERED
-    if _HEALTH_ROUTE_REGISTERED:
-        return
-
-    custom_route: Any = getattr(mcp, "custom_route", None)
-    if not callable(custom_route):
-        logger.warning("Health route registration skipped: FastMCP runtime has no custom_route API.")
-        return
-
-    async def _health_route(_request: Any) -> JSONResponse:
-        return JSONResponse(
-            {
-                "status": "ok",
-                "service": MCP_SERVER_NAME,
-                "transport": str(getattr(SETTINGS, "transport", "http") or "http").lower(),
-            }
-        )
-
-    route_decorator: Any = custom_route(path="/health", methods=["GET"], name="health")
-    route_decorator(_health_route)
-
-    _HEALTH_ROUTE_REGISTERED = True
-
-
-def _resolve_public_base_url() -> str:
-    configured = str(getattr(SETTINGS, "public_base_url", "") or "").strip()
-    if configured:
-        return configured.rstrip("/")
-    host = str(getattr(SETTINGS, "host", "localhost") or "localhost").strip()
-    if host in {"0.0.0.0", "::"}:
-        host = "localhost"
-    port = int(getattr(SETTINGS, "port", 8000) or 8000)
-    return f"http://{host}:{port}"
-
-
-def _parse_instance_from_request(request: Any, default: int = 1) -> int:
-    raw = str(getattr(request, "query_params", {}).get("instance", "") or "").strip()
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except Exception as exc:
-        raise ValueError("instance must be an integer (1 or 2).") from exc
-    if value not in {1, 2}:
-        raise ValueError("instance must be 1 or 2.")
-    return value
-
-
-def _collect_session_monitor_stats(instance: int = 1) -> dict[str, Any]:
-    if instance not in SETTINGS.db_instances:
-        return {
-            "status": "unavailable",
-            "reason": f"Instance {instance} is not configured.",
-            "timestamp": _now_utc_iso(),
-        }
-
-    conn = get_connection("master", instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(
-            cur,
-            """
-            SELECT
-                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS active_sessions,
-                SUM(CASE WHEN status <> 'running' THEN 1 ELSE 0 END) AS idle_sessions,
-                COUNT(*) AS total_sessions
-            FROM sys.dm_exec_sessions
-            WHERE is_user_process = 1 AND session_id <> @@SPID
-            """,
-        )
-        row = cur.fetchone()
-        active = int(row[0]) if row and row[0] is not None else 0
-        idle = int(row[1]) if row and row[1] is not None else 0
-        total = int(row[2]) if row and row[2] is not None else 0
-        return {
-            "status": "ok",
-            "instance": instance,
-            "active_sessions": active,
-            "idle_sessions": idle,
-            "total_sessions": total,
-            "timestamp": _now_utc_iso(),
-        }
-    finally:
-        conn.close()
-
-
-def _prune_logical_model_reports() -> None:
-    now = time.time()
-    with _LOGICAL_MODEL_REPORTS_LOCK:
-        expired_ids = [
-            report_id
-            for report_id, (created_at, _html) in _LOGICAL_MODEL_REPORTS.items()
-            if (now - created_at) > _LOGICAL_MODEL_REPORT_TTL_SECONDS
-        ]
-        for report_id in expired_ids:
-            _LOGICAL_MODEL_REPORTS.pop(report_id, None)
-
-        if len(_LOGICAL_MODEL_REPORTS) <= _LOGICAL_MODEL_REPORT_MAX_ITEMS:
-            return
-
-        # Keep newest reports when max capacity is exceeded.
-        sorted_reports = sorted(_LOGICAL_MODEL_REPORTS.items(), key=lambda item: item[1][0], reverse=True)
-        keep_ids = {report_id for report_id, _ in sorted_reports[:_LOGICAL_MODEL_REPORT_MAX_ITEMS]}
-        for report_id in list(_LOGICAL_MODEL_REPORTS.keys()):
-            if report_id not in keep_ids:
-                _LOGICAL_MODEL_REPORTS.pop(report_id, None)
-
-
-def _logical_model_report_stats() -> dict[str, Any]:
-    _prune_logical_model_reports()
-    now = time.time()
-    with _LOGICAL_MODEL_REPORTS_LOCK:
-        timestamps = [created_at for created_at, _html in _LOGICAL_MODEL_REPORTS.values()]
-
-    if not timestamps:
-        return {
-            "count": 0,
-            "oldest_age_seconds": 0,
-            "newest_age_seconds": 0,
-            "ttl_seconds": _LOGICAL_MODEL_REPORT_TTL_SECONDS,
-            "max_items": _LOGICAL_MODEL_REPORT_MAX_ITEMS,
-        }
-
-    oldest = min(timestamps)
-    newest = max(timestamps)
-    return {
-        "count": len(timestamps),
-        "oldest_age_seconds": int(max(0.0, now - oldest)),
-        "newest_age_seconds": int(max(0.0, now - newest)),
-        "ttl_seconds": _LOGICAL_MODEL_REPORT_TTL_SECONDS,
-        "max_items": _LOGICAL_MODEL_REPORT_MAX_ITEMS,
-    }
-
-
-def _register_dashboard_routes() -> None:
-    global _DASHBOARD_ROUTES_REGISTERED
-    if _DASHBOARD_ROUTES_REGISTERED:
-        return
-
-    custom_route: Any = getattr(mcp, "custom_route", None)
-    if not callable(custom_route):
-        logger.warning("Dashboard route registration skipped: FastMCP runtime has no custom_route API.")
-        return
-
-    sessions_monitor_html = """
-    <html>
-    <head>
-      <title>SQL Session Monitor</title>
-      <style>
-        body { font-family: Arial, sans-serif; margin: 24px; }
-        .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-        .muted { color: #666; }
-      </style>
-    </head>
-    <body>
-      <h1>Session Monitor</h1>
-      <p class="muted">Auto-refresh every 5 seconds.</p>
-      <div class="card">
-        Instance:
-        <select id="instance" onchange="refresh()">
-          <option value="1">Instance 1</option>
-          <option value="2">Instance 2</option>
-        </select>
-      </div>
-      <div class="card">Active sessions: <b id="active">-</b></div>
-      <div class="card">Idle sessions: <b id="idle">-</b></div>
-      <div class="card">Total sessions: <b id="total">-</b></div>
-      <div class="card">Status: <b id="status">-</b></div>
-      <div class="card muted">Last updated: <span id="updated">-</span></div>
-      <script>
-        const params = new URLSearchParams(window.location.search);
-        const initialInstance = params.get('instance');
-        if (initialInstance === '1' || initialInstance === '2') {
-          document.getElementById('instance').value = initialInstance;
-        }
-        async function refresh() {
-          const instance = document.getElementById('instance').value;
-          const next = new URL(window.location.href);
-          next.searchParams.set('instance', instance);
-          window.history.replaceState({}, '', next.toString());
-          try {
-            const res = await fetch('/sessions-monitor/data?instance=' + encodeURIComponent(instance));
-            const data = await res.json();
-            document.getElementById('active').textContent = data.active_sessions ?? '-';
-            document.getElementById('idle').textContent = data.idle_sessions ?? '-';
-            document.getElementById('total').textContent = data.total_sessions ?? '-';
-            document.getElementById('status').textContent = data.status ?? '-';
-            document.getElementById('updated').textContent = data.timestamp ?? '-';
-          } catch (e) {
-            document.getElementById('updated').textContent = 'Error loading data';
-          }
-        }
-        refresh();
-        setInterval(refresh, 5000);
-      </script>
-    </body>
-    </html>
-    """
-
-    async def _sessions_monitor_page(_request: Any) -> HTMLResponse:
-        return HTMLResponse(sessions_monitor_html)
-
-    async def _sessions_monitor_data(request: Any) -> JSONResponse:
-        try:
-            instance = _parse_instance_from_request(request, default=1)
-        except ValueError as exc:
-            return JSONResponse({"status": "error", "reason": str(exc)}, status_code=400)
-        return JSONResponse(_collect_session_monitor_stats(instance=instance))
-
-    async def _data_model_analysis_page(request: Any) -> HTMLResponse:
-        _prune_logical_model_reports()
-        report_id = str(getattr(request, "query_params", {}).get("id", "") or "").strip()
-        if not report_id:
-            form_html = """
-            <html>
-            <head><title>Logical Data Model</title></head>
-            <body style="font-family: Arial, sans-serif; margin: 24px;">
-              <h1>Generate Logical Data Model</h1>
-              <form method="get" action="/data-model-analysis/generate">
-                <label>Instance:
-                  <select name="instance">
-                    <option value="1">Instance 1</option>
-                    <option value="2">Instance 2</option>
-                  </select>
-                </label>
-                <br/><br/>
-                <label>Database name: <input type="text" name="database_name" /></label>
-                <br/><br/>
-                <label>Schema (optional): <input type="text" name="schema" /></label>
-                <br/><br/>
-                <button type="submit">Generate Report</button>
-              </form>
-            </body>
-            </html>
-            """
-            return HTMLResponse(form_html)
-        with _LOGICAL_MODEL_REPORTS_LOCK:
-            item = _LOGICAL_MODEL_REPORTS.get(report_id)
-        html = item[1] if item else None
-        if not html:
-            return HTMLResponse(
-                "<html><body><h2>Report not found</h2><p>Use open logical model tool for instance 1 or 2, or generate from /data-model-analysis.</p></body></html>",
-                status_code=404,
-            )
-        return HTMLResponse(html)
-
-    async def _data_model_analysis_generate(request: Any) -> JSONResponse | RedirectResponse:
-        try:
-            instance = _parse_instance_from_request(request, default=1)
-        except ValueError as exc:
-            return JSONResponse({"status": "error", "reason": str(exc)}, status_code=400)
-
-        database_name = str(getattr(request, "query_params", {}).get("database_name", "") or "").strip() or None
-        schema = str(getattr(request, "query_params", {}).get("schema", "") or "").strip() or None
-
-        try:
-            report_url = _db_sql2019_open_logical_model_internal(
-                instance=instance,
-                database_name=database_name,
-                schema=schema,
-            )
-            return RedirectResponse(url=report_url, status_code=302)
-        except Exception as exc:
-            return JSONResponse({"status": "error", "reason": str(exc)}, status_code=500)
-
-    async def _data_model_analysis_stats(_request: Any) -> JSONResponse:
-        return JSONResponse(_logical_model_report_stats())
-
-    route_decorator: Any = custom_route(path="/sessions-monitor", methods=["GET"], name="sessions-monitor")
-    route_decorator(_sessions_monitor_page)
-    route_decorator = custom_route(path="/sessions-monitor/data", methods=["GET"], name="sessions-monitor-data")
-    route_decorator(_sessions_monitor_data)
-    route_decorator = custom_route(path="/data-model-analysis", methods=["GET"], name="data-model-analysis")
-    route_decorator(_data_model_analysis_page)
-    route_decorator = custom_route(path="/data-model-analysis/generate", methods=["GET"], name="data-model-analysis-generate")
-    route_decorator(_data_model_analysis_generate)
-    route_decorator = custom_route(path="/data-model-analysis/stats", methods=["GET"], name="data-model-analysis-stats")
-    route_decorator(_data_model_analysis_stats)
-    _DASHBOARD_ROUTES_REGISTERED = True
-
 def _resolve_http_app() -> Any | None:
-    transport = str(getattr(SETTINGS, "transport", "http") or "http").lower()
-    if transport != "http":
-        return None
+    return None
 
-    _register_health_route()
-    _register_dashboard_routes()
-
-    http_app_factory = getattr(mcp, "http_app", None)
-    if not callable(http_app_factory):
-        logger.warning("HTTP app resolution skipped: FastMCP runtime has no http_app API.")
-        return None
-
-    try:
-        return http_app_factory(path="/mcp", transport="http")
-    except TypeError:
-        return http_app_factory(path="/mcp")
-
-
-
-
-@mcp.tool(name="db_01_ping", description="Basic connectivity probe for database instance 1.")
-def db_01_ping() -> dict[str, Any]:
-    return _db_sql2019_ping_internal(instance=1)
-
-@mcp.tool(name="db_02_ping", description="Basic connectivity probe for database instance 2.")
-def db_02_ping() -> dict[str, Any]:
-    return _db_sql2019_ping_internal(instance=2)
-
+# --- db_sql2019_ping must be defined before registration ---
 
 # Place after get_instance_config
-def _db_sql2019_ping_internal(instance: int = 1) -> dict[str, Any]:
+def db_sql2019_ping(instance: int = 1) -> dict[str, Any]:
     # Basic connectivity probe.
     conn = get_connection(instance=instance)
     try:
@@ -1866,22 +1170,7 @@ def _db_sql2019_ping_internal(instance: int = 1) -> dict[str, Any]:
         conn.close()
 
 
-
-@mcp.tool(name="db_01_list_databases", description="List online databases visible to the current login for instance 1.")
-def db_01_list_databases(
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE
-) -> dict[str, Any]:
-    return _db_sql2019_list_databases_internal(instance=1, page=page, page_size=page_size)
-
-@mcp.tool(name="db_02_list_databases", description="List online databases visible to the current login for instance 2.")
-def db_02_list_databases(
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE
-) -> dict[str, Any]:
-    return _db_sql2019_list_databases_internal(instance=2, page=page, page_size=page_size)
-
-def _db_sql2019_list_databases_internal(instance: int = 1, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
+def db_sql2019_list_databases(instance: int = 1, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
     """List online databases visible to the current login."""
     validate_instance(instance)
     conn = get_connection("master", instance=instance)
@@ -1902,38 +1191,7 @@ def _db_sql2019_list_databases_internal(instance: int = 1, page: int = 1, page_s
         conn.close()
 
 
-@mcp.tool(name="db_01_list_tables", description="List tables for a database/schema for instance 1.")
-def db_01_list_tables(
-    database_name: str | None = None,
-    schema_name: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_list_tables_internal(
-        instance=1,
-        database_name=database_name,
-        schema_name=schema_name,
-        page=page,
-        page_size=page_size,
-    )
-
-@mcp.tool(name="db_02_list_tables", description="List tables for a database/schema for instance 2.")
-def db_02_list_tables(
-    database_name: str | None = None,
-    schema_name: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_list_tables_internal(
-        instance=2,
-        database_name=database_name,
-        schema_name=schema_name,
-        page=page,
-        page_size=page_size,
-    )
-
-
-def _db_sql2019_list_tables_internal(
+def db_sql2019_list_tables(
     instance: int = 1,
     database_name: str | None = None,
     schema_name: str | None = None,
@@ -2066,7 +1324,6 @@ def _run_query_internal(
     instance: int,
     database_name: str | None,
     sql: str,
-    params: list[Any] | dict[str, Any] | None = None,
     params_json: str | None = None,
     max_rows: int | None = None,
     enforce_readonly: bool = True,
@@ -2083,45 +1340,31 @@ def _run_query_internal(
     db_name_str = _normalize_db_name(db_name)
     # Ensure database_name is str for audit record (never None)
     audit_db_name = db_name_str if db_name_str is not None else ""
-    if params is not None:
-        if isinstance(params, dict):
-            resolved_params: list[Any] | None = [params]
-        elif isinstance(params, list):
-            resolved_params = params
-        else:
-            raise ValueError("params must be a list or object")
-    else:
-        resolved_params = _parse_params_json(params_json)
-
-    audit_params_json: str | None = None
-    if resolved_params is not None:
-        audit_params_json = json.dumps(resolved_params, default=str)
-
     _write_query_audit_record(
         tool_name=tool_name,
         database_name=audit_db_name,
         sql=sql,
-        params_json=audit_params_json,
+        params_json=params_json,
         prompt_context=prompt_context,
     )
 
+    params = _parse_params_json(params_json)
     row_cap = max_rows if isinstance(max_rows, int) and max_rows > 0 else SETTINGS.max_rows
 
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
-        _execute_safe(cur, sql, resolved_params)
+        _execute_safe(cur, sql, params)
         rows = _fetch_limited(cur, row_cap)
         return _rows_to_dicts(cur, rows)
     finally:
         conn.close()
 
 
-def _db_sql2019_execute_query_internal(
+def db_sql2019_execute_query(
     instance: int = 1,
     database_name: str | None = None,
     sql: str | None = None,
-    params: list[Any] | dict[str, Any] | None = None,
     params_json: str | None = None,
     max_rows: int | None = None,
     prompt_context: str | None = None,
@@ -2135,7 +1378,6 @@ def _db_sql2019_execute_query_internal(
         instance=instance,
         database_name=database_name,
         sql=sql,
-        params=params,
         params_json=params_json,
         max_rows=max_rows,
         enforce_readonly=True,
@@ -2145,97 +1387,7 @@ def _db_sql2019_execute_query_internal(
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
 
-@mcp.tool(name="db_01_execute_query", description="Execute a read-only SQL query for instance 1.")
-def db_01_execute_query(
-    database_name: str | None = None,
-    sql: str | None = None,
-    params_json: str | None = None,
-    max_rows: int | None = None,
-    prompt_context: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_execute_query_internal(
-        instance=1,
-        database_name=database_name,
-        sql=sql,
-        params_json=params_json,
-        max_rows=max_rows,
-        prompt_context=prompt_context,
-        page=page,
-        page_size=page_size,
-    )
-
-@mcp.tool(name="db_02_execute_query", description="Execute a read-only SQL query for instance 2.")
-def db_02_execute_query(
-    database_name: str | None = None,
-    sql: str | None = None,
-    params_json: str | None = None,
-    max_rows: int | None = None,
-    prompt_context: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_execute_query_internal(
-        instance=2,
-        database_name=database_name,
-        sql=sql,
-        params_json=params_json,
-        max_rows=max_rows,
-        prompt_context=prompt_context,
-        page=page,
-        page_size=page_size,
-    )
-
-
-@mcp.tool(name="db_01_run_query", description="Execute SQL query (read-only) for instance 1.")
-def db_01_run_query(
-    database_name: str | None = None,
-    sql: str | None = None,
-    params_json: str | None = None,
-    max_rows: int | None = None,
-    prompt_context: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    # The function signature was updated to align with db_sql2019_execute_query's new signature.
-    # For backward compatibility with legacy arg1/arg2 usage, we map to database_name and sql.
-    return _db_sql2019_run_query_internal(
-        instance=1,
-        arg1=database_name,
-        arg2=sql,
-        params_json=params_json,
-        max_rows=max_rows,
-        prompt_context=prompt_context,
-        page=page,
-        page_size=page_size,
-    )
-
-@mcp.tool(name="db_02_run_query", description="Execute SQL query (read-only) for instance 2.")
-def db_02_run_query(
-    database_name: str | None = None,
-    sql: str | None = None,
-    params_json: str | None = None,
-    max_rows: int | None = None,
-    prompt_context: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    # The function signature was updated to align with db_sql2019_execute_query's new signature.
-    # For backward compatibility with legacy arg1/arg2 usage, we map to database_name and sql.
-    return _db_sql2019_run_query_internal(
-        instance=2,
-        arg1=database_name,
-        arg2=sql,
-        params_json=params_json,
-        max_rows=max_rows,
-        prompt_context=prompt_context,
-        page=page,
-        page_size=page_size,
-    )
-
-
-def _db_sql2019_run_query_internal(
+def db_sql2019_run_query(
     instance: int = 1,
     arg1: str | None = None,
     arg2: str | None = None,
@@ -2269,54 +1421,7 @@ def _db_sql2019_run_query_internal(
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
 
-@mcp.tool(name="db_01_list_objects", description="List objects (tables, views, etc.) for instance 1.")
-def db_01_list_objects(
-    database_name: str | None = None,
-    object_type: str = "TABLE",
-    object_name: str | None = None,
-    schema: str | None = None,
-    order_by: str | None = None,
-    limit: int = 50,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_list_objects_internal(
-        instance=1,
-        database_name=database_name,
-        object_type=object_type,
-        object_name=object_name,
-        schema=schema,
-        order_by=order_by,
-        limit=limit,
-        page=page,
-        page_size=page_size,
-    )
-
-@mcp.tool(name="db_02_list_objects", description="List objects (tables, views, etc.) for instance 2.")
-def db_02_list_objects(
-    database_name: str | None = None,
-    object_type: str = "TABLE",
-    object_name: str | None = None,
-    schema: str | None = None,
-    order_by: str | None = None,
-    limit: int = 50,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_list_objects_internal(
-        instance=2,
-        database_name=database_name,
-        object_type=object_type,
-        object_name=object_name,
-        schema=schema,
-        order_by=order_by,
-        limit=limit,
-        page=page,
-        page_size=page_size,
-    )
-
-
-def _db_sql2019_list_objects_internal(
+def db_sql2019_list_objects(
     instance: int = 1,
     database_name: str | None = None,
     object_type: str = "TABLE",
@@ -2332,7 +1437,6 @@ def _db_sql2019_list_objects_internal(
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
-    recommendations: list[dict[str, Any]] = []
     try:
         cur = conn.cursor()
         object_type_norm = object_type.strip().upper()
@@ -2607,7 +1711,7 @@ def _get_index_fragmentation_data(
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
-        sql = f"""
+        sql = """
         SELECT TOP (?)
             s.name AS schema_name,
             t.name AS table_name,
@@ -2615,11 +1719,11 @@ def _get_index_fragmentation_data(
             ips.avg_fragmentation_in_percent,
             ips.page_count,
             i.type_desc AS index_type
-        FROM sys.dm_db_index_physical_stats(DB_ID('{db_name}'), NULL, NULL, NULL, 'SAMPLED') ips
-        JOIN [{db_name}].sys.indexes i
+        FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'SAMPLED') ips
+        JOIN sys.indexes i
             ON ips.object_id = i.object_id AND ips.index_id = i.index_id
-        JOIN [{db_name}].sys.tables t ON i.object_id = t.object_id
-        JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
+        JOIN sys.tables t ON i.object_id = t.object_id
+        JOIN sys.schemas s ON t.schema_id = s.schema_id
         WHERE i.name IS NOT NULL
           AND ips.page_count >= ?
           AND ips.avg_fragmentation_in_percent >= ?
@@ -2695,11 +1799,11 @@ def db_sql2019_analyze_index_health(
     return _paginate_tool_result(result, page=page, page_size=page_size)
 
 
-def _db_sql2019_analyze_table_health_internal(
-    database_name: str,
-    table_name: str,
+def db_sql2019_analyze_table_health(
     instance: int = 1,
+    database_name: str | None = None,
     schema: str | None = None,
+    table_name: str | None = None,
     view: Literal["summary", "standard", "full"] = "standard",
     fields: str | None = None,
     token_budget: int | None = None,
@@ -2707,22 +1811,19 @@ def _db_sql2019_analyze_table_health_internal(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Table-level storage/index/stats/constraint analysis."""
-    if not table_name:
-        raise ValueError("table_name is required")
-    if not schema:
-        schema = "dbo"  # Default to dbo schema if not provided
+    if not schema or not table_name:
+        raise ValueError("schema and table_name are required")
     validate_instance(instance)
     _enforce_table_scope_for_ident(schema, table_name)
-    db_name = _normalize_db_name(database_name) if database_name else get_instance_config(instance)["db_name"]
+    db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
-    recommendations: list[dict[str, Any]] = []
     try:
         cur = conn.cursor()
         # Table info
         _execute_safe(
             cur,
-            f"""
+            """
             SELECT
                 t.name AS TableName,
                 s.name AS SchemaName,
@@ -2730,11 +1831,11 @@ def _db_sql2019_analyze_table_health_internal(
                 SUM(a.total_pages) * 8 AS TotalSpaceKB,
                 SUM(a.used_pages) * 8 AS UsedSpaceKB,
                 (SUM(a.total_pages) - SUM(a.used_pages)) * 8 AS UnusedSpaceKB
-            FROM [{db_name}].sys.tables t
-            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
-            JOIN [{db_name}].sys.indexes i ON t.object_id = i.object_id
-            JOIN [{db_name}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-            JOIN [{db_name}].sys.allocation_units a ON p.partition_id = a.container_id
+            FROM sys.tables t
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            JOIN sys.indexes i ON t.object_id = i.object_id
+            JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+            JOIN sys.allocation_units a ON p.partition_id = a.container_id
             WHERE s.name = ? AND t.name = ?
             GROUP BY t.name, s.name
             """,
@@ -2746,9 +1847,9 @@ def _db_sql2019_analyze_table_health_internal(
         # Column metadata
         _execute_safe(
             cur,
-            f"""
+            """
             SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, COLUMN_DEFAULT, NUMERIC_PRECISION, NUMERIC_SCALE
-            FROM [{db_name}].INFORMATION_SCHEMA.COLUMNS
+            FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
             ORDER BY ORDINAL_POSITION
             """,
@@ -2759,15 +1860,15 @@ def _db_sql2019_analyze_table_health_internal(
         # Indexes
         _execute_safe(
             cur,
-            f"""
+            """
             SELECT i.name AS IndexName, i.type_desc AS IndexType,
                    CAST(SUM(a.used_pages) * 8.0 / 1024 AS DECIMAL(18, 4)) AS IndexSizeMB,
                    i.is_disabled
-            FROM [{db_name}].sys.indexes i
-            JOIN [{db_name}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-            JOIN [{db_name}].sys.allocation_units a ON p.partition_id = a.container_id
-            JOIN [{db_name}].sys.tables t ON i.object_id = t.object_id
-            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
+            FROM sys.indexes i
+            JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+            JOIN sys.allocation_units a ON p.partition_id = a.container_id
+            JOIN sys.tables t ON i.object_id = t.object_id
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
             WHERE s.name = ? AND t.name = ? AND i.name IS NOT NULL
             GROUP BY i.name, i.type_desc, i.is_disabled
             ORDER BY IndexSizeMB DESC
@@ -2779,10 +1880,10 @@ def _db_sql2019_analyze_table_health_internal(
         # Constraints (PK, unique, check, default)
         _execute_safe(
             cur,
-            f"""
+            """
             SELECT tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, kcu.COLUMN_NAME
-            FROM [{db_name}].INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-            LEFT JOIN [{db_name}].INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
               ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA AND tc.TABLE_NAME = kcu.TABLE_NAME
             WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ?
             ORDER BY tc.CONSTRAINT_TYPE, tc.CONSTRAINT_NAME
@@ -2794,17 +1895,17 @@ def _db_sql2019_analyze_table_health_internal(
         # Foreign keys
         _execute_safe(
             cur,
-            f"""
+            """
             SELECT
                 fk.name AS FK_Name,
                 OBJECT_NAME(fk.parent_object_id) AS ParentTable,
                 pc.name AS ParentColumn,
                 OBJECT_NAME(fk.referenced_object_id) AS ReferencedTable,
                 rc.name AS ReferencedColumn
-            FROM [{db_name}].sys.foreign_keys fk
-            JOIN [{db_name}].sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-            JOIN [{db_name}].sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
-            JOIN [{db_name}].sys.columns rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
+            FROM sys.foreign_keys fk
+            JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+            JOIN sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
+            JOIN sys.columns rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
             WHERE OBJECT_SCHEMA_NAME(fk.parent_object_id) = ?
               AND OBJECT_NAME(fk.parent_object_id) = ?
             ORDER BY fk.name
@@ -2830,7 +1931,7 @@ def _db_sql2019_analyze_table_health_internal(
         # Statistics sample
         _execute_safe(
             cur,
-            f"""
+            """
             SELECT TOP 25
                 c.name AS ColumnName,
                 st.name AS StatsName,
@@ -2838,12 +1939,12 @@ def _db_sql2019_analyze_table_health_internal(
                 sp.rows,
                 sp.rows_sampled,
                 sp.modification_counter
-            FROM [{db_name}].sys.stats st
-            JOIN [{db_name}].sys.stats_columns sc ON st.object_id = sc.object_id AND st.stats_id = sc.stats_id
-            JOIN [{db_name}].sys.columns c ON sc.object_id = c.object_id AND sc.column_id = c.column_id
-            OUTER APPLY [{db_name}].sys.dm_db_stats_properties(st.object_id, st.stats_id) sp
-            JOIN [{db_name}].sys.tables t ON st.object_id = t.object_id
-            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
+            FROM sys.stats st
+            JOIN sys.stats_columns sc ON st.object_id = sc.object_id AND st.stats_id = sc.stats_id
+            JOIN sys.columns c ON sc.object_id = c.object_id AND sc.column_id = c.column_id
+            OUTER APPLY sys.dm_db_stats_properties(st.object_id, st.stats_id) sp
+            JOIN sys.tables t ON st.object_id = t.object_id
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
             WHERE s.name = ? AND t.name = ?
             ORDER BY st.name
             """,
@@ -2851,142 +1952,20 @@ def _db_sql2019_analyze_table_health_internal(
         )
         statistics_sample = _rows_to_dicts(cur, cur.fetchall())
 
-        # Fragmentation checks
-        # Ensure db_name is always a string for _get_index_fragmentation_data
-        norm_db_name = _normalize_db_name(db_name)
-        fragmentation_data = _get_index_fragmentation_data(
-            instance=instance, database_name=norm_db_name, schema=schema, min_fragmentation=5.0
-        )
-        index_issues: list[dict[str, Any]] = []
-        for frag in fragmentation_data:
-            if frag.get("table_name") == table_name:
-                frag_percent = frag.get("avg_fragmentation_in_percent", 0.0) or 0.0
-                index_name = frag.get("index_name")
-                issue = {
-                    "type": "Index Fragmentation",
-                    "index_name": index_name,
-                    "fragmentation_percent": frag_percent,
-                }
-                if frag_percent > 30.0:
-                    issue["severity"] = "High"
-                    issue["message"] = f"Index '{index_name}' is highly fragmented ({frag_percent:.2f}%) and should be rebuilt."
-                    recommendations.append(
-                        {
-                            "severity": "High",
-                            "recommendation": f"Rebuild index '{index_name}' to improve performance.",
-                            "action": f"ALTER INDEX '{index_name}' ON [{schema}].[{table_name}] REBUILD;",
-                        }
-                    )
-                elif frag_percent > 10.0:
-                    issue["severity"] = "Medium"
-                    issue["message"] = f"Index '{index_name}' is moderately fragmented ({frag_percent:.2f}%). Consider reorganizing."
-                    recommendations.append(
-                        {
-                            "severity": "Medium",
-                            "recommendation": f"Reorganize index '{index_name}' to improve performance.",
-                            "action": f"ALTER INDEX '{index_name}' ON [{schema}].[{table_name}] REORGANIZE;",
-                        }
-                    )
-                index_issues.append(issue)
-
-        # Stale statistics checks
-        for stat in statistics_sample:
-            mod_counter = stat.get("modification_counter", 0) or 0
-            stats_name = stat.get("StatsName")
-            # row_count will be set below for column checks
-            if table_info.get("RowCounts", 0) > 500 and mod_counter > (table_info.get("RowCounts", 0) * 0.1):  # 10% change
-                recommendations.append(
-                    {
-                        "severity": "Medium",
-                        "recommendation": f"Statistics '{stats_name}' are stale (approx. {mod_counter} modifications). Update statistics to improve query performance.",
-                        "action": f"UPDATE STATISTICS [{schema}].[{table_name}] ('{stats_name}');",
-                    }
-                )
-
-        # Unused index checks
-        _execute_safe(
-            cur,
-            f"""
-            SELECT i.name AS index_name, us.user_seeks, us.user_scans, us.user_lookups, us.user_updates
-            FROM [{db_name}].sys.indexes i
-            LEFT JOIN [{db_name}].sys.dm_db_index_usage_stats us
-              ON us.database_id = DB_ID('{db_name}') AND us.object_id = i.object_id AND us.index_id = i.index_id
-            WHERE i.object_id = OBJECT_ID(?)
-              AND i.type_desc != 'HEAP'
-            """,
-            [f"[{db_name}].[{schema}].[{table_name}]"]
-        )
-        index_usage = _rows_to_dicts(cur, cur.fetchall())
-        for usage in index_usage:
-            if (usage.get("user_seeks", 0) or 0) == 0 and (usage.get("user_scans", 0) or 0) == 0 and (usage.get("user_lookups", 0) or 0) == 0:
-                index_name = usage.get("index_name")
-                user_updates = usage.get("user_updates", 0) or 0
-                recommendations.append(
-                    {
-                        "severity": "Low",
-                        "recommendation": f"Index '{index_name}' is not being used for reads but is being maintained ({user_updates} updates). Consider dropping this index.",
-                        "action": f"DROP INDEX '{index_name}' ON [{schema}].[{table_name}];",
-                    }
-                )
-
-        # Column cardinality and data type checks
-        row_count = table_info.get("RowCounts", 0)
-        for col in columns:
-            # High cardinality, not indexed
-            _execute_safe(cur, f"SELECT COUNT(DISTINCT {_quoted_ident(col['COLUMN_NAME'])}) FROM [{db_name}].[{schema}].[{table_name}]")
-            row = cur.fetchone()
-            distinct_count = row[0] if row is not None else 0
-            if row_count > 0 and (distinct_count / row_count) > 0.8:
-                # Check if part of any index
-                _execute_safe(cur, f"""
-                    SELECT COUNT(*)
-                    FROM [{db_name}].sys.index_columns ic
-                    JOIN [{db_name}].sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-                    WHERE ic.object_id = OBJECT_ID(?)
-                      AND c.name = ?
-                """, [f"[{db_name}].[{schema}].[{table_name}]", col['COLUMN_NAME']])
-                row2 = cur.fetchone()
-                in_index_count = row2[0] if row2 is not None else 0
-                if in_index_count == 0:
-                    recommendations.append(
-                        {
-                            "severity": "Medium",
-                            "recommendation": f"Column '{col['COLUMN_NAME']}' has high cardinality and is not indexed. Consider creating an index to improve performance.",
-                            "action": f"CREATE INDEX IX_{table_name}_{col['COLUMN_NAME']} ON [{schema}].[{table_name}] ('{col['COLUMN_NAME']}');",
-                        }
-                    )
-
-            # Data type checks
-            if col.get("DATA_TYPE", "").upper() in ("NVARCHAR", "VARCHAR") and (col.get("CHARACTER_MAXIMUM_LENGTH") is not None and col["CHARACTER_MAXIMUM_LENGTH"] > 255):
-                recommendations.append({
-                    "severity": "Low",
-                    "recommendation": f"Column '{col['COLUMN_NAME']}' is wide ({col['CHARACTER_MAXIMUM_LENGTH']} chars). Consider if max length can be reduced for performance."
-                })
-            if col.get("DATA_TYPE", "").upper() == "INT" and col.get("IS_NULLABLE", "NO") == "NO":
-                _execute_safe(cur, f"SELECT MAX([{col['COLUMN_NAME']}]) FROM [{db_name}].[{schema}].[{table_name}]")
-                max_val_row = cur.fetchone()
-                if max_val_row and max_val_row[0] is not None:
-                    max_val = max_val_row[0]
-                    if max_val < 32767:
-                        recommendations.append({
-                            "severity": "Info",
-                            "recommendation": f"Column '{col['COLUMN_NAME']}' is INT but max value is {max_val}. Consider using SMALLINT to save space."
-                        })
-
         # FK index checks
         _execute_safe(
             cur,
-            f"""
+            """
             SELECT
                 fk.name AS fk_name,
                 pc.name AS column_name,
                 CASE WHEN ix.index_id IS NULL THEN 1 ELSE 0 END AS missing_index
-            FROM [{db_name}].sys.foreign_keys fk
-            JOIN [{db_name}].sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
-            JOIN [{db_name}].sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
-            LEFT JOIN [{db_name}].sys.index_columns ic
+            FROM sys.foreign_keys fk
+            JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+            JOIN sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
+            LEFT JOIN sys.index_columns ic
               ON ic.object_id = fkc.parent_object_id AND ic.column_id = fkc.parent_column_id AND ic.key_ordinal = 1
-            LEFT JOIN [{db_name}].sys.indexes ix
+            LEFT JOIN sys.indexes ix
               ON ix.object_id = ic.object_id AND ix.index_id = ic.index_id
             WHERE OBJECT_SCHEMA_NAME(fk.parent_object_id) = ?
               AND OBJECT_NAME(fk.parent_object_id) = ?
@@ -2996,6 +1975,7 @@ def _db_sql2019_analyze_table_health_internal(
         fk_index_checks = _rows_to_dicts(cur, cur.fetchall())
 
         constraint_issues: list[dict[str, Any]] = []
+        recommendations: list[dict[str, Any]] = []
         for fk in fk_index_checks:
             if fk.get("missing_index") == 1:
                 fk_name = fk.get("fk_name")
@@ -3015,146 +1995,6 @@ def _db_sql2019_analyze_table_health_internal(
                         "recommendation": f"Create index on '{column_name}' to support foreign key '{fk_name}'.",
                     }
                 )
-
-        # Missing index checks
-        _execute_safe(
-            cur,
-            f"""
-            SELECT
-                mig.index_group_handle,
-                mid.object_id,
-                mid.database_id,
-                mid.equality_columns,
-                mid.inequality_columns,
-                mid.included_columns,
-                migs.unique_compiles,
-                migs.user_seeks,
-                migs.user_scans,
-                migs.last_user_seek,
-                migs.avg_total_user_cost,
-                migs.avg_user_impact
-            FROM [{db_name}].sys.dm_db_missing_index_groups mig
-            INNER JOIN [{db_name}].sys.dm_db_missing_index_details mid ON mig.index_handle = mid.index_handle
-            INNER JOIN [{db_name}].sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
-            WHERE mid.object_id = OBJECT_ID(N'[{db_name}].[{schema}].[{table_name}]')
-            ORDER BY migs.avg_total_user_cost * migs.avg_user_impact DESC;
-            """,
-        )
-        missing_indexes = _rows_to_dicts(cur, cur.fetchall())
-
-        for mi in missing_indexes:
-            columns_str = ""
-            if mi["equality_columns"]:
-                columns_str += mi["equality_columns"]
-            if mi["inequality_columns"]:
-                if columns_str:
-                    columns_str += ", "
-                columns_str += mi["inequality_columns"]
-            
-            include_str = ""
-            if mi["included_columns"]:
-                include_str = f" INCLUDE ({mi['included_columns']})"
-
-            if columns_str:
-                recommendations.append({
-                    "severity": "High",
-                    "recommendation": (
-                        f"Consider creating a missing index on columns ({columns_str}){include_str} "
-                        f"for an estimated impact of {mi['avg_user_impact']:.2f}."
-                    ),
-                    "action": f"CREATE INDEX IX_Missing_{table_name}_{mi['index_group_handle']} "
-                              f"ON [{schema}].[{table_name}] ({columns_str}){include_str};"
-                })
-
-        # Redundant index checks
-        _execute_safe(
-            cur,
-            f"""
-            SELECT
-                RedundantIndex.name AS RedundantIndexName,
-                CoveringIndex.name AS CoveringIndexName
-            FROM
-                [{db_name}].sys.indexes AS RedundantIndex
-            INNER JOIN
-                [{db_name}].sys.tables AS t ON RedundantIndex.object_id = t.object_id
-            INNER JOIN
-                [{db_name}].sys.schemas AS s ON t.schema_id = s.schema_id
-            INNER JOIN
-                [{db_name}].sys.indexes AS CoveringIndex ON RedundantIndex.object_id = CoveringIndex.object_id
-            WHERE
-                t.object_id = OBJECT_ID(N'[{db_name}].[{schema}].[{table_name}]')
-                AND RedundantIndex.index_id > 1 -- Only non-clustered indexes
-                AND CoveringIndex.index_id > 0 -- Clustered or non-clustered
-                AND RedundantIndex.index_id <> CoveringIndex.index_id
-                AND s.name = ?
-                AND t.name = ?
-                -- Check if RedundantIndex's key columns are a leading subset of CoveringIndex's key columns
-                AND NOT EXISTS (
-                    -- Check if there is any key column in RedundantIndex that is NOT a matching leading key column in CoveringIndex
-                    SELECT 1
-                    FROM [{db_name}].sys.index_columns AS ric
-                    WHERE
-                        ric.object_id = RedundantIndex.object_id
-                        AND ric.index_id = RedundantIndex.index_id
-                        AND ric.is_included_column = 0 -- Only key columns
-                        AND NOT EXISTS (
-                            SELECT 1
-                            FROM [{db_name}].sys.index_columns AS cic
-                            WHERE
-                                cic.object_id = CoveringIndex.object_id
-                                AND cic.index_id = CoveringIndex.index_id
-                                AND cic.is_included_column = 0 -- Only key columns
-                                AND cic.column_id = ric.column_id
-                                AND cic.key_ordinal = ric.key_ordinal
-                        )
-                )
-                -- Additionally, ensure that the number of key columns in RedundantIndex is less than or equal to CoveringIndex
-                AND (
-                    SELECT COUNT(*)
-                    FROM [{db_name}].sys.index_columns AS ric
-                    WHERE
-                        ric.object_id = RedundantIndex.object_id
-                        AND ric.index_id = RedundantIndex.index_id
-                        AND ric.is_included_column = 0
-                ) <= (
-                    SELECT COUNT(*)
-                    FROM [{db_name}].sys.index_columns AS cic
-                    WHERE
-                        cic.object_id = CoveringIndex.object_id
-                        AND cic.index_id = CoveringIndex.index_id
-                        AND cic.is_included_column = 0
-                )
-                -- Check if all included columns of RedundantIndex are also included in CoveringIndex (either as key or included)
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM
-                        [{db_name}].sys.index_columns AS ic_redundant_included
-                    WHERE
-                        ic_redundant_included.object_id = RedundantIndex.object_id
-                        AND ic_redundant_included.index_id = RedundantIndex.index_id
-                        AND ic_redundant_included.is_included_column = 1
-                        AND NOT EXISTS (
-                            SELECT 1
-                            FROM
-                                [{db_name}].sys.index_columns AS ic_covering_all
-                            WHERE
-                                ic_covering_all.object_id = CoveringIndex.object_id
-                                AND ic_covering_all.index_id = CoveringIndex.index_id
-                                AND ic_covering_all.column_id = ic_redundant_included.column_id
-                                AND (ic_covering_all.is_included_column = 1 OR ic_covering_all.key_ordinal > 0)
-                        )
-                )
-            ;""",
-            [schema, table_name],
-        )
-        redundant_indexes = _rows_to_dicts(cur, cur.fetchall())
-
-        for ri in redundant_indexes:
-            recommendations.append({
-                "severity": "Medium",
-                "recommendation": f"Index '{ri["RedundantIndexName"]}' might be redundant as its columns are covered by index '{ri["CoveringIndexName"]}'. Consider dropping '{ri["RedundantIndexName"]}'.",
-                "action": f"DROP INDEX [{ri["RedundantIndexName"]}] ON [{schema}].[{table_name}];"
-            })
 
         # Additional tuning recommendations (datatype, wide columns, etc.)
         for col in columns:
@@ -3179,7 +2019,7 @@ def _db_sql2019_analyze_table_health_internal(
             "statistics_sample": statistics_sample,
             "health_analysis": {
                 "constraint_issues": constraint_issues,
-                "index_issues": index_issues,
+                "index_issues": [],
             },
             "recommendations": recommendations,
         }
@@ -3191,54 +2031,7 @@ def _db_sql2019_analyze_table_health_internal(
         conn.close()
 
 
-@mcp.tool(name="db_01_sql2019_analyze_table_health", description="Table-level storage/index/stats/constraint analysis for instance 1.")
-def db_01_sql2019_analyze_table_health(
-    database_name: str,
-    table_name: str,
-    schema: str | None = None,
-    view: Literal["summary", "standard", "full"] = "standard",
-    fields: str | None = None,
-    token_budget: int | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_analyze_table_health_internal(
-        database_name=database_name,
-        table_name=table_name,
-        instance=1,
-        schema=schema,
-        view=view,
-        fields=fields,
-        token_budget=token_budget,
-        page=page,
-        page_size=page_size,
-    )
-
-@mcp.tool(name="db_02_sql2019_analyze_table_health", description="Table-level storage/index/stats/constraint analysis for instance 2.")
-def db_02_sql2019_analyze_table_health(
-    database_name: str,
-    table_name: str,
-    schema: str | None = None,
-    view: Literal["summary", "standard", "full"] = "standard",
-    fields: str | None = None,
-    token_budget: int | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_analyze_table_health_internal(
-        database_name=database_name,
-        table_name=table_name,
-        instance=2,
-        schema=schema,
-        view=view,
-        fields=fields,
-        token_budget=token_budget,
-        page=page,
-        page_size=page_size,
-    )
-
-
-def _db_sql2019_db_stats_internal(instance: int = 1, database: str | None = None) -> dict[str, Any]:
+def db_sql2019_db_stats(instance: int = 1, database: str | None = None) -> dict[str, Any]:
     """Database object counts."""
     validate_instance(instance)
     db_name = database or get_instance_config(instance)["db_name"]
@@ -3248,14 +2041,14 @@ def _db_sql2019_db_stats_internal(instance: int = 1, database: str | None = None
         cur = conn.cursor()
         _execute_safe(
             cur,
-            f"""
+            """
             SELECT
                 DB_NAME() AS DatabaseName,
-                (SELECT COUNT(*) FROM [{db_name}].sys.tables) AS TableCount,
-                (SELECT COUNT(*) FROM [{db_name}].sys.views) AS ViewCount,
-                (SELECT COUNT(*) FROM [{db_name}].sys.procedures) AS ProcedureCount,
-                (SELECT COUNT(*) FROM [{db_name}].sys.indexes WHERE name IS NOT NULL) AS IndexCount,
-                (SELECT COUNT(*) FROM [{db_name}].sys.schemas) AS SchemaCount
+                (SELECT COUNT(*) FROM sys.tables) AS TableCount,
+                (SELECT COUNT(*) FROM sys.views) AS ViewCount,
+                (SELECT COUNT(*) FROM sys.procedures) AS ProcedureCount,
+                (SELECT COUNT(*) FROM sys.indexes WHERE name IS NOT NULL) AS IndexCount,
+                (SELECT COUNT(*) FROM sys.schemas) AS SchemaCount
             """,
         )
         row = cur.fetchone()
@@ -3273,26 +2066,7 @@ def _db_sql2019_db_stats_internal(instance: int = 1, database: str | None = None
         conn.close()
 
 
-@mcp.tool(name="db_01_db_stats", description="Database object counts for instance 1.")
-def db_01_db_stats(
-    database: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_db_stats_internal(
-        instance=1,
-        database=database,
-    )
-
-@mcp.tool(name="db_02_db_stats", description="Database object counts for instance 2.")
-def db_02_db_stats(
-    database: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_db_stats_internal(
-        instance=2,
-        database=database,
-    )
-
-
-def _db_sql2019_server_info_mcp_internal(
+def db_sql2019_server_info_mcp(
     instance: int = 1,
     server: Any = None,
     headers: dict[str, str] | None = None,
@@ -3335,29 +2109,6 @@ def _db_sql2019_server_info_mcp_internal(
         }
     finally:
         conn.close()
-
-
-@mcp.tool(name="db_01_server_info", description="Get SQL Server and MCP runtime information for instance 1.")
-def db_01_server_info(
-    server: Any = None,
-    headers: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_server_info_mcp_internal(
-        instance=1,
-        server=server,
-        headers=headers,
-    )
-
-@mcp.tool(name="db_02_server_info", description="Get SQL Server and MCP runtime information for instance 2.")
-def db_02_server_info(
-    server: Any = None,
-    headers: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_server_info_mcp_internal(
-        instance=2,
-        server=server,
-        headers=headers,
-    )
 
 
 def _fetch_relationships(cur: pyodbc.Cursor, database: str) -> list[dict[str, Any]]:
@@ -3483,8 +2234,8 @@ def _analyze_logical_data_model_internal(
             cur,
             f"""
             SELECT s.name AS schema_name, t.name AS table_name
-            FROM [{db_name}].sys.tables t
-            JOIN [{db_name}].sys.schemas s ON t.schema_id = s.schema_id
+            FROM sys.tables t
+            JOIN sys.schemas s ON t.schema_id = s.schema_id
             {where_sql}
             """,
             params,
@@ -3495,9 +2246,9 @@ def _analyze_logical_data_model_internal(
         for t_schema, t_name in tables:
              _execute_safe(
                  cur,
-                 f"""
+                 """
                  SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-                 FROM [{db_name}].INFORMATION_SCHEMA.COLUMNS
+                 FROM INFORMATION_SCHEMA.COLUMNS
                  WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
                  """,
                  [t_schema, t_name],
@@ -3527,7 +2278,7 @@ def _analyze_logical_data_model_internal(
         conn.close()
 
 
-def _db_sql2019_show_top_queries_internal(
+def db_sql2019_show_top_queries(
     instance: int = 1,
     database_name: str | None = None,
     metric: Literal["cpu", "io", "execution_count", "duration"] = "cpu",
@@ -3545,7 +2296,7 @@ def _db_sql2019_show_top_queries_internal(
         cur = conn.cursor()
         
         # Check if Query Store is enabled
-        _execute_safe(cur, f"SELECT actual_state_desc FROM [{db_name}].sys.database_query_store_options")
+        _execute_safe(cur, "SELECT actual_state_desc FROM sys.database_query_store_options")
         qs_row = cur.fetchone()
         qs_enabled = qs_row[0] != "OFF" if qs_row else False
         
@@ -3565,11 +2316,11 @@ def _db_sql2019_show_top_queries_internal(
                 qt.query_sql_text,
                 rs.{sort_col} AS metric_value,
                 rs.count_executions,
-                CAST(rs.last_execution_time AS DATETIME2) AS last_execution_time
-            FROM [{db_name}].sys.query_store_query q
-            JOIN [{db_name}].sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN [{db_name}].sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN [{db_name}].sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+                rs.last_execution_time
+            FROM sys.query_store_query q
+            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+            JOIN sys.query_store_plan p ON q.query_id = p.query_id
+            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
             ORDER BY rs.{sort_col} DESC
             """
             _execute_safe(cur, sql, [limit])
@@ -3589,9 +2340,9 @@ def _db_sql2019_show_top_queries_internal(
                 st.text AS query_sql_text,
                 {sort_col} AS metric_value,
                 count.execution_count,
-                CAST(count.last_execution_time AS DATETIME2) AS last_execution_time
-            FROM [{db_name}].sys.dm_exec_query_stats count
-            CROSS APPLY [{db_name}].sys.dm_exec_sql_text(count.sql_handle) st
+                count.last_execution_time
+            FROM sys.dm_exec_query_stats count
+            CROSS APPLY sys.dm_exec_sql_text(count.sql_handle) st
             ORDER BY metric_value DESC
             """
             _execute_safe(cur, sql, [limit])
@@ -3609,83 +2360,7 @@ def _db_sql2019_show_top_queries_internal(
         conn.close()
 
 
-@mcp.tool(name="db_01_show_top_queries", description="Performance analysis using Query Store or dm_exec_query_stats for instance 1.")
-def db_01_show_top_queries(
-    database_name: str | None = None,
-    metric: Literal["cpu", "io", "execution_count", "duration"] = "cpu",
-    limit: int = 10,
-    view: Literal["summary", "standard", "full"] = "standard",
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_show_top_queries_internal(
-        instance=1,
-        database_name=database_name,
-        metric=metric,
-        limit=limit,
-        view=view,
-        page=page,
-        page_size=page_size,
-    )
-
-@mcp.tool(name="db_02_show_top_queries", description="Performance analysis using Query Store or dm_exec_query_stats for instance 2.")
-def db_02_show_top_queries(
-    database_name: str | None = None,
-    metric: Literal["cpu", "io", "execution_count", "duration"] = "cpu",
-    limit: int = 10,
-    view: Literal["summary", "standard", "full"] = "standard",
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_show_top_queries_internal(
-        instance=2,
-        database_name=database_name,
-        metric=metric,
-        limit=limit,
-        view=view,
-        page=page,
-        page_size=page_size,
-    )
-
-
-
-
-@mcp.tool(name="db_01_check_fragmentation", description="Check fragmentation for a specific table or all tables in a schema for instance 1.")
-def db_01_check_fragmentation(
-    database_name: str | None = None,
-    schema_name: str | None = None,
-    table_name: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_check_fragmentation_internal(
-        instance=1,
-        database_name=database_name,
-        schema_name=schema_name,
-        table_name=table_name,
-        page=page,
-        page_size=page_size,
-    )
-
-@mcp.tool(name="db_02_check_fragmentation", description="Check fragmentation for a specific table or all tables in a schema for instance 2.")
-def db_02_check_fragmentation(
-    database_name: str | None = None,
-    schema_name: str | None = None,
-    table_name: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_check_fragmentation_internal(
-        instance=2,
-        database_name=database_name,
-        schema_name=schema_name,
-        table_name=table_name,
-        page=page,
-        page_size=page_size,
-    )
-
-
-def _db_sql2019_check_fragmentation_internal(
+def db_sql2019_check_fragmentation(
     instance: int = 1,
     database_name: str | None = None,
     schema_name: str | None = None,
@@ -3704,33 +2379,7 @@ def _db_sql2019_check_fragmentation_internal(
     return _paginate_tool_result(items, page=page, page_size=page_size)
 
 
-@mcp.tool(name="db_01_db_sec_perf_metrics", description="Database security and basic performance metrics for instance 1.")
-def db_01_db_sec_perf_metrics(
-    database_name: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_db_sec_perf_metrics_internal(
-        instance=1,
-        database_name=database_name,
-        page=page,
-        page_size=page_size,
-    )
-
-@mcp.tool(name="db_02_db_sec_perf_metrics", description="Database security and basic performance metrics for instance 2.")
-def db_02_db_sec_perf_metrics(
-    database_name: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_db_sec_perf_metrics_internal(
-        instance=2,
-        database_name=database_name,
-        page=page,
-        page_size=page_size,
-    )
-
-def _db_sql2019_db_sec_perf_metrics_internal(
+def db_sql2019_db_sec_perf_metrics(
     instance: int = 1,
     database_name: str | None = None,
     page: int = 1,
@@ -3746,17 +2395,17 @@ def _db_sql2019_db_sec_perf_metrics_internal(
         
         metrics = {}
         # User count
-        _execute_safe(cur, f"SELECT COUNT(*) FROM [{db_name}].sys.database_principals WHERE type IN ('S', 'U', 'G')")
+        _execute_safe(cur, "SELECT COUNT(*) FROM sys.database_principals WHERE type IN ('S', 'U', 'G')")
         user_count_row = cur.fetchone()
         metrics["user_count"] = user_count_row[0] if user_count_row else 0
         
         # Open transactions
-        _execute_safe(cur, f"SELECT COUNT(*) FROM [{db_name}].sys.dm_tran_database_transactions WHERE database_id = DB_ID('{db_name}')")
+        _execute_safe(cur, "SELECT COUNT(*) FROM sys.dm_tran_database_transactions WHERE database_id = DB_ID()")
         open_tx_row = cur.fetchone()
         metrics["open_transactions"] = open_tx_row[0] if open_tx_row else 0
         
         # Data file size
-        _execute_safe(cur, f"SELECT SUM(size) * 8 / 1024 FROM [{db_name}].sys.database_files WHERE type = 0")
+        _execute_safe(cur, "SELECT SUM(size) * 8 / 1024 FROM sys.database_files WHERE type = 0")
         data_size_row = cur.fetchone()
         metrics["data_size_mb"] = data_size_row[0] if data_size_row else 0
         
@@ -3765,29 +2414,7 @@ def _db_sql2019_db_sec_perf_metrics_internal(
         conn.close()
 
 
-@mcp.tool(name="db_01_explain_query", description="Execution plan analysis (SHOWPLAN_ALL) for instance 1.")
-def db_01_explain_query(
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_explain_query_internal(
-        instance=1,
-        database_name=database_name,
-        sql=sql,
-    )
-
-@mcp.tool(name="db_02_explain_query", description="Execution plan analysis (SHOWPLAN_ALL) for instance 2.")
-def db_02_explain_query(
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_explain_query_internal(
-        instance=2,
-        database_name=database_name,
-        sql=sql,
-    )
-
-def _db_sql2019_explain_query_internal(
+def db_sql2019_explain_query(
     instance: int = 1,
     database_name: str | None = None,
     sql: str | None = None,
@@ -3816,41 +2443,7 @@ def _db_sql2019_explain_query_internal(
         conn.close()
 
 
-@mcp.tool(name="db_01_analyze_logical_data_model", description="Analyze database schema for logical data modeling issues for instance 1.")
-def db_01_analyze_logical_data_model(
-    database_name: str | None = None,
-    schema: str | None = None,
-    view: Literal["summary", "standard", "full"] = "standard",
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_analyze_logical_data_model_internal(
-        instance=1,
-        database_name=database_name,
-        schema=schema,
-        view=view,
-        page=page,
-        page_size=page_size,
-    )
-
-@mcp.tool(name="db_02_analyze_logical_data_model", description="Analyze database schema for logical data modeling issues for instance 2.")
-def db_02_analyze_logical_data_model(
-    database_name: str | None = None,
-    schema: str | None = None,
-    view: Literal["summary", "standard", "full"] = "standard",
-    page: int = 1,
-    page_size: int = DEFAULT_TOOL_PAGE_SIZE,
-) -> dict[str, Any]:
-    return _db_sql2019_analyze_logical_data_model_internal(
-        instance=2,
-        database_name=database_name,
-        schema=schema,
-        view=view,
-        page=page,
-        page_size=page_size,
-    )
-
-def _db_sql2019_analyze_logical_data_model_internal(
+def db_sql2019_analyze_logical_data_model(
     instance: int = 1,
     database_name: str | None = None,
     schema: str | None = None,
@@ -3864,71 +2457,18 @@ def _db_sql2019_analyze_logical_data_model_internal(
     return _paginate_tool_result(shaped, page=page, page_size=page_size)
 
 
-@mcp.tool(name="db_01_open_logical_model", description="Returns an HTML visualization of the logical data model for instance 1.")
-def db_01_open_logical_model(
-    database_name: str | None = None,
-    schema: str | None = None,
-) -> str:
-    return _db_sql2019_open_logical_model_internal(
-        instance=1,
-        database_name=database_name,
-        schema=schema,
-    )
-
-@mcp.tool(name="db_02_open_logical_model", description="Returns an HTML visualization of the logical data model for instance 2.")
-def db_02_open_logical_model(
-    database_name: str | None = None,
-    schema: str | None = None,
-) -> str:
-    return _db_sql2019_open_logical_model_internal(
-        instance=2,
-        database_name=database_name,
-        schema=schema,
-    )
-
-def _db_sql2019_open_logical_model_internal(
+def db_sql2019_open_logical_model(
     instance: int = 1,
     database_name: str | None = None,
     schema: str | None = None,
 ) -> str:
     """Returns an HTML visualization of the logical data model."""
-    _prune_logical_model_reports()
     result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
     html = _render_data_model_html(result, result.get("issues", {}))
-    report_id = str(uuid.uuid4())
-    with _LOGICAL_MODEL_REPORTS_LOCK:
-        _LOGICAL_MODEL_REPORTS[report_id] = (time.time(), html)
-    base_url = _resolve_public_base_url()
-    return f"{base_url}/data-model-analysis?id={report_id}"
+    return html
 
 
-@mcp.tool(name="db_01_generate_ddl", description="Generate T-SQL CREATE TABLE script for instance 1.")
-def db_01_generate_ddl(
-    database_name: str | None = None,
-    schema_name: str = "dbo",
-    table_name: str | None = None,
-) -> str:
-    return _db_sql2019_generate_ddl_internal(
-        instance=1,
-        database_name=database_name,
-        schema_name=schema_name,
-        table_name=table_name,
-    )
-
-@mcp.tool(name="db_02_generate_ddl", description="Generate T-SQL CREATE TABLE script for instance 2.")
-def db_02_generate_ddl(
-    database_name: str | None = None,
-    schema_name: str = "dbo",
-    table_name: str | None = None,
-) -> str:
-    return _db_sql2019_generate_ddl_internal(
-        instance=2,
-        database_name=database_name,
-        schema_name=schema_name,
-        table_name=table_name,
-    )
-
-def _db_sql2019_generate_ddl_internal(
+def db_sql2019_generate_ddl(
     instance: int = 1,
     database_name: str | None = None,
     schema_name: str = "dbo",
@@ -3956,10 +2496,10 @@ def _db_sql2019_generate_ddl_internal(
 
         _execute_safe(
             cur,
-            f"""
+            """
             SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH,
                    NUMERIC_PRECISION, NUMERIC_SCALE, COLUMN_DEFAULT
-            FROM [{db_name}].INFORMATION_SCHEMA.COLUMNS
+            FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
             ORDER BY ORDINAL_POSITION
             """,
@@ -3985,46 +2525,7 @@ def _db_sql2019_generate_ddl_internal(
         conn.close()
 
 
-def db_sql2019_generate_ddl(
-    instance: int = 1,
-    database_name: str | None = None,
-    object_name: str | None = None,
-    object_type: str = "table",
-) -> str:
-    """Backward-compatible wrapper for legacy generate_ddl call signature."""
-    if not object_name:
-        raise ValueError("object_name is required")
-    if object_type.strip().lower() not in {"table", "tables"}:
-        raise ValueError("object_type must be 'table'")
-
-    schema_name, table_name = _parse_schema_qualified_name(object_name)
-    return _db_sql2019_generate_ddl_internal(
-        instance=instance,
-        database_name=database_name,
-        schema_name=schema_name,
-        table_name=table_name,
-    )
-
-
-@mcp.tool(name="db_01_create_db_user", description="Creates a new database user with a specified username for instance 1.")
-def db_01_create_db_user(
-    username: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_create_db_user_internal(
-        instance=1,
-        username=username,
-    )
-
-@mcp.tool(name="db_02_create_db_user", description="Creates a new database user with a specified username for instance 2.")
-def db_02_create_db_user(
-    username: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_create_db_user_internal(
-        instance=2,
-        username=username,
-    )
-
-def _db_sql2019_create_db_user_internal(
+def db_sql2019_create_db_user(
     instance: int = 1,
     username: str | None = None,
     password: str | None = None,
@@ -4046,29 +2547,7 @@ def _db_sql2019_create_db_user_internal(
         conn.close()
 
 
-@mcp.tool(name="db_01_drop_db_user", description="Drops a database user with a specified username for instance 1.")
-def db_01_drop_db_user(
-    username: str | None = None,
-    database_name: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_drop_db_user_internal(
-        instance=1,
-        username=username,
-        database_name=database_name,
-    )
-
-@mcp.tool(name="db_02_drop_db_user", description="Drops a database user with a specified username for instance 2.")
-def db_02_drop_db_user(
-    username: str | None = None,
-    database_name: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_drop_db_user_internal(
-        instance=2,
-        username=username,
-        database_name=database_name,
-    )
-
-def _db_sql2019_drop_db_user_internal(
+def db_sql2019_drop_db_user(
     instance: int = 1,
     username: str | None = None,
     database_name: str | None = None,
@@ -4089,25 +2568,7 @@ def _db_sql2019_drop_db_user_internal(
         conn.close()
 
 
-@mcp.tool(name="db_01_kill_session", description="Kill a database session for instance 1.")
-def db_01_kill_session(
-    session_id: int | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_kill_session_internal(
-        instance=1,
-        session_id=session_id,
-    )
-
-@mcp.tool(name="db_02_kill_session", description="Kill a database session for instance 2.")
-def db_02_kill_session(
-    session_id: int | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_kill_session_internal(
-        instance=2,
-        session_id=session_id,
-    )
-
-def _db_sql2019_kill_session_internal(instance: int = 1, session_id: int | None = None) -> dict[str, Any]:
+def db_sql2019_kill_session(instance: int = 1, session_id: int | None = None) -> dict[str, Any]:
     """Kill a database session."""
     _ensure_write_enabled()
     if session_id is None:
@@ -4122,29 +2583,7 @@ def _db_sql2019_kill_session_internal(instance: int = 1, session_id: int | None 
         conn.close()
 
 
-@mcp.tool(name="db_01_create_object", description="Execute CREATE statement for instance 1.")
-def db_01_create_object(
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_create_object_internal(
-        instance=1,
-        database_name=database_name,
-        sql=sql,
-    )
-
-@mcp.tool(name="db_02_create_object", description="Execute CREATE statement for instance 2.")
-def db_02_create_object(
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_create_object_internal(
-        instance=2,
-        database_name=database_name,
-        sql=sql,
-    )
-
-def _db_sql2019_create_object_internal(
+def db_sql2019_create_object(
     instance: int = 1,
     database_name: str | None = None,
     sql: str | None = None,
@@ -4165,29 +2604,7 @@ def _db_sql2019_create_object_internal(
     return {"status": "success", "database": db_name}
 
 
-@mcp.tool(name="db_01_alter_object", description="Execute ALTER statement for instance 1.")
-def db_01_alter_object(
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_alter_object_internal(
-        instance=1,
-        database_name=database_name,
-        sql=sql,
-    )
-
-@mcp.tool(name="db_02_alter_object", description="Execute ALTER statement for instance 2.")
-def db_02_alter_object(
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_alter_object_internal(
-        instance=2,
-        database_name=database_name,
-        sql=sql,
-    )
-
-def _db_sql2019_alter_object_internal(
+def db_sql2019_alter_object(
     instance: int = 1,
     database_name: str | None = None,
     sql: str | None = None,
@@ -4208,29 +2625,7 @@ def _db_sql2019_alter_object_internal(
     return {"status": "success", "database": db_name}
 
 
-@mcp.tool(name="db_01_drop_object", description="Execute DROP statement for instance 1.")
-def db_01_drop_object(
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_drop_object_internal(
-        instance=1,
-        database_name=database_name,
-        sql=sql,
-    )
-
-@mcp.tool(name="db_02_drop_object", description="Execute DROP statement for instance 2.")
-def db_02_drop_object(
-    database_name: str | None = None,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    return _db_sql2019_drop_object_internal(
-        instance=2,
-        database_name=database_name,
-        sql=sql,
-    )
-
-def _db_sql2019_drop_object_internal(
+def db_sql2019_drop_object(
     instance: int = 1,
     database_name: str | None = None,
     sql: str | None = None,
@@ -4251,132 +2646,57 @@ def _db_sql2019_drop_object_internal(
     return {"status": "success", "database": db_name}
 
 
-
-
-def _register_sql2019_instance_aliases() -> None:
-    """
-    Backward-compatible tool aliases:
-    - db_01_* -> db_01_sql2019_*
-    - db_02_* -> db_02_sql2019_*
-    Also maps server_info -> server_info_mcp to match legacy prompts/docs.
-    """
-    tool_pattern = re.compile(r"^db_(0[12])_([a-z0-9_]+)$")
-
-    for symbol_name, tool_fn in list(globals().items()):
-        if not callable(tool_fn):
-            continue
-
-        match = tool_pattern.match(symbol_name)
-        if not match:
-            continue
-
-        if "_sql2019_" in symbol_name:
-            continue
-
-        instance_id, suffix = match.groups()
-        alias_suffix = "server_info_mcp" if suffix == "server_info" else suffix
-        alias_name = f"db_{instance_id}_sql2019_{alias_suffix}"
-
-        if alias_name in globals():
-            continue
-
-        globals()[alias_name] = tool_fn
-
-        try:
-            mcp.tool(
-                name=alias_name,
-                description=f"Compatibility alias for `{symbol_name}`.",
-            )(tool_fn)
-        except Exception as exc:
-            logger.warning("Failed to register compatibility alias %s: %s", alias_name, exc)
-
-
-_register_sql2019_instance_aliases()
-
-
-def build_mcp_run_config() -> dict[str, Any]:
-    transport = str(getattr(SETTINGS, "transport", "http") or "http").lower()
-    config: dict[str, Any] = {"transport": transport}
-    if transport == "http":
-        config["host"] = getattr(SETTINGS, "host", None)
-        config["port"] = getattr(SETTINGS, "port", None)
-    return config
-
-
-def configure_http_auth(settings: Settings | None = None) -> dict[str, Any]:
-    effective_settings = settings or SETTINGS
-    raw_auth_type = str(getattr(effective_settings, "auth_type", "") or "").strip().lower()
-    auth_type = raw_auth_type or "none"
-
-    supported_auth_types = {"none", "apikey", "oidc", "jwt", "azure-ad", "github", "google"}
-    if auth_type not in supported_auth_types:
-        raise ValueError(
-            f"Unsupported FASTMCP_AUTH_TYPE: {raw_auth_type!r}. "
-            "Supported values: none, apikey, oidc, jwt, azure-ad, github, google."
-        )
-
-    auth_enabled = auth_type != "none"
-    if auth_type == "none":
-        return {
-            "auth_enabled": False,
-            "auth_type": "none",
-            "provider": None,
-            "validation_mode": "disabled",
-            "allow_query_token_auth": False,
-        }
-
-    if auth_type == "apikey":
-        api_key = str(getattr(effective_settings, "api_key", "") or "").strip()
-        if not api_key:
-            raise RuntimeError("FASTMCP_AUTH_TYPE=apikey requires FASTMCP_API_KEY.")
-        return {
-            "auth_enabled": True,
-            "auth_type": "apikey",
-            "provider": "api_key",
-            "validation_mode": "static_token_secure_compare",
-            "allow_query_token_auth": bool(getattr(effective_settings, "allow_query_token_auth", False)),
-        }
-
-    return {
-        "auth_enabled": True,
-        "auth_type": auth_type,
-        "provider": auth_type,
-        "validation_mode": "provider_token_validation",
-        "allow_query_token_auth": bool(getattr(effective_settings, "allow_query_token_auth", False)),
+def _register_dual_instance_tools():
+    """Systematically register all tools for both db_01 and db_02 instances."""
+    tool_map = {
+        "ping": db_sql2019_ping,
+        "list_databases": db_sql2019_list_databases,
+        "list_tables": db_sql2019_list_tables,
+        "get_schema": db_sql2019_get_schema,
+        "execute_query": db_sql2019_execute_query,
+        "run_query": db_sql2019_run_query,
+        "list_objects": db_sql2019_list_objects,
+        "index_fragmentation": db_sql2019_get_index_fragmentation,
+        "index_health": db_sql2019_analyze_index_health,
+        "table_health": db_sql2019_analyze_table_health,
+        "db_stats": db_sql2019_db_stats,
+        "server_info_mcp": db_sql2019_server_info_mcp,
+        "show_top_queries": db_sql2019_show_top_queries,
+        "check_fragmentation": db_sql2019_check_fragmentation,
+        "db_sec_perf_metrics": db_sql2019_db_sec_perf_metrics,
+        "explain_query": db_sql2019_explain_query,
+        "analyze_logical_data_model": db_sql2019_analyze_logical_data_model,
+        "open_logical_model": db_sql2019_open_logical_model,
+        "generate_ddl": db_sql2019_generate_ddl,
+        "create_db_user": db_sql2019_create_db_user,
+        "drop_db_user": db_sql2019_drop_db_user,
+        "kill_session": db_sql2019_kill_session,
+        "create_object": db_sql2019_create_object,
+        "alter_object": db_sql2019_alter_object,
+        "drop_object": db_sql2019_drop_object,
     }
 
+    for instance in [1, 2]:
+        prefix = "db_01_" if instance == 1 else "db_02_"
+        for name, func in tool_map.items():
+            tool_name = f"{prefix}{name}"
+            
+            # Use a closure to capture function and instance correctly
+            def make_wrapper(f, inst):
+                @wraps(f)
+                def wrapper(*args, **kwargs):
+                    # Remove instance from kwargs if it was passed by MCP (it shouldn't be, but just in case)
+                    kwargs.pop("instance", None)
+                    kwargs["instance"] = inst
+                    return f(*args, **kwargs)
+                return wrapper
+            
+            wrapped = make_wrapper(func, instance)
+            mcp.tool(name=tool_name)(wrapped)
 
-def run_server_entrypoint() -> None:
-    run_config = build_mcp_run_config()
-    _apply_provider_transform_layers()
-    _configure_tool_search_transform()
 
-    if run_config.get("transport") == "http":
-        auth_config = configure_http_auth(SETTINGS)
-        _resolve_http_app()
-        logger.info(
-            "HTTP authentication configuration resolved",
-            extra={
-                "auth_enabled": auth_config["auth_enabled"],
-                "auth_type": auth_config["auth_type"],
-                "validation_mode": auth_config["validation_mode"],
-                "allow_query_token_auth": auth_config["allow_query_token_auth"],
-            },
-        )
-
-    mcp.run(**run_config)
+_register_dual_instance_tools()
 
 
 if __name__ == "__main__":
-    run_server_entrypoint()
-
-
-
-
-
-
-
-
-
-
-
+    mcp.run()
