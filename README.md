@@ -119,7 +119,6 @@ For detailed guides on how to use and deploy this MCP server, please refer to:
 - **Multiple Transports**: Supports `sse` (Server-Sent Events) and `stdio`. HTTPS is supported via SSL configuration variables.
 - **Secure Authentication**: Built-in support for **Azure AD (Microsoft Entra ID)** and standard token auth.
 - **HTTPS Support**: Native SSL/TLS support for secure remote connections.
-- **SSH Tunneling**: Built-in support for connecting via SSH bastion hosts.
 - **Python 3.11**: Built on a stable Python runtime for improved compatibility.
 - **Broad Compatibility**: Fully tested with **SQL Server 2019** and **SQL Server 2022**.
 - **Comprehensive Testing**: Full unit, integration, stress, and blackbox test suite with automated Docker provisioning.
@@ -245,39 +244,7 @@ docker run -d \
   harryvaldez/mcp-sql-server:latest
 ```
 
-### Option 2b: Docker with SSH Tunneling
-
-To connect to a database behind a bastion host (e.g., in a private subnet), you can mount your SSH key and configure the tunnel variables. Set `ALLOW_SSH_AGENT=true` to enable SSH agent forwarding if your SSH key is loaded in your SSH agent:
-
-```bash
-docker run -d \
-  --name mcp-sqlserver-ssh \
-  --env-file .env \
-  -v ~/.ssh/id_rsa:/root/.ssh/id_rsa:ro \
-  -e SSH_HOST=bastion.example.com \
-  -e SSH_USER=ec2-user \
-  -e SSH_PKEY="/root/.ssh/id_rsa" \
-
-# Set connection variables
-export DB_01_SERVER=localhost
-export DB_01_USER=sa
-export DB_01_PASSWORD=YourPassword123
-export DB_01_NAME=master
-
-# Run in HTTP Mode (SSE)
-export MCP_TRANSPORT=http
-uv run .
-
-# Run in Write Mode (HTTP)
-export MCP_TRANSPORT=http
-export MCP_ALLOW_WRITE=true
-export MCP_CONFIRM_WRITE=true
-export FASTMCP_AUTH_TYPE=azure-ad # ⚠️ Untested / Not Production Ready
-# ... set auth vars ...
-uv run .
-```
-
-### Option 4: Node.js (npx)
+### Option 3: Node.js (npx)
 
 ```bash
 # Set connection variables
@@ -299,7 +266,7 @@ export FASTMCP_AUTH_TYPE=azure-ad # ⚠️ Untested / Not Production Ready
 npx .
 ```
 
-### Option 5: n8n Integration (AI Agent)
+### Option 4: n8n Integration (AI Agent)
 
 You can use this MCP server as a "Remote Tool" in n8n to empower AI agents with database capabilities.
 
@@ -657,20 +624,6 @@ To enable HTTPS, provide both the certificate and key files.
 |----------|-------------|
 | `MCP_SSL_CERT` | Path to SSL certificate file (`.crt` or `.pem`) |
 | `MCP_SSL_KEY` | Path to SSL private key file (`.key`) |
-
-### SSH Tunneling
-To access a database behind a bastion host, configure the following SSH variables. The server will automatically establish a secure tunnel.
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SSH_HOST` | Bastion/Jump host address | *None* |
-| `SSH_USER` | SSH username | *None* |
-| `SSH_PASSWORD` | SSH password (optional) | *None* |
-| `SSH_PKEY` | Path to private key file (optional) | *None* |
-| `SSH_PORT` | SSH port | `22` |
-| `ALLOW_SSH_AGENT` | Enable SSH agent forwarding (`true`, `1`, `yes`, `on`) | `false` |
-
-> **Note**: When SSH is enabled, the `SQL_SERVER` should point to the database host as seen from the *bastion* (e.g., internal IP or RDS endpoint).
 
 ---
 

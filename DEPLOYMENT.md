@@ -388,7 +388,6 @@ Before deploying to production, ensure:
 - [ ] **Security**: Enabled authentication (FASTMCP_AUTH_TYPE)
 - [ ] **Logging**: Configured log file path and level
 - [ ] **Testing**: Run full test suite and reviewed TEST_REPORT.md
-- [ ] **SSH Tunneling**: Configured if needed for remote access
 - [ ] **Monitoring**: Set up logs collection and alerting
 - [ ] **Backup Plan**: Document rollback procedures
 - [ ] **Access Control**: Restrict MCP server access by IP/network
@@ -404,14 +403,7 @@ Before deploying to production, ensure:
    export FASTMCP_AZURE_AD_CLIENT_ID=your-client-id
    ```
 
-2. **Use SSH Tunnel** (for remote databases):
-   ```bash
-   export SSH_HOST=bastion.example.com
-   export SSH_USER=ec2-user
-   export SSH_PKEY=/path/to/private/key
-   ```
-
-3. **Minimal Read-Only Access**:
+2. **Minimal Read-Only Access**:
    - Deploy with `MCP_ALLOW_WRITE=false` by default
    - Require explicit env var change + container restart to enable writes
    - Audit write operations in logs
