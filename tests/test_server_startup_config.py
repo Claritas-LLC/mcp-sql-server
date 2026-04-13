@@ -239,6 +239,31 @@ def test_configure_tool_search_transform_bm25(monkeypatch):
     fake_mcp.add_transform.assert_called_once_with(fake_transform)
 
 
+def test_configure_tool_transformation_transform_builds_expected_configs(monkeypatch):
+    import mcp_sqlserver.server as server
+
+    from fastmcp.server.transforms.tool_transform import ToolTransform
+
+    monkeypatch.setattr(
+        server,
+        "SETTINGS",
+        SimpleNamespace(
+            transform_tool_transformation_enabled=True,
+            transform_tool_name_map='{"db_01_ping":"ping_primary"}',
+            transform_tool_description_map='{"db_01_ping":"Primary ping tool","db_02_ping":"Secondary ping tool"}',
+        ),
+    )
+
+    transform = server._configure_tool_transformation_transform()
+
+    assert isinstance(transform, ToolTransform)
+    assert set(transform._transforms) == {"db_01_ping", "db_02_ping"}
+    assert transform._transforms["db_01_ping"].name == "ping_primary"
+    assert transform._transforms["db_01_ping"].description == "Primary ping tool"
+    assert transform._transforms["db_02_ping"].name is None
+    assert transform._transforms["db_02_ping"].description == "Secondary ping tool"
+
+
 def test_resolve_http_app_returns_none_for_stdio(monkeypatch):
     import mcp_sqlserver.server as server
 
@@ -261,6 +286,26 @@ def test_resolve_http_app_returns_http_app_for_http_transport(monkeypatch):
 
     assert resolved is app
     fake_mcp.http_app.assert_called_once()
+
+
+def test_register_dashboard_routes_registers_all_routes(monkeypatch):
+    import mcp_sqlserver.server as server
+
+    custom_route = Mock(side_effect=lambda **_kwargs: (lambda fn: fn))
+    monkeypatch.setattr(server, "mcp", SimpleNamespace(custom_route=custom_route))
+    monkeypatch.setattr(server, "_DASHBOARD_ROUTES_REGISTERED", False)
+
+    server._register_dashboard_routes()
+
+    assert custom_route.call_count == 5
+    route_names = [call.kwargs["name"] for call in custom_route.call_args_list]
+    assert route_names == [
+        "sessions-monitor",
+        "sessions-monitor-data",
+        "data-model-analysis",
+        "data-model-analysis-generate",
+        "data-model-analysis-stats",
+    ]
 
 
 def test_build_provider_transform_layers_respects_order_and_flags():

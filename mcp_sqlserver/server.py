@@ -1323,16 +1323,17 @@ def _configure_tool_transformation_transform() -> Any | None:
         )
         return None
     try:
-        from fastmcp.server.transforms.tool_transform import ToolTransform, ToolTransformConfig
+        from fastmcp.server.transforms.tool_transform import ToolTransform
+        from fastmcp.tools.tool_transform import ToolTransformConfig
 
-        transforms_dict: dict[str, Any] = {}
+        transforms_dict: dict[str, ToolTransformConfig] = {}
         for tool_name in all_tool_names:
-            config_kwargs: dict[str, str] = {}
-            if tool_name in name_map:
-                config_kwargs["name"] = name_map[tool_name]
-            if tool_name in description_map:
-                config_kwargs["description"] = description_map[tool_name]
-            transforms_dict[tool_name] = ToolTransformConfig(**config_kwargs)
+            mapped_name = name_map.get(tool_name)
+            mapped_description = description_map.get(tool_name)
+            transforms_dict[tool_name] = ToolTransformConfig(
+                name=mapped_name,
+                description=mapped_description,
+            )
         return ToolTransform(transforms=transforms_dict)
     except Exception as exc:
         logger.warning("ToolTransformation transform unavailable: %s", exc)
@@ -1803,11 +1804,16 @@ def _register_dashboard_routes() -> None:
     async def _data_model_analysis_stats(_request: Any) -> JSONResponse:
         return JSONResponse(_logical_model_report_stats())
 
-    custom_route(path="/sessions-monitor", methods=["GET"], name="sessions-monitor")(_sessions_monitor_page)
-    custom_route(path="/sessions-monitor/data", methods=["GET"], name="sessions-monitor-data")(_sessions_monitor_data)
-    custom_route(path="/data-model-analysis", methods=["GET"], name="data-model-analysis")(_data_model_analysis_page)
-    custom_route(path="/data-model-analysis/generate", methods=["GET"], name="data-model-analysis-generate")(_data_model_analysis_generate)
-    custom_route(path="/data-model-analysis/stats", methods=["GET"], name="data-model-analysis-stats")(_data_model_analysis_stats)
+    route_decorator: Any = custom_route(path="/sessions-monitor", methods=["GET"], name="sessions-monitor")
+    route_decorator(_sessions_monitor_page)
+    route_decorator = custom_route(path="/sessions-monitor/data", methods=["GET"], name="sessions-monitor-data")
+    route_decorator(_sessions_monitor_data)
+    route_decorator = custom_route(path="/data-model-analysis", methods=["GET"], name="data-model-analysis")
+    route_decorator(_data_model_analysis_page)
+    route_decorator = custom_route(path="/data-model-analysis/generate", methods=["GET"], name="data-model-analysis-generate")
+    route_decorator(_data_model_analysis_generate)
+    route_decorator = custom_route(path="/data-model-analysis/stats", methods=["GET"], name="data-model-analysis-stats")
+    route_decorator(_data_model_analysis_stats)
     _DASHBOARD_ROUTES_REGISTERED = True
 
 def _resolve_http_app() -> Any | None:
