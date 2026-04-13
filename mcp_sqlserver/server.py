@@ -2705,8 +2705,8 @@ def _db_sql2019_analyze_table_health_internal(
         raise ValueError("schema and table_name are required")
     validate_instance(instance)
     _enforce_table_scope_for_ident(schema, table_name)
-    db_name = _normalize_db_name(database_name)
-    db_name_str = db_name
+    db_name = _normalize_db_name(database_name) if database_name else get_instance_config(instance)["db_name"]
+    db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
     recommendations: list[dict[str, Any]] = []
     try:
