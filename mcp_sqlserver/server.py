@@ -2690,10 +2690,10 @@ def db_sql2019_analyze_index_health(
 
 
 def _db_sql2019_analyze_table_health_internal(
+    database_name: str,
+    table_name: str,
     instance: int = 1,
-    database_name: str | None = None,
     schema: str | None = None,
-    table_name: str | None = None,
     view: Literal["summary", "standard", "full"] = "standard",
     fields: str | None = None,
     token_budget: int | None = None,
@@ -2701,8 +2701,10 @@ def _db_sql2019_analyze_table_health_internal(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Table-level storage/index/stats/constraint analysis."""
-    if not schema or not table_name:
-        raise ValueError("schema and table_name are required")
+    if not table_name:
+        raise ValueError("table_name is required")
+    if not schema:
+        schema = "dbo"  # Default to dbo schema if not provided
     validate_instance(instance)
     _enforce_table_scope_for_ident(schema, table_name)
     db_name = _normalize_db_name(database_name) if database_name else get_instance_config(instance)["db_name"]
@@ -3185,9 +3187,9 @@ def _db_sql2019_analyze_table_health_internal(
 
 @mcp.tool(name="db_01_analyze_table_health", description="Table-level storage/index/stats/constraint analysis for instance 1.")
 def db_01_analyze_table_health(
-    database_name: str | None = None,
+    database_name: str,
+    table_name: str,
     schema: str | None = None,
-    table_name: str | None = None,
     view: Literal["summary", "standard", "full"] = "standard",
     fields: str | None = None,
     token_budget: int | None = None,
@@ -3195,10 +3197,10 @@ def db_01_analyze_table_health(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     return _db_sql2019_analyze_table_health_internal(
-        instance=1,
         database_name=database_name,
-        schema=schema,
         table_name=table_name,
+        instance=1,
+        schema=schema,
         view=view,
         fields=fields,
         token_budget=token_budget,
@@ -3208,9 +3210,9 @@ def db_01_analyze_table_health(
 
 @mcp.tool(name="db_02_analyze_table_health", description="Table-level storage/index/stats/constraint analysis for instance 2.")
 def db_02_analyze_table_health(
-    database_name: str | None = None,
+    database_name: str,
+    table_name: str,
     schema: str | None = None,
-    table_name: str | None = None,
     view: Literal["summary", "standard", "full"] = "standard",
     fields: str | None = None,
     token_budget: int | None = None,
@@ -3218,10 +3220,10 @@ def db_02_analyze_table_health(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     return _db_sql2019_analyze_table_health_internal(
-        instance=2,
         database_name=database_name,
-        schema=schema,
         table_name=table_name,
+        instance=2,
+        schema=schema,
         view=view,
         fields=fields,
         token_budget=token_budget,
