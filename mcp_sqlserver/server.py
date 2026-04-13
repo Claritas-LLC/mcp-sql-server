@@ -3185,8 +3185,8 @@ def _db_sql2019_analyze_table_health_internal(
         conn.close()
 
 
-@mcp.tool(name="db_01_analyze_table_health", description="Table-level storage/index/stats/constraint analysis for instance 1.")
-def db_01_analyze_table_health(
+@mcp.tool(name="db_01_sql2019_analyze_table_health", description="Table-level storage/index/stats/constraint analysis for instance 1.")
+def db_01_sql2019_analyze_table_health(
     database_name: str,
     table_name: str,
     schema: str | None = None,
@@ -3208,8 +3208,8 @@ def db_01_analyze_table_health(
         page_size=page_size,
     )
 
-@mcp.tool(name="db_02_analyze_table_health", description="Table-level storage/index/stats/constraint analysis for instance 2.")
-def db_02_analyze_table_health(
+@mcp.tool(name="db_02_sql2019_analyze_table_health", description="Table-level storage/index/stats/constraint analysis for instance 2.")
+def db_02_sql2019_analyze_table_health(
     database_name: str,
     table_name: str,
     schema: str | None = None,
