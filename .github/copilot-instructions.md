@@ -8,7 +8,7 @@
 
 - **MCP Server Pattern**: Uses FastMCP framework (`@mcp.tool` decorators) to expose async tools
 - **Security by Default**: Read-only mode enforced via `ALLOW_WRITE`/`CONFIRM_WRITE` environment variables
-- **Multiple Transport Modes**: HTTP (with SSE), stdio
+- **Multiple Transport Modes**: HTTP (with SSE), stdio, SSH tunneling support
 - **No ORM Dependency**: Direct `pyodbc` connections for maximum control and minimal overhead
 
 ---
@@ -63,6 +63,8 @@ MCP_TRANSPORT=http|stdio        # Default: http
 MCP_HOST=0.0.0.0                # Default
 MCP_PORT=8085                   # Default
 
+# SSH Tunneling (optional)
+SSH_HOST, SSH_USER, SSH_PASSWORD, SSH_PKEY
 ```
 
 ### Safety Mechanisms
@@ -306,10 +308,31 @@ def test_tool_name():
    - Supports: OIDC, JWT, Azure AD, GitHub, Google, or static API key
    - Required to prevent unauthorized modifications
 
+### **SSH Tunnel Configuration**
+
+Optional bastion host tunneling for remote databases:
+
+```python
+# Environment variables
+SSH_HOST="bastion.example.com"
+SSH_USER="sshuser"
+SSH_PASSWORD="..."  # OR
+SSH_PKEY="/path/to/private/key"  # Private key path
+SSH_PORT=22  # Default
+ALLOW_SSH_AGENT=true  # Use local SSH agent
+
+# Runtime behavior:
+# 1. Establishes SSHTunnelForwarder in startup
+# 2. Rewrites CONNECTION_STRING to use 127.0.0.1:local_port
+# 3. Tunnels remote DB traffic through SSH
+# 4. Cleanup on graceful shutdown via atexit handlers
+```
+
 ### **Transport Security**
 
 - **stdio**: Local access only, no auth needed
 - **HTTP**: Open to network, requires `FASTMCP_AUTH_TYPE` config
+- **SSH Tunnel**: Encrypts connection to bastion host (optional, compatible with all transports)
 
 ---
 
@@ -397,7 +420,7 @@ On Windows, shows a confirmation dialog before startup (can be skipped with `MCP
 | File | Purpose |
 |------|---------|
 | `server.py` | Main MCP server (6045 lines) |
-| `requirements.txt` | Dependencies: fastmcp, pyodbc, uvicorn |
+| `requirements.txt` | Dependencies: fastmcp, pyodbc, uvicorn, sshtunnel |
 | `tests/test_server.py` | Integration tests (needs live SQL Server) |
 | `README.md` | User documentation |
 | `DEPLOYMENT.md` | Deployment guide for Azure/AWS/Docker |
@@ -408,6 +431,7 @@ On Windows, shows a confirmation dialog before startup (can be skipped with `MCP
 ## 💡 Pro Tips
 
 - **Fast iteration**: Use `MCP_TRANSPORT=stdio` + `MCP_LOG_LEVEL=DEBUG` locally
+- **SSH debugging**: Set `ALLOW_SSH_AGENT=true` to use local SSH keys
 - **Result limits**: Adjust `MCP_MAX_ROWS` (default 500) for large datasets
 - **Query timeouts**: Increase `MCP_STATEMENT_TIMEOUT_MS` for slow queries (default 120s)
 - **Windows shutdown**: Handled by custom asyncio workaround to suppress benign errors
@@ -422,6 +446,7 @@ On Windows, shows a confirmation dialog before startup (can be skipped with `MCP
 - Check `DB_SERVER`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` env vars
 - Run `python debug_connection.py` for diagnostics
 - Verify SQL Server is running: `netstat -ano | findstr :1433` (Windows) or `lsof -i :1433` (Linux)
+- For SSH tunnels: Verify `SSH_HOST` accessibility and key permissions (`chmod 600 keyfile`)
 
 **Problem**: Auth errors (`Login failed for user`)
 - Check credentials in `.env` match SQL Server user permissions
@@ -464,9 +489,17 @@ On Windows, shows a confirmation dialog before startup (can be skipped with `MCP
 - Use container DNS name if same compose file: `http://mcp-sqlserver:8085/sse`
 - Check firewall: `docker logs mcp-sqlserver` for connection errors
 
+**Problem**: SSH tunnel fails in container
+- Verify `SSH_PKEY` path is mounted as volume
+- Set `ALLOW_SSH_AGENT=true` to use host SSH agent socket
+- Test SSH manually: `ssh -v SSH_USER@SSH_HOST` from container
+
+---
+
 ## 🔗 External References
 
 - **FastMCP Docs**: https://github.com/zeke/fastmcp
 - **Model Context Protocol**: https://modelcontextprotocol.io
 - **SQL Server DMVs**: https://learn.microsoft.com/en-us/sql/relational-databases/
 - **pyodbc**: https://github.com/mkleehammer/pyodbc/wiki
+- **sshtunnel**: https://github.com/pahaz/sshtunnel

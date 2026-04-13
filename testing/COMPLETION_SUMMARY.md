@@ -3,32 +3,6 @@
 **Date:** February 24, 2026  
 **Status:** ✅ **COMPLETE & READY FOR PRODUCTION**
 
-## Supplemental Release Evidence
-
-**Date:** April 9, 2026  
-**Scope:** FastMCP wildcard transforms alignment and release-gate validation  
-**Status:** ✅ **PHASE 5 EVIDENCE PUBLISHED**
-
-Fresh validation artifacts were generated for the wildcard transforms execution plan and stored under `testing/` using the standard release-gate naming convention.
-
-**Evidence Set (`20260409-143959`):**
-- `gate-startup-20260409-143959.txt`
-- `gate-auth-20260409-143959.txt`
-- `gate-transform-20260409-143959.txt`
-- `gate-integration-20260409-143959.txt`
-- `env-snapshot-redacted-20260409-143959.txt`
-
-**Gate Outcomes:**
-- ✅ Startup gate passed
-- ✅ Auth gate passed
-- ✅ Transform gate passed
-- ✅ Integration gate passed
-
-**Related Governance Updates:**
-- `plan/architecture-fastmcp-transforms-wildcard-1.md` closed through TASK-018
-- `plan/architecture-fastmcp-plan-index-1.md` refreshed with latest wildcard evidence links
-- `plan/process-fastmcp-execution-checklist-1.md` refreshed with wildcard TASK-016 and TASK-017 execution notes
-
 ---
 
 ## What Was Accomplished

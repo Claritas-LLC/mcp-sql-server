@@ -27,10 +27,14 @@ docker run -d \
 - `SQL_PASSWORD`: Database password (also `DB_PASSWORD`)
 - `SQL_DRIVER`: ODBC driver (default: `ODBC Driver 18 for SQL Server`) (also `DB_DRIVER`)
 - `SQL_PORT`: SQL Server port (default: 1433) (also `DB_PORT`)
+- `SSH_HOST`: SSH tunnel host (optional)
+- `SSH_PORT`: SSH tunnel port (default: 22)
+- `SSH_USER`: SSH tunnel user (optional)
+- `SSH_PASSWORD`: SSH tunnel password (optional)
 
 ## Security Note
 
-**⚠️ Critical Security Warning**: `SQL_PASSWORD` is a highly sensitive credential that should **never** be passed directly via command-line `-e` flags, as it can be exposed in:
+**⚠️ Critical Security Warning**: `SQL_PASSWORD` and `SSH_PASSWORD` are highly sensitive credentials that should **never** be passed directly via command-line `-e` flags, as they can be exposed in:
 - Process listings (`ps aux`)
 - Shell history
 - Docker logs
@@ -54,6 +58,8 @@ docker run -d \
    ```
 
 3. **External Secret Managers**: Integrate with HashiCorp Vault, AWS Secrets Manager, Azure Key Vault, or similar services
+
+4. **SSH Key-Based Authentication**: Instead of `SSH_PASSWORD`, use SSH keys for tunnel authentication when possible
 
 ### See Also:
 - [Quick Start section](#quick-start) for secure configuration examples

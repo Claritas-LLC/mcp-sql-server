@@ -11,10 +11,10 @@ Usage:
 
 
 # Import the FastMCP app instance and pool initializer
-from mcp_sqlserver.server import initialize_connection_pools, run_server_entrypoint
+from mcp_sqlserver.server import mcp, initialize_connection_pools, SETTINGS
 
 if __name__ == "__main__":
     # Initialize all DB connection pools (thread-safe, idempotent)
     initialize_connection_pools()
-    # Start the FastMCP server through the canonical runtime entrypoint.
-    run_server_entrypoint()
+    # Start the MCP server (FastMCP main entrypoint) with explicit transport/host/port
+    mcp.run(transport=SETTINGS.transport, host=SETTINGS.host, port=SETTINGS.port)

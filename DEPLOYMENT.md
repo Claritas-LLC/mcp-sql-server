@@ -176,9 +176,6 @@ When deploying to production, verify the following:
    * Set `FASTMCP_AUTH_TYPE` to your preferred mode.
    * For machine-to-machine (e.g., n8n), use `apikey` with `FASTMCP_API_KEY`.
    * For human-in-the-loop, use `github`, `google`, or `azure-ad`.
-    * Supported runtime values are: `none`, `apikey`, `oidc`, `jwt`, `azure-ad`, `github`, `google`.
-    * If `FASTMCP_AUTH_TYPE=apikey`, `FASTMCP_API_KEY` is mandatory and startup fails fast when missing.
-    * `MCP_ALLOW_QUERY_TOKEN_AUTH` only applies when auth is enabled.
 2. **Network**: Ensure the container can reach your SQL Server database.
    * **Azure**: Use VNet injection if using Azure SQL Managed Instance or private endpoints.
    * **AWS**: Ensure Security Groups allow inbound port 1433 from the ECS tasks.
@@ -200,160 +197,6 @@ Key environment variables supported by the server:
 - `MCP_HOST` Host for HTTP transport, default `0.0.0.0`.
 - `MCP_PORT` Port for HTTP transport, default `8000` (Container internal).
 - `MCP_ALLOW_WRITE` Allow write operations, default `false`.
-
-### Startup Argument Mapping
-
-Canonical startup entrypoints are:
-
-- `python server_startup.py`
-- `python -m mcp_sqlserver.server`
-
-Both paths call `run_server_entrypoint` in `mcp_sqlserver/server.py`, which maps startup settings deterministically as follows:
-
-- Always passes `transport` from `MCP_TRANSPORT`.
-- If `MCP_TRANSPORT=http`, also passes `host` from `MCP_HOST` and `port` from `MCP_PORT`.
-- For non-HTTP transports (for example `stdio`), only `transport` is passed.
-
-### Health Probes
-
-When running in HTTP transport, use `GET /health` for liveness/readiness checks.
-
-- Expected status code: `200`
-- Expected payload fields: `status`, `service`, `transport`
-- Sensitive values such as database credentials and API keys are intentionally omitted.
-
-Example probe:
-
-```bash
-curl -s http://127.0.0.1:8000/health
-```
-
-### Tool Search Transform Settings
-
-Optional runtime settings for FastMCP tool-search:
-
-- `MCP_TOOL_SEARCH_ENABLED`
-- `MCP_TOOL_SEARCH_STRATEGY` (`regex` or `bm25`)
-- `MCP_TOOL_SEARCH_MAX_RESULTS`
-- `MCP_TOOL_SEARCH_ALWAYS_VISIBLE`
-- `MCP_TOOL_SEARCH_TOOL_NAME`
-- `MCP_TOOL_CALL_TOOL_NAME`
-
-If the installed FastMCP runtime does not provide transform classes, startup logs a warning and continues without transform activation.
-
-### Provider-Layer Transform Suite Settings
-
-The server supports a provider-layer transform pipeline for broader FastMCP guidance coverage.
-
-- `MCP_TRANSFORM_LAYERS_ENABLED` enables/disables layer assembly.
-- `MCP_TRANSFORM_LAYER_ORDER` controls layer order when enabled.
-- Per-layer feature flags:
-    - `MCP_TRANSFORM_VISIBILITY_ENABLED`
-    - `MCP_TRANSFORM_NAMESPACE_ENABLED`
-    - `MCP_TRANSFORM_TOOL_TRANSFORMATION_ENABLED`
-    - `MCP_TRANSFORM_RESOURCES_AS_TOOLS_ENABLED`
-    - `MCP_TRANSFORM_PROMPTS_AS_TOOLS_ENABLED`
-    - `MCP_TRANSFORM_CODE_MODE_ENABLED`
-
-Layer-specific controls:
-
-- Visibility: `MCP_TRANSFORM_VISIBILITY_ALLOWLIST`, `MCP_TRANSFORM_VISIBILITY_DENYLIST`
-- Namespace: `MCP_TRANSFORM_NAMESPACE_PREFIX`
-- Tool transformation: `MCP_TRANSFORM_TOOL_NAME_MAP`, `MCP_TRANSFORM_TOOL_DESCRIPTION_MAP`
-- Code mode: `MCP_TRANSFORM_CODE_MODE_POLICY`
-
-Operational defaults:
-
-- Feature flags for all transform layers are default-off.
-- Unavailable transform APIs are logged and skipped without terminating startup.
-
-Recommended rollout order:
-
-1. Enable `MCP_TRANSFORM_VISIBILITY_ENABLED` only.
-2. Enable `MCP_TRANSFORM_NAMESPACE_ENABLED` after verifying client compatibility.
-3. Enable `MCP_TRANSFORM_TOOL_TRANSFORMATION_ENABLED` only after downstream name-mapping validation.
-4. Evaluate `MCP_TRANSFORM_RESOURCES_AS_TOOLS_ENABLED` and `MCP_TRANSFORM_PROMPTS_AS_TOOLS_ENABLED` in non-production first.
-5. Enable `MCP_TRANSFORM_CODE_MODE_ENABLED` only with explicit policy review.
-
-## Release Gate Matrix
-
-| Gate | Depends On | Pass Criteria | Fail Criteria | Commands |
-|------|------------|---------------|---------------|----------|
-| `GATE-STARTUP` | None | Startup config and entrypoint tests pass. | Any failure in startup config tests. | `python -m pytest tests/test_server_startup_config.py -q` |
-| `GATE-AUTH` | `GATE-STARTUP` | Blackbox HTTP auth behavior and hardening tests pass. | Any auth or caller-identity regression failure. | `python -m pytest tests/test_blackbox_http.py tests/test_hardening_controls.py -q` |
-| `GATE-TRANSFORM` | `GATE-STARTUP` | Transform/route behavior and readonly guard tests pass. | Any transform/health/readonly regression failure. | `python -m pytest tests/test_server_startup_config.py tests/test_readonly_sql.py -q` |
-| `GATE-INTEGRATION` | `GATE-AUTH`, `GATE-TRANSFORM` | Full final validation bundle passes. | Any command in the integration bundle fails. | `python -m pytest tests/test_server_startup_config.py tests/test_blackbox_http.py tests/test_hardening_controls.py tests/test_readonly_sql.py -q` |
-
-## Rollout Sequence and Rollback
-
-### Stage 1: Local Validation
-
-- Run gate checks in dependency order: `GATE-STARTUP` -> `GATE-AUTH` and `GATE-TRANSFORM` -> `GATE-INTEGRATION`.
-- Capture command outputs to timestamped files under `testing/`.
-
-Rollback triggers:
-
-- Startup tests fail.
-- Auth denial or caller-identity tests fail.
-- Readonly guard tests fail.
-
-Rollback actions:
-
-- Revert to prior deployment artifact (last known good image/tag or commit).
-- Restore prior environment values for `MCP_TRANSPORT`, `FASTMCP_AUTH_TYPE`, and related auth settings.
-
-### Stage 2: Staging Validation
-
-- Deploy candidate artifact to staging with production-like environment settings.
-- Run `GATE-INTEGRATION` test bundle and perform health/auth probes.
-
-Recommended transform smoke sequence before promotion:
-
-1. Enable `MCP_TRANSFORM_VISIBILITY_ENABLED=true` only.
-2. Then enable `MCP_TRANSFORM_NAMESPACE_ENABLED=true` with a safe prefix.
-3. Then enable `MCP_TRANSFORM_TOOL_TRANSFORMATION_ENABLED=true` with a minimal name map.
-
-Expected compatibility probe results during staging smoke:
-
-- `GET /health` returns `200`.
-- `GET /mcp` without a session ID may return `400` and is acceptable for raw HTTP compatibility probing.
-- No startup crash occurs when each transform stage is enabled.
-
-Rollback triggers:
-
-- `GET /health` returns non-200 or malformed payload.
-- Auth probe behavior deviates from expected mode.
-- Any integration gate failure.
-
-Rollback actions:
-
-- Roll back staging to previous artifact.
-- Restore previous environment snapshot (including `MCP_TRANSPORT`, `FASTMCP_AUTH_TYPE`, `FASTMCP_API_KEY` references).
-
-### Stage 3: Production Promotion
-
-- Promote only after all staging checks pass.
-- Execute post-release probes immediately after deployment.
-
-Rollback triggers:
-
-- Health probe failure.
-- Unexpected unauthenticated access in protected mode.
-- Runtime error spikes tied to startup/auth/transform changes.
-
-Rollback actions:
-
-- Roll back production artifact to prior stable release.
-- Restore prior environment configuration.
-- Re-run `GATE-STARTUP` and `GATE-AUTH` in staging before retry.
-
-## Post-Release Verification
-
-Run all of the following in deployment environment:
-
-- `GET /health` returns `200` with `status=ok`.
-- Sample MCP endpoint request succeeds under expected auth mode.
-- In `apikey` mode, invalid token request is denied (401/403).
 
 ### Optional: FastMCP Skills Provider
 
@@ -388,6 +231,7 @@ Before deploying to production, ensure:
 - [ ] **Security**: Enabled authentication (FASTMCP_AUTH_TYPE)
 - [ ] **Logging**: Configured log file path and level
 - [ ] **Testing**: Run full test suite and reviewed TEST_REPORT.md
+- [ ] **SSH Tunneling**: Configured if needed for remote access
 - [ ] **Monitoring**: Set up logs collection and alerting
 - [ ] **Backup Plan**: Document rollback procedures
 - [ ] **Access Control**: Restrict MCP server access by IP/network
@@ -403,7 +247,14 @@ Before deploying to production, ensure:
    export FASTMCP_AZURE_AD_CLIENT_ID=your-client-id
    ```
 
-2. **Minimal Read-Only Access**:
+2. **Use SSH Tunnel** (for remote databases):
+   ```bash
+   export SSH_HOST=bastion.example.com
+   export SSH_USER=ec2-user
+   export SSH_PKEY=/path/to/private/key
+   ```
+
+3. **Minimal Read-Only Access**:
    - Deploy with `MCP_ALLOW_WRITE=false` by default
    - Require explicit env var change + container restart to enable writes
    - Audit write operations in logs
