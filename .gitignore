@@ -9,3 +9,19 @@ venv/
 *.log
 
 logs/
+
+# Test artifacts and temporary files
+testing/tool_results/
+testing/tool_execution_summary.json
+testing/tool_matrix.json
+testing/defect_register.json
+testing/blackbox_results.txt
+testing/e2e_results.txt
+testing/*_results.json
+testing/*_results.txt
+plan/
+.DS_Store
+*.pyc
+.pytest_cache/
+htmlcov/
+.coverage
