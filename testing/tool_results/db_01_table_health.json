@@ -1,0 +1,224 @@
+{
+  "tool_name": "db_01_table_health",
+  "args": {
+    "database_name": "TEST_DB",
+    "schema": "sales",
+    "table_name": "Customers",
+    "view": "standard"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 119.91,
+  "captured_at_utc": "2026-04-14T05:14:42.658593+00:00",
+  "result": {
+    "table_info": {
+      "TableName": "Customers",
+      "SchemaName": "sales",
+      "RowCounts": 15,
+      "TotalSpaceKB": 216,
+      "UsedSpaceKB": 48,
+      "UnusedSpaceKB": 168
+    },
+    "columns": [
+      {
+        "COLUMN_NAME": "CustomerID",
+        "DATA_TYPE": "int",
+        "IS_NULLABLE": "NO",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "COLUMN_DEFAULT": null,
+        "NUMERIC_PRECISION": 10,
+        "NUMERIC_SCALE": 0
+      },
+      {
+        "COLUMN_NAME": "FirstName",
+        "DATA_TYPE": "nvarchar",
+        "IS_NULLABLE": "NO",
+        "CHARACTER_MAXIMUM_LENGTH": 50,
+        "COLUMN_DEFAULT": null,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null
+      },
+      {
+        "COLUMN_NAME": "LastName",
+        "DATA_TYPE": "nvarchar",
+        "IS_NULLABLE": "NO",
+        "CHARACTER_MAXIMUM_LENGTH": 50,
+        "COLUMN_DEFAULT": null,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null
+      },
+      {
+        "COLUMN_NAME": "Email",
+        "DATA_TYPE": "nvarchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 100,
+        "COLUMN_DEFAULT": null,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null
+      },
+      {
+        "COLUMN_NAME": "City",
+        "DATA_TYPE": "nvarchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 50,
+        "COLUMN_DEFAULT": null,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null
+      },
+      {
+        "COLUMN_NAME": "State",
+        "DATA_TYPE": "nvarchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 2,
+        "COLUMN_DEFAULT": null,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null
+      },
+      {
+        "COLUMN_NAME": "CreatedDate",
+        "DATA_TYPE": "datetime2",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "COLUMN_DEFAULT": "(getdate())",
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null
+      }
+    ],
+    "indexes": [
+      {
+        "IndexName": "IX_Customers_Email",
+        "IndexType": "NONCLUSTERED",
+        "IndexSizeMB": "0.0156",
+        "is_disabled": false
+      },
+      {
+        "IndexName": "PK__Customer__A4AE64B813226899",
+        "IndexType": "CLUSTERED",
+        "IndexSizeMB": "0.0156",
+        "is_disabled": false
+      },
+      {
+        "IndexName": "UQ__Customer__A9D10534C5579933",
+        "IndexType": "NONCLUSTERED",
+        "IndexSizeMB": "0.0156",
+        "is_disabled": false
+      }
+    ],
+    "constraints": [
+      {
+        "CONSTRAINT_NAME": "PK__Customer__A4AE64B813226899",
+        "CONSTRAINT_TYPE": "PRIMARY KEY",
+        "COLUMN_NAME": "CustomerID"
+      },
+      {
+        "CONSTRAINT_NAME": "UQ__Customer__A9D10534C5579933",
+        "CONSTRAINT_TYPE": "UNIQUE",
+        "COLUMN_NAME": "Email"
+      }
+    ],
+    "foreign_keys": [],
+    "dependencies": [
+      {
+        "referencing_schema_name": "sales",
+        "referencing_entity_name": "CustomerOrderSummary",
+        "referencing_class_desc": "OBJECT_OR_COLUMN",
+        "is_caller_dependent": false
+      }
+    ],
+    "statistics_sample": [
+      {
+        "ColumnName": "Email",
+        "StatsName": "IX_Customers_Email",
+        "last_updated": null,
+        "rows": null,
+        "rows_sampled": null,
+        "modification_counter": null
+      },
+      {
+        "ColumnName": "CustomerID",
+        "StatsName": "PK__Customer__A4AE64B813226899",
+        "last_updated": "2026-04-14T04:55:44.553333",
+        "rows": 5,
+        "rows_sampled": 5,
+        "modification_counter": 0
+      },
+      {
+        "ColumnName": "Email",
+        "StatsName": "UQ__Customer__A9D10534C5579933",
+        "last_updated": null,
+        "rows": null,
+        "rows_sampled": null,
+        "modification_counter": null
+      }
+    ],
+    "health_analysis": {
+      "constraint_issues": [],
+      "index_issues": []
+    },
+    "recommendations": [
+      {
+        "severity": "Info",
+        "recommendation": "Column 'CustomerID' is INT and NOT NULL. If values are small, consider using SMALLINT or TINYINT to save space."
+      }
+    ],
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.columns": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 7,
+          "total_pages": 1
+        },
+        "root.indexes": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 3,
+          "total_pages": 1
+        },
+        "root.constraints": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 2,
+          "total_pages": 1
+        },
+        "root.foreign_keys": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        },
+        "root.dependencies": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 1,
+          "total_pages": 1
+        },
+        "root.statistics_sample": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 3,
+          "total_pages": 1
+        },
+        "root.health_analysis.constraint_issues": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        },
+        "root.health_analysis.index_issues": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        },
+        "root.recommendations": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 1,
+          "total_pages": 1
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "tool_name": "db_01_index_fragmentation",
+  "args": {
+    "database_name": "TEST_DB",
+    "schema": "sales",
+    "min_fragmentation": 0.0,
+    "min_page_count": 1,
+    "limit": 20
+  },
+  "status": "SUCCESS",
+  "duration_ms": 21.74,
+  "captured_at_utc": "2026-04-14T05:14:41.790554+00:00",
+  "result": {
+    "items": [
+      {
+        "schema_name": "sales",
+        "table_name": "Customers",
+        "index_name": "PK__Customer__A4AE64B813226899",
+        "avg_fragmentation_in_percent": 0.0,
+        "page_count": 1,
+        "index_type": "CLUSTERED"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "Customers",
+        "index_name": "UQ__Customer__A9D10534C5579933",
+        "avg_fragmentation_in_percent": 0.0,
+        "page_count": 1,
+        "index_type": "NONCLUSTERED"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "Customers",
+        "index_name": "IX_Customers_Email",
+        "avg_fragmentation_in_percent": 0.0,
+        "page_count": 1,
+        "index_type": "NONCLUSTERED"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "Products",
+        "index_name": "PK__Products__B40CC6EDB8EA1A55",
+        "avg_fragmentation_in_percent": 0.0,
+        "page_count": 1,
+        "index_type": "CLUSTERED"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "Orders",
+        "index_name": "PK__Orders__C3905BAF474E85FE",
+        "avg_fragmentation_in_percent": 0.0,
+        "page_count": 1,
+        "index_type": "CLUSTERED"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "Orders",
+        "index_name": "IX_Orders_CustomerID",
+        "avg_fragmentation_in_percent": 0.0,
+        "page_count": 1,
+        "index_type": "NONCLUSTERED"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "Orders",
+        "index_name": "IX_Orders_OrderDate",
+        "avg_fragmentation_in_percent": 0.0,
+        "page_count": 1,
+        "index_type": "NONCLUSTERED"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "OrderDetails",
+        "index_name": "PK__OrderDet__D3B9D30CE3AA9D98",
+        "avg_fragmentation_in_percent": 0.0,
+        "page_count": 1,
+        "index_type": "CLUSTERED"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "OrderDetails",
+        "index_name": "IX_OrderDetails_OrderID",
+        "avg_fragmentation_in_percent": 0.0,
+        "page_count": 1,
+        "index_type": "NONCLUSTERED"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "OrderDetails",
+        "index_name": "IX_OrderDetails_ProductID",
+        "avg_fragmentation_in_percent": 0.0,
+        "page_count": 1,
+        "index_type": "NONCLUSTERED"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_items": 10,
+      "total_pages": 1
+    }
+  }
+}

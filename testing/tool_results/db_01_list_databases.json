@@ -1,0 +1,22 @@
+{
+  "tool_name": "db_01_list_databases",
+  "args": {},
+  "status": "SUCCESS",
+  "duration_ms": 84.89,
+  "captured_at_utc": "2026-04-14T05:14:42.040890+00:00",
+  "result": {
+    "items": [
+      "master",
+      "model",
+      "msdb",
+      "tempdb",
+      "TEST_DB"
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_items": 5,
+      "total_pages": 1
+    }
+  }
+}
