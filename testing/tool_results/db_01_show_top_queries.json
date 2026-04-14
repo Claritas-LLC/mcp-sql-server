@@ -1,0 +1,29 @@
+{
+  "tool_name": "db_01_show_top_queries",
+  "args": {
+    "database_name": "TEST_DB",
+    "view": "summary"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 150.64,
+  "captured_at_utc": "2026-04-14T05:14:42.530234+00:00",
+  "result": {
+    "database": "TEST_DB",
+    "query_store_enabled": true,
+    "query_store_config": null,
+    "summary": {},
+    "recommendations": [],
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.recommendations": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        }
+      }
+    }
+  }
+}

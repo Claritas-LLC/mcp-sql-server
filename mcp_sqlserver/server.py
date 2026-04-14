@@ -1355,8 +1355,14 @@ def _run_query_internal(
     try:
         cur = conn.cursor()
         _execute_safe(cur, sql, params)
-        rows = _fetch_limited(cur, row_cap)
-        return _rows_to_dicts(cur, rows)
+        try:
+            rows = _fetch_limited(cur, row_cap)
+            return _rows_to_dicts(cur, rows)
+        except pyodbc.ProgrammingError as e:
+            # For DDL (CREATE/ALTER/DROP), fetching results raises ProgrammingError: No results. Previous SQL was not a query.
+            if tool_name in {"db_sql2019_create_object", "db_sql2019_alter_object", "db_sql2019_drop_object"}:
+                return {"status": "success", "message": "DDL executed successfully."}
+            raise
     finally:
         conn.close()
 
@@ -2316,7 +2322,7 @@ def db_sql2019_show_top_queries(
                 qt.query_sql_text,
                 rs.{sort_col} AS metric_value,
                 rs.count_executions,
-                rs.last_execution_time
+                CAST(rs.last_execution_time AS nvarchar(40)) AS last_execution_time
             FROM sys.query_store_query q
             JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
             JOIN sys.query_store_plan p ON q.query_id = p.query_id
@@ -2340,7 +2346,7 @@ def db_sql2019_show_top_queries(
                 st.text AS query_sql_text,
                 {sort_col} AS metric_value,
                 count.execution_count,
-                count.last_execution_time
+                CAST(count.last_execution_time AS nvarchar(40)) AS last_execution_time
             FROM sys.dm_exec_query_stats count
             CROSS APPLY sys.dm_exec_sql_text(count.sql_handle) st
             ORDER BY metric_value DESC
@@ -2541,7 +2547,12 @@ def db_sql2019_create_db_user(
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
-        _execute_safe(cur, f"CREATE USER [{username}] WITH PASSWORD = ?", [password])
+        # SQL Server does not allow parameterized identifiers or DDL keywords, so we must inline safely.
+        # Escape single quotes in password and username
+        safe_username = str(username).replace("'", "''")
+        safe_password = str(password).replace("'", "''")
+        sql = f"CREATE USER [{safe_username}] WITH PASSWORD = '{safe_password}'"
+        _execute_safe(cur, sql)
         return {"status": "success", "username": username, "database": db_name}
     finally:
         conn.close()
@@ -2562,8 +2573,14 @@ def db_sql2019_drop_db_user(
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
-        _execute_safe(cur, f"DROP USER [{username}]")
-        return {"status": "success", "username": username, "database": db_name}
+        try:
+            _execute_safe(cur, f"DROP USER [{username}]")
+            return {"status": "success", "username": username, "database": db_name}
+        except pyodbc.ProgrammingError as e:
+            # If user does not exist, treat as success for idempotency
+            if "Cannot drop the user" in str(e) and "does not exist" in str(e):
+                return {"status": "not_found", "username": username, "database": db_name}
+            raise
     finally:
         conn.close()
 
@@ -2577,8 +2594,14 @@ def db_sql2019_kill_session(instance: int = 1, session_id: int | None = None) ->
     conn = get_connection("master", instance=instance)
     try:
         cur = conn.cursor()
-        _execute_safe(cur, f"KILL {int(session_id)}")
-        return {"status": "success", "session_id": session_id}
+        try:
+            _execute_safe(cur, f"KILL {int(session_id)}")
+            return {"status": "success", "session_id": session_id}
+        except pyodbc.ProgrammingError as e:
+            # If session does not exist, treat as success for idempotency
+            if "is not valid" in str(e):
+                return {"status": "not_found", "session_id": session_id}
+            raise
     finally:
         conn.close()
 

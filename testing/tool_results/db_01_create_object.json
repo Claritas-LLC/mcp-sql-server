@@ -1,0 +1,14 @@
+{
+  "tool_name": "db_01_create_object",
+  "args": {
+    "database_name": "TEST_DB",
+    "sql": "CREATE TABLE sales.MCP_TMP_TABLE (Id INT PRIMARY KEY, Name NVARCHAR(50) NULL)"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 36.2,
+  "captured_at_utc": "2026-04-14T05:14:41.555418+00:00",
+  "result": {
+    "status": "success",
+    "database": "TEST_DB"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "tool_name": "db_02_generate_ddl",
+  "args": {
+    "database_name": "TEST_DB",
+    "schema_name": "sales",
+    "table_name": "Customers"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 38.39,
+  "captured_at_utc": "2026-04-14T05:14:44.332579+00:00",
+  "result": "CREATE TABLE [sales]. [Customers] (\n    [CustomerID] INT NOT NULL,\n    [FirstName] NVARCHAR(50) NOT NULL,\n    [LastName] NVARCHAR(50) NOT NULL,\n    [Email] NVARCHAR(100),\n    [City] NVARCHAR(50),\n    [State] NVARCHAR(2),\n    [CreatedDate] DATETIME2 DEFAULT (getdate())\n);"
+}

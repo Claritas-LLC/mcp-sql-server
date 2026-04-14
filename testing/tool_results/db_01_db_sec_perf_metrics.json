@@ -1,0 +1,14 @@
+{
+  "tool_name": "db_01_db_sec_perf_metrics",
+  "args": {
+    "database_name": "TEST_DB"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 34.77,
+  "captured_at_utc": "2026-04-14T05:14:41.595686+00:00",
+  "result": {
+    "user_count": 5,
+    "open_transactions": 0,
+    "data_size_mb": 8
+  }
+}
