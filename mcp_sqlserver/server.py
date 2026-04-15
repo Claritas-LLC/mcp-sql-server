@@ -1,12 +1,4 @@
-# --- Helper for normalizing db_name consistently ---
-def _normalize_db_name(db_name: str | int | None) -> str | None:
-    if db_name is None:
-        return None
-    if isinstance(db_name, str):
-        return db_name
-    return str(db_name)
 import queue
-import psutil
 import logging
 from logging.handlers import RotatingFileHandler
 import os
@@ -16,20 +8,26 @@ import json
 import time
 import base64
 import hashlib
-import hmac
 import uuid
 import sys
-import functools
-import asyncio
 from datetime import datetime, timezone
 from threading import Lock
 from contextvars import ContextVar
-from typing import Any, Sequence, Literal, Annotated
+from typing import Any, Sequence, Literal, Union
 from html import escape
-from urllib.parse import quote
-from functools import lru_cache, wraps
+from functools import wraps
+import fastmcp
 import pyodbc
-from fastmcp import FastMCP, Context
+from fastmcp import FastMCP
+
+
+# --- Helper for normalizing db_name consistently ---
+def _normalize_db_name(db_name: str | int | None) -> str | None:
+    if db_name is None:
+        return None
+    if isinstance(db_name, str):
+        return db_name
+    return str(db_name)
 
 # --- Connection Pool Wrapper ---
 
@@ -46,31 +44,6 @@ class PooledConnection:
             self._pool.put(self._conn, block=False)
         except queue.Full:
             self._conn.close()
-
-import psutil
-import logging
-from logging.handlers import RotatingFileHandler
-import os
-import pathlib
-import re
-import json
-import time
-import base64
-import hashlib
-import hmac
-import uuid
-import sys
-import functools
-import asyncio
-from datetime import datetime, timezone
-from threading import Lock
-from contextvars import ContextVar
-from typing import Any, Sequence, Literal, Annotated
-from html import escape
-from urllib.parse import quote
-from functools import lru_cache, wraps
-import pyodbc
-from fastmcp import FastMCP, Context
 
 # Generative UI support (FastMCP 3.2.0+)
 try:
@@ -213,7 +186,6 @@ if _log_file:
     log_path = pathlib.Path(_log_file)
     if log_path.parent and not log_path.parent.exists():
         log_path.parent.mkdir(parents=True, exist_ok=True)
-from logging.handlers import RotatingFileHandler
 
 _log_level = os.getenv("MCP_LOG_LEVEL", "INFO").upper()
 _log_level_value = getattr(logging, _log_level, logging.INFO)
@@ -272,7 +244,6 @@ def _get_audit_handler():
 
 
 # --- Simple Connection Pool Implementation ---
-import queue
 
 _CONN_POOLS: dict[int, queue.Queue] = {}
 _CONN_POOL_LOCKS: dict[int, Lock] = {}
@@ -341,10 +312,14 @@ def _load_settings() -> Settings:
     # Load up to 2 instances: DB_01_*, DB_02_*, fallback to DB_* for instance 1
     def load_instance(idx: int) -> dict[str, str | int]:
         prefix = f"DB_{idx:02d}_"
-        get = lambda k, default=None: os.getenv(prefix + k, default)
+        def get(key: str, default=None):
+            return os.getenv(prefix + key, default)
+
         # Fallback for instance 1: support legacy DB_*
         if idx == 1:
-            get = lambda k, default=None: os.getenv(prefix + k, os.getenv("DB_" + k, default))
+            def get(key: str, default=None):
+                return os.getenv(prefix + key, os.getenv("DB_" + key, default))
+
         port_val = get("PORT") or get("SQL_PORT") or "1433"
         try:
             db_port = int(port_val)
@@ -782,11 +757,6 @@ def _ensure_connection_database_scope(conn: pyodbc.Connection, database: str | N
         cur.execute(f"USE {_quote_sql_ident(target_db)}")
     finally:
         cur.close()
-
-
-
-
-from typing import Union
 
 def get_connection(database: str | None = None, instance: int = 1) -> Union[pyodbc.Connection, 'PooledConnection']:
     validate_instance(instance)
@@ -1262,7 +1232,6 @@ if GENERATIVE_UI_AVAILABLE and GenerativeUI is not None:
     except Exception as e:
         logger.warning(f"Failed to add GenerativeUI provider: {e}")
 
-import fastmcp
 print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: {fastmcp.__version__}\n========================\n")
 
 
@@ -1286,9 +1255,9 @@ def _configure_tool_search_transform() -> None:
 
     try:
         if strategy == "bm25":
-            from fastmcp.server.transforms.search import BM25SearchTransform as SearchTransform
+            pass
         else:
-            from fastmcp.server.transforms.search import RegexSearchTransform as SearchTransform
+            pass
     except Exception as exc:
         logger.warning(
             "Tool search transform requested but unavailable in current FastMCP runtime: %s",
@@ -1509,7 +1478,7 @@ def _run_query_internal(
         try:
             rows = _fetch_limited(cur, row_cap)
             return _rows_to_dicts(cur, rows)
-        except pyodbc.ProgrammingError as e:
+        except pyodbc.ProgrammingError:
             # For DDL (CREATE/ALTER/DROP), fetching results raises ProgrammingError: No results. Previous SQL was not a query.
             if tool_name in {"db_sql2019_create_object", "db_sql2019_alter_object", "db_sql2019_drop_object"}:
                 return [{"status": "success", "message": "DDL executed successfully."}]
@@ -2348,7 +2317,6 @@ def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict
             )
 
     referenced_tables = {(r.get("referenced_schema"), r.get("referenced_table")) for r in relationships}
-    parent_tables = {(r.get("parent_schema"), r.get("parent_table")) for r in relationships}
     all_modeled = {(e.get("schema"), e.get("name")) for e in entities}
 
     for schema, table in referenced_tables:
