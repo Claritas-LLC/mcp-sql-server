@@ -1,0 +1,56 @@
+name: Feature request
+description: Propose a new capability or improvement
+title: "feat: "
+labels:
+  - enhancement
+  - needs-triage
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the proposed feature with clear outcomes and acceptance criteria.
+
+  - type: input
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem does this solve?
+      placeholder: Need structured output for table health results
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the desired behavior and interface.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List testable criteria.
+      placeholder: |
+        - Given X, when Y, then Z
+        - Endpoint returns status 200
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional alternatives and tradeoffs.
+    validations:
+      required: false
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Security and operational impact
+      description: Note any auth, permissions, rate-limit, or logging impact.
+    validations:
+      required: true

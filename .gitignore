@@ -2,11 +2,16 @@ __pycache__/
 *.py[cod]
 *$py.class
 .env
+.env.*
+.python-version
 .venv
 env/
 venv/
 .vscode/
 *.log
+server.log
+
+.mcp_reports/
 
 logs/
 
@@ -29,9 +34,9 @@ test_*.py
 *_test.py
 mcp_sqlserver/test_server.py
 
-plan/
 .DS_Store
 *.pyc
 .pytest_cache/
+.ruff_cache/
 htmlcov/
 .coverage
