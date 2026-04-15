@@ -4,6 +4,10 @@
 
 MCP server for Microsoft SQL Server, built with FastMCP, with support for multi-instance configuration, operational dashboards, and containerized deployment.
 
+## Documentation
+
+- [User Manual](docs/users-manual.md)
+
 ## Features
 
 - SQL Server MCP tools exposed through FastMCP
