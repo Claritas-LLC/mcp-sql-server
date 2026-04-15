@@ -19,6 +19,16 @@ testing/blackbox_results.txt
 testing/e2e_results.txt
 testing/*_results.json
 testing/*_results.txt
+pytest_results.txt
+test_output.txt
+
+# Test scripts and test plans (exclude from production pushes)
+tests/
+testing/
+test_*.py
+*_test.py
+mcp_sqlserver/test_server.py
+
 plan/
 .DS_Store
 *.pyc

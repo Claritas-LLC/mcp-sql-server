@@ -72,7 +72,91 @@ from functools import lru_cache, wraps
 import pyodbc
 from fastmcp import FastMCP, Context
 
+# Generative UI support (FastMCP 3.2.0+)
+try:
+    from fastmcp.apps.generative import GenerativeUI
+    GENERATIVE_UI_AVAILABLE = True
+except ImportError:
+    GenerativeUI = None  # type: ignore
+    GENERATIVE_UI_AVAILABLE = False
+    logger_temp = logging.getLogger("mcp_sqlserver")
+    logger_temp.debug("GenerativeUI not available; fastmcp[apps] not installed")
+
 logger = logging.getLogger("mcp_sqlserver")
+
+_TOOL_EXEC_LOG_ENABLED = os.getenv("MCP_TOOL_EXECUTION_LOG_ENABLED", "true").lower() in {"1", "true", "yes", "on", "y"}
+_SENSITIVE_LOG_KEYS = {"password", "token", "secret", "api_key", "prompt_context", "headers", "authorization"}
+
+# Report storage for web UI (UUID -> HTML content)
+_REPORT_STORAGE: dict[str, dict[str, Any]] = {}
+_REPORT_STORAGE_LOCK = Lock()
+_REPORT_STORAGE_DIR = pathlib.Path(os.getenv("MCP_REPORT_STORAGE_DIR", ".mcp_reports"))
+_REPORT_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _sanitize_tool_log_context(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove sensitive fields from log context."""
+    clean: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key.lower() in _SENSITIVE_LOG_KEYS:
+            clean[key] = "[redacted]"
+        else:
+            clean[key] = value
+    return clean
+
+
+def _extract_result_meta(result: Any) -> dict[str, Any]:
+    """Summarize result metadata without dumping full payload."""
+    meta: dict[str, Any] = {"result_type": type(result).__name__}
+    if isinstance(result, dict):
+        meta["keys"] = sorted(list(result.keys()))[:20]
+        if "status" in result:
+            meta["status"] = result.get("status")
+        if "count" in result and isinstance(result.get("count"), int):
+            meta["count"] = result.get("count")
+        if "items" in result and isinstance(result.get("items"), list):
+            meta["items_count"] = len(result.get("items", []))
+    elif isinstance(result, list):
+        meta["count"] = len(result)
+    return meta
+
+
+def _log_tool_start(tool_name: str, function_name: str, invocation_id: str, context: dict[str, Any]) -> None:
+    if not _TOOL_EXEC_LOG_ENABLED:
+        return
+    logger.info(
+        "tool.start tool=%s function=%s invocation_id=%s context=%s",
+        tool_name,
+        function_name,
+        invocation_id,
+        json.dumps(_sanitize_tool_log_context(context), default=str),
+    )
+
+
+def _log_tool_success(tool_name: str, function_name: str, invocation_id: str, elapsed_ms: int, result: Any) -> None:
+    if not _TOOL_EXEC_LOG_ENABLED:
+        return
+    logger.info(
+        "tool.success tool=%s function=%s invocation_id=%s elapsed_ms=%s result=%s",
+        tool_name,
+        function_name,
+        invocation_id,
+        elapsed_ms,
+        json.dumps(_extract_result_meta(result), default=str),
+    )
+
+
+def _log_tool_error(tool_name: str, function_name: str, invocation_id: str, elapsed_ms: int, exc: Exception) -> None:
+    if not _TOOL_EXEC_LOG_ENABLED:
+        return
+    logger.exception(
+        "tool.error tool=%s function=%s invocation_id=%s elapsed_ms=%s error=%s",
+        tool_name,
+        function_name,
+        invocation_id,
+        elapsed_ms,
+        str(exc),
+    )
 
 # Minimal Settings class to satisfy code references
 class Settings:
@@ -679,7 +763,25 @@ def _connection_string(database: str | None = None, instance: int = 1) -> str:
         f"PWD={inst['db_password']};"
         f"Encrypt={inst['db_encrypt']};"
         f"TrustServerCertificate={inst['db_trust_cert']};"
+        f"MARS_Connection=Yes;"
     )
+
+
+def _quote_sql_ident(identifier: str) -> str:
+    return f"[{identifier.replace(']', ']]')}]"
+
+
+def _ensure_connection_database_scope(conn: pyodbc.Connection, database: str | None, instance: int) -> None:
+    """Force connection context to the requested (or default) database."""
+    inst = SETTINGS.db_instances.get(instance)
+    if not inst:
+        raise RuntimeError(f"No database instance configured for instance={instance}.")
+    target_db = str(database or inst["db_name"])
+    cur = conn.cursor()
+    try:
+        cur.execute(f"USE {_quote_sql_ident(target_db)}")
+    finally:
+        cur.close()
 
 
 
@@ -697,7 +799,10 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
             # Validate connection is alive
             try:
                 cur = conn.cursor()
-                cur.execute("SELECT 1")
+                try:
+                    cur.execute("SELECT 1")
+                finally:
+                    cur.close()
             except Exception:
                 # Connection is dead, replace
                 conn.close()
@@ -707,6 +812,21 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
             # Pool exhausted, create new connection (not pooled)
             conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
             conn.autocommit = True
+
+        # Reset scope on every checkout since pool keys are per-instance (not per-database).
+        # If a pooled connection is left in a bad state (e.g., busy with previous results),
+        # replace it and retry scope reset once.
+        try:
+            _ensure_connection_database_scope(conn, database, instance)
+        except Exception as exc:
+            logger.warning(f"Discarding pooled connection after scope reset failure: {exc}")
+            try:
+                conn.close()
+            except Exception:
+                pass
+            conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+            conn.autocommit = True
+            _ensure_connection_database_scope(conn, database, instance)
 
         # Return a wrapped connection with pooled close
         return PooledConnection(conn, pool)
@@ -718,6 +838,7 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
         else:
             conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
         conn.autocommit = True
+        _ensure_connection_database_scope(conn, database, instance)
         return conn
 
 
@@ -1103,16 +1224,46 @@ def _ensure_write_enabled() -> None:
         raise ValueError("Write operations are disabled. Set MCP_ALLOW_WRITE=true and MCP_CONFIRM_WRITE=true.")
 
 
+def _public_base_url() -> str:
+    if SETTINGS.public_base_url:
+        return SETTINGS.public_base_url.rstrip("/")
+
+    host = SETTINGS.host.strip() or "localhost"
+    if host in {"0.0.0.0", "::", "127.0.0.1"}:
+        host = "localhost"
+    return f"http://{host}:{SETTINGS.port}"
+
+
+def _report_file_path(report_id: str) -> pathlib.Path:
+    return _REPORT_STORAGE_DIR / f"{report_id}.html"
+
+
+def _persist_report_html(report_id: str, html: str) -> None:
+    _report_file_path(report_id).write_text(html, encoding="utf-8")
+
+
+def _load_report_html(report_id: str) -> str | None:
+    report_path = _report_file_path(report_id)
+    if not report_path.exists():
+        return None
+    return report_path.read_text(encoding="utf-8")
+
+
 
 # FastMCP app initialization
 MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server")
 mcp = FastMCP(name=MCP_SERVER_NAME)
 
-try:
-    import fastmcp
-    print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: {fastmcp.__version__}\n========================\n")
-except Exception:
-    print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: unknown\n========================\n")
+# Add Generative UI provider for dynamic dashboard generation
+if GENERATIVE_UI_AVAILABLE and GenerativeUI is not None:
+    try:
+        mcp.add_provider(GenerativeUI())  # type: ignore
+        logger.info("GenerativeUI provider registered for dynamic dashboard generation")
+    except Exception as e:
+        logger.warning(f"Failed to add GenerativeUI provider: {e}")
+
+import fastmcp
+print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: {fastmcp.__version__}\n========================\n")
 
 
 def _configure_tool_search_transform() -> None:
@@ -1361,7 +1512,7 @@ def _run_query_internal(
         except pyodbc.ProgrammingError as e:
             # For DDL (CREATE/ALTER/DROP), fetching results raises ProgrammingError: No results. Previous SQL was not a query.
             if tool_name in {"db_sql2019_create_object", "db_sql2019_alter_object", "db_sql2019_drop_object"}:
-                return {"status": "success", "message": "DDL executed successfully."}
+                return [{"status": "success", "message": "DDL executed successfully."}]
             raise
     finally:
         conn.close()
@@ -1819,6 +1970,14 @@ def db_sql2019_analyze_table_health(
     """Table-level storage/index/stats/constraint analysis."""
     if not schema or not table_name:
         raise ValueError("schema and table_name are required")
+    logger.info(
+        "table_health.start instance=%s database=%s schema=%s table=%s view=%s",
+        instance,
+        database_name,
+        schema,
+        table_name,
+        view,
+    )
     validate_instance(instance)
     _enforce_table_scope_for_ident(schema, table_name)
     db_name = database_name or get_instance_config(instance)["db_name"]
@@ -2032,7 +2191,25 @@ def db_sql2019_analyze_table_health(
         shaped = _apply_table_health_view(result, view)
         budgeted = _apply_token_budget(shaped, token_budget)
         projected = _apply_field_projection(budgeted, fields)
-        return _paginate_tool_result(projected, page=page, page_size=page_size)
+        output = _paginate_tool_result(projected, page=page, page_size=page_size)
+        logger.info(
+            "table_health.success instance=%s database=%s schema=%s table=%s recommendations=%s",
+            instance,
+            db_name_str,
+            schema,
+            table_name,
+            len(recommendations),
+        )
+        return output
+    except Exception:
+        logger.exception(
+            "table_health.error instance=%s database=%s schema=%s table=%s",
+            instance,
+            db_name_str,
+            schema,
+            table_name,
+        )
+        raise
     finally:
         conn.close()
 
@@ -2188,30 +2365,140 @@ def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict
 
 
 def _render_data_model_html(model: dict[str, Any], issues: dict[str, list[dict[str, Any]]]) -> str:
-    # Minimal HTML rendering logic for open_logical_model
+    database_name = escape(str(model.get("database", "Unknown database")))
+    summary = model.get("summary", {}) if isinstance(model.get("summary"), dict) else {}
+    entities = model.get("entities", []) if isinstance(model.get("entities"), list) else []
+    relationships = model.get("relationships", []) if isinstance(model.get("relationships"), list) else []
+    entity_cards = _render_entity_cards_html(entities)
+    relationships_html = _render_relationships_html(relationships)
+    issue_total = sum(len(group) for group in issues.values())
     html = f"""
     <html>
-    <head><style>body {{ font-family: sans-serif; }} .issue {{ color: red; }}</style></head>
+    <head>
+        <title>Logical Data Model - {database_name}</title>
+        <style>
+            body {{ font-family: 'Segoe UI', sans-serif; margin: 0; background: #f4f7fb; color: #1f2937; }}
+            .page {{ max-width: 1440px; margin: 0 auto; padding: 32px 24px 48px; }}
+            .hero {{ background: linear-gradient(135deg, #0f172a, #1d4ed8); color: white; border-radius: 18px; padding: 28px; box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18); }}
+            .hero h1 {{ margin: 0 0 8px; font-size: 32px; }}
+            .hero p {{ margin: 0; color: rgba(255,255,255,0.84); }}
+            .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 24px 0; }}
+            .stat {{ background: white; border-radius: 14px; padding: 18px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
+            .stat .label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
+            .stat .value {{ font-size: 28px; font-weight: 700; margin-top: 8px; }}
+            .section {{ margin-top: 28px; }}
+            .section h2 {{ margin: 0 0 14px; font-size: 22px; }}
+            .entity-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }}
+            .entity-card, .panel {{ background: white; border-radius: 14px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); overflow: hidden; }}
+            .entity-head {{ padding: 16px 18px; border-bottom: 1px solid #e5e7eb; background: #eff6ff; }}
+            .entity-title {{ font-size: 18px; font-weight: 700; margin: 0; }}
+            .entity-subtitle {{ color: #475569; font-size: 12px; margin-top: 4px; }}
+            .entity-body {{ max-height: 320px; overflow: auto; }}
+            table {{ width: 100%; border-collapse: collapse; }}
+            th, td {{ padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; }}
+            th {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; background: #f8fafc; }}
+            .pill {{ display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #dbeafe; color: #1d4ed8; }}
+            .issue {{ color: #b91c1c; }}
+            .muted {{ color: #64748b; }}
+            .empty {{ padding: 18px; background: white; border-radius: 14px; color: #64748b; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
+        </style>
+    </head>
     <body>
-        <h1>Logical Data Model: {model.get('database')}</h1>
-        <h2>Summary</h2>
-        <ul>
-            <li>Entities: {len(model.get('entities', []))}</li>
-            <li>Relationships: {len(model.get('relationships', []))}</li>
-        </ul>
-        <h2>Issues</h2>
-        {_render_issue_list_html(issues)}
+        <div class="page">
+            <div class="hero">
+                <h1>Logical Data Model</h1>
+                <p>Database <strong>{database_name}</strong> with rendered entities, column metadata, and detected foreign-key relationships.</p>
+            </div>
+            <div class="stats">
+                <div class="stat"><div class="label">Entities</div><div class="value">{len(entities)}</div></div>
+                <div class="stat"><div class="label">Relationships</div><div class="value">{len(relationships)}</div></div>
+                <div class="stat"><div class="label">Issues</div><div class="value">{issue_total}</div></div>
+                <div class="stat"><div class="label">Summary</div><div class="value">{escape(str(summary.get('total_issues', issue_total)))}</div></div>
+            </div>
+            <div class="section">
+                <h2>Relationships</h2>
+                {relationships_html}
+            </div>
+            <div class="section">
+                <h2>Entities</h2>
+                {entity_cards}
+            </div>
+            <div class="section">
+                <h2>Issues</h2>
+                {_render_issue_list_html(issues)}
+            </div>
+        </div>
     </body>
     </html>
     """
     return html
 
 
+def _render_entity_cards_html(entities: list[dict[str, Any]]) -> str:
+    if not entities:
+        return "<div class='empty'>No entities were found for this scope.</div>"
+
+    cards: list[str] = []
+    for entity in entities:
+        schema_name = escape(str(entity.get("schema", "dbo")))
+        table_name = escape(str(entity.get("name", "unknown")))
+        columns = entity.get("columns", []) if isinstance(entity.get("columns"), list) else []
+        rows: list[str] = []
+        for column in columns:
+            if not isinstance(column, dict):
+                continue
+            column_name = escape(str(column.get("COLUMN_NAME", column.get("name", ""))))
+            data_type = escape(str(column.get("DATA_TYPE", column.get("type", ""))))
+            nullable = escape(str(column.get("IS_NULLABLE", column.get("nullable", ""))))
+            rows.append(
+                f"<tr><td><strong>{column_name}</strong></td><td>{data_type}</td><td>{nullable}</td></tr>"
+            )
+        body = "".join(rows) if rows else "<tr><td colspan='3' class='muted'>No column metadata available.</td></tr>"
+        cards.append(
+            f"""
+            <div class="entity-card">
+                <div class="entity-head">
+                    <p class="entity-title">{table_name}</p>
+                    <div class="entity-subtitle">Schema: <span class="pill">{schema_name}</span></div>
+                </div>
+                <div class="entity-body">
+                    <table>
+                        <thead><tr><th>Column</th><th>Type</th><th>Nullable</th></tr></thead>
+                        <tbody>{body}</tbody>
+                    </table>
+                </div>
+            </div>
+            """
+        )
+    return f"<div class='entity-grid'>{''.join(cards)}</div>"
+
+
+def _render_relationships_html(relationships: list[dict[str, Any]]) -> str:
+    if not relationships:
+        return "<div class='empty'>No foreign-key relationships were discovered for this scope.</div>"
+
+    rows: list[str] = []
+    for relationship in relationships:
+        if not isinstance(relationship, dict):
+            continue
+        parent = f"{relationship.get('parent_schema', 'dbo')}.{relationship.get('parent_table', '')}.{relationship.get('parent_column', '')}"
+        referenced = f"{relationship.get('referenced_schema', 'dbo')}.{relationship.get('referenced_table', '')}.{relationship.get('referenced_column', '')}"
+        constraint_name = escape(str(relationship.get("constraint_name", "")))
+        rows.append(
+            f"<tr><td>{constraint_name}</td><td>{escape(parent)}</td><td>{escape(referenced)}</td></tr>"
+        )
+
+    return (
+        "<div class='panel'><table><thead><tr><th>Constraint</th><th>From</th><th>To</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
 def _render_issue_list_html(issues: dict[str, list[dict[str, Any]]]) -> str:
     items = []
     for category, list_obj in issues.items():
         for issue in list_obj:
-            items.append(f"<li class='issue'><b>[{category.upper()}]</b> {issue.get('issue')} in {issue.get('entity', 'model')}</li>")
+            items.append(f"<li class='issue'><b>[{escape(category.upper())}]</b> {escape(str(issue.get('issue', 'Issue detected')))} in {escape(str(issue.get('entity', 'model')))}</li>")
     if not items:
         return "<p>No issues found.</p>"
     return "<ul>" + "".join(items) + "</ul>"
@@ -2467,11 +2754,32 @@ def db_sql2019_open_logical_model(
     instance: int = 1,
     database_name: str | None = None,
     schema: str | None = None,
-) -> str:
-    """Returns an HTML visualization of the logical data model."""
+) -> dict[str, Any]:
+    """Generates a shareable data model report URL with UUID."""
     result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
     html = _render_data_model_html(result, result.get("issues", {}))
-    return html
+    
+    # Generate UUID and store report
+    report_id = uuid.uuid4().hex
+    with _REPORT_STORAGE_LOCK:
+        _REPORT_STORAGE[report_id] = {
+            "html": html,
+            "database": database_name or get_instance_config(instance)["db_name"],
+            "schema": schema or "all",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "instance": instance,
+        }
+    _persist_report_html(report_id, html)
+    
+    # Return dict with URL and metadata
+    return {
+        "message": f"ERD webpage generated for database '{database_name or get_instance_config(instance)['db_name']}'.",
+        "database": database_name or get_instance_config(instance)["db_name"],
+        "erd_url": f"{_public_base_url()}/data-model-analysis?id={report_id}",
+        "report_id": report_id,
+        "summary": result.get("summary", {}),
+        "url_hint": "Set MCP_PUBLIC_BASE_URL when the server runs behind Docker port mapping or a reverse proxy.",
+    }
 
 
 def db_sql2019_generate_ddl(
@@ -2705,20 +3013,530 @@ def _register_dual_instance_tools():
             tool_name = f"{prefix}{name}"
             
             # Use a closure to capture function and instance correctly
-            def make_wrapper(f, inst):
+            def make_wrapper(f, inst, registered_tool_name: str):
                 @wraps(f)
                 def wrapper(*args, **kwargs):
                     # Remove instance from kwargs if it was passed by MCP (it shouldn't be, but just in case)
                     kwargs.pop("instance", None)
                     kwargs["instance"] = inst
-                    return f(*args, **kwargs)
+                    invocation_id = uuid.uuid4().hex
+                    start = time.perf_counter()
+                    context = {
+                        "instance": inst,
+                        "database_name": kwargs.get("database_name") or kwargs.get("database"),
+                        "schema": kwargs.get("schema") or kwargs.get("schema_name"),
+                        "table_name": kwargs.get("table_name"),
+                        "args_keys": sorted(list(kwargs.keys())),
+                    }
+                    function_name = f.__name__
+                    _log_tool_start(registered_tool_name, function_name, invocation_id, context)
+                    try:
+                        result = f(*args, **kwargs)
+                        elapsed_ms = int((time.perf_counter() - start) * 1000)
+                        _log_tool_success(registered_tool_name, function_name, invocation_id, elapsed_ms, result)
+                        return result
+                    except Exception as exc:
+                        elapsed_ms = int((time.perf_counter() - start) * 1000)
+                        _log_tool_error(registered_tool_name, function_name, invocation_id, elapsed_ms, exc)
+                        raise
                 return wrapper
             
-            wrapped = make_wrapper(func, instance)
+            wrapped = make_wrapper(func, instance, tool_name)
             mcp.tool(name=tool_name)(wrapped)
+
+            # Backward-compatible aliases for clients that call by function-style names.
+            # Example: db_sql2019_analyze_table_health / db_01_sql2019_analyze_table_health
+            func_name = getattr(func, "__name__", "")
+            alias_name_set: set[str] = set()
+            if func_name.startswith("db_sql2019_"):
+                suffix = func_name.removeprefix("db_sql2019_")
+                # Per-instance function-style alias.
+                alias_name_set.add(f"{prefix}sql2019_{suffix}")
+                # Unprefixed function-style alias routes to instance 1 for compatibility.
+                if instance == 1:
+                    alias_name_set.add(func_name)
+
+            # Per-instance map-key-style alias (e.g. db_01_sql2019_table_health).
+            alias_name_set.add(f"{prefix}sql2019_{name}")
+            # Unprefixed map-key-style alias routes to instance 1 for compatibility.
+            if instance == 1:
+                alias_name_set.add(f"db_sql2019_{name}")
+                # Typo-compatible aliases observed in some clients (db_db2019_*).
+                alias_name_set.add(f"db_db2019_{name}")
+                if func_name.startswith("db_sql2019_"):
+                    alias_name_set.add(func_name.replace("db_sql2019_", "db_db2019_", 1))
+
+            for alias_name in sorted(alias_name_set):
+                alias_wrapped = make_wrapper(func, instance, alias_name)
+                mcp.tool(name=alias_name)(alias_wrapped)
 
 
 _register_dual_instance_tools()
+
+
+# === Web UI Endpoints ===
+
+def _generate_sessions_monitor_html() -> str:
+    """Generate HTML for the sessions monitoring dashboard."""
+    return _generate_sessions_monitor_html_for_instance(1)
+
+
+def _fetch_sessions_monitor_snapshot(instance: int) -> dict[str, Any]:
+    validate_instance(instance)
+    inst_cfg = get_instance_config(instance)
+    conn = get_connection("master", instance=instance)
+    try:
+        cur = conn.cursor()
+        _execute_safe(
+            cur,
+            """
+            SELECT
+                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS active_sessions,
+                SUM(CASE WHEN status = 'sleeping' THEN 1 ELSE 0 END) AS idle_sessions,
+                COUNT(*) AS total_sessions
+            FROM sys.dm_exec_sessions
+            WHERE is_user_process = 1
+            """,
+        )
+        summary_row = cur.fetchone()
+        _execute_safe(
+            cur,
+            """
+            SELECT TOP (15)
+                s.session_id,
+                s.login_name,
+                s.host_name,
+                s.program_name,
+                s.status,
+                DB_NAME(r.database_id) AS database_name,
+                COALESCE(r.command, '') AS command,
+                COALESCE(r.cpu_time, s.cpu_time, 0) AS cpu_time_ms,
+                COALESCE(r.total_elapsed_time, 0) AS elapsed_time_ms,
+                LEFT(REPLACE(REPLACE(COALESCE(t.text, ''), CHAR(13), ' '), CHAR(10), ' '), 220) AS sql_text
+            FROM sys.dm_exec_sessions AS s
+            LEFT JOIN sys.dm_exec_requests AS r ON s.session_id = r.session_id
+            OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS t
+            WHERE s.is_user_process = 1
+            ORDER BY
+                CASE WHEN r.session_id IS NULL THEN 1 ELSE 0 END,
+                COALESCE(r.total_elapsed_time, 0) DESC,
+                COALESCE(r.cpu_time, s.cpu_time, 0) DESC
+            """,
+        )
+        top_sessions = _rows_to_dicts(cur, cur.fetchall())
+        return {
+            "instance": instance,
+            "database": inst_cfg.get("db_name"),
+            "server": inst_cfg.get("db_server"),
+            "active_sessions": int(summary_row[0] or 0) if summary_row else 0,
+            "idle_sessions": int(summary_row[1] or 0) if summary_row else 0,
+            "total_sessions": int(summary_row[2] or 0) if summary_row else 0,
+            "top_sessions": top_sessions,
+            "available_instances": sorted(SETTINGS.db_instances.keys()),
+            "generated_at": _now_utc_iso(),
+        }
+    finally:
+        conn.close()
+
+
+def _render_session_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "<tr><td colspan='8' class='muted'>No user sessions were found.</td></tr>"
+
+    rendered_rows: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        rendered_rows.append(
+            "<tr>"
+            f"<td>{escape(str(row.get('session_id', '')))}</td>"
+            f"<td>{escape(str(row.get('login_name', '')))}</td>"
+            f"<td>{escape(str(row.get('host_name', '')))}</td>"
+            f"<td>{escape(str(row.get('status', '')))}</td>"
+            f"<td>{escape(str(row.get('database_name') or ''))}</td>"
+            f"<td>{escape(str(row.get('command', '')))}</td>"
+            f"<td>{escape(str(row.get('elapsed_time_ms', 0)))}</td>"
+            f"<td>{escape(str(row.get('sql_text', '')))}</td>"
+            "</tr>"
+        )
+    return "".join(rendered_rows)
+
+
+def _generate_sessions_monitor_html_for_instance(instance: int) -> str:
+    snapshot = _fetch_sessions_monitor_snapshot(instance)
+    links = []
+    for instance_id in snapshot.get("available_instances", []):
+        active_class = "instance-link active" if instance_id == instance else "instance-link"
+        links.append(f"<a class='{active_class}' href='/sessions-monitor?instance={instance_id}'>Instance {instance_id}</a>")
+    switcher = "".join(links)
+    return f"""
+    <html>
+    <head>
+        <title>SQL Server Sessions Monitor</title>
+        <meta http-equiv="refresh" content="15">
+        <style>
+            body {{ font-family: 'Segoe UI', sans-serif; margin: 0; background: #eef2ff; color: #1f2937; }}
+            .page {{ max-width: 1400px; margin: 0 auto; padding: 28px 24px 48px; }}
+            .hero {{ background: linear-gradient(135deg, #0f172a, #1d4ed8); color: white; border-radius: 18px; padding: 24px; box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18); }}
+            .hero h1 {{ margin: 0 0 6px; }}
+            .hero p {{ margin: 4px 0 0; color: rgba(255,255,255,0.86); }}
+            .switcher {{ margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }}
+            .instance-link {{ display: inline-block; padding: 8px 14px; border-radius: 999px; text-decoration: none; color: white; background: rgba(255,255,255,0.18); }}
+            .instance-link.active {{ background: white; color: #1d4ed8; font-weight: 700; }}
+            .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 24px 0; }}
+            .card, .table-panel {{ background: white; border-radius: 16px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
+            .card {{ padding: 18px; }}
+            .label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
+            .value {{ font-size: 28px; font-weight: 700; margin-top: 8px; }}
+            .table-panel {{ overflow: hidden; }}
+            .panel-head {{ padding: 16px 18px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; gap: 12px; }}
+            .panel-title {{ font-size: 20px; font-weight: 700; }}
+            .muted {{ color: #64748b; }}
+            table {{ width: 100%; border-collapse: collapse; }}
+            th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; vertical-align: top; }}
+            th {{ background: #f8fafc; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
+            code {{ font-family: Consolas, monospace; font-size: 12px; }}
+        </style>
+    </head>
+    <body>
+        <div class="page">
+            <div class="hero">
+                <h1>SQL Server Sessions Monitor</h1>
+                <p>Instance {snapshot['instance']} on {escape(str(snapshot['server']))} watching database {escape(str(snapshot['database']))}.</p>
+                <div class="switcher">{switcher}</div>
+            </div>
+            <div class="stats">
+                <div class="card"><div class="label">Active Sessions</div><div class="value">{snapshot['active_sessions']}</div></div>
+                <div class="card"><div class="label">Idle Sessions</div><div class="value">{snapshot['idle_sessions']}</div></div>
+                <div class="card"><div class="label">Total Sessions</div><div class="value">{snapshot['total_sessions']}</div></div>
+                <div class="card"><div class="label">Generated At</div><div class="value" style="font-size:16px">{escape(str(snapshot['generated_at']))}</div></div>
+            </div>
+            <div class="table-panel">
+                <div class="panel-head">
+                    <div class="panel-title">Top Sessions</div>
+                    <div class="muted">Auto-refreshes every 15 seconds</div>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Session</th><th>Login</th><th>Host</th><th>Status</th><th>Database</th><th>Command</th><th>Elapsed ms</th><th>SQL</th>
+                        </tr>
+                    </thead>
+                    <tbody>{_render_session_rows(snapshot['top_sessions'])}</tbody>
+                </table>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+
+# ============================================================================
+# Generative Dashboard Tools (FastMCP 3.2.0+ with GenerativeUI)
+# ============================================================================
+# These tools dynamically generate Prefab UI dashboards using LLM-written code.
+# The LLM sees examples of Prefab components and generates code in real-time.
+# This allows rich, interactive dashboards without pre-built HTML.
+
+def db_sql2019_generate_sessions_dashboard(instance: int = 1) -> dict[str, Any]:
+    """
+    Generate a dynamic Prefab UI dashboard for real-time session monitoring.
+    
+    The LLM writes Python code using Prefab components (charts, cards, tables)
+    to visualize active sessions, their status, and query performance metrics.
+    The dashboard updates dynamically as the user's analysis progresses.
+    
+    Returns a Prefab app definition that the browser renders in real-time as tokens are generated.
+    """
+    try:
+        if not GENERATIVE_UI_AVAILABLE:
+            return {"status": "error", "message": "GenerativeUI not available. Install with: pip install fastmcp[apps]"}
+        
+        # Fetch current sessions metadata for context
+        inst_cfg = get_instance_config(instance)
+        conn = get_connection(instance=instance)
+        try:
+            cur = conn.cursor()
+            # Lightweight query for session counts
+            _execute_safe(cur, """
+                SELECT COUNT(*) as active_sessions
+                FROM sys.dm_exec_sessions 
+                WHERE session_id > 50
+            """)
+            row = cur.fetchone()
+            active_sessions = row[0] if row else 0
+        finally:
+            conn.close()
+        
+        # Return context for the LLM to build the dashboard
+        return {
+            "status": "ready",
+            "tool_name": "generate_prefab_ui",
+            "instructions": """
+Generate a Prefab Python UI dashboard for SQL Server session monitoring.
+
+Use these Prefab components:
+- Column, Row, Heading, Text, Card, CardContent, Badge
+- from prefab_ui.components.charts import BarChart, LineChart, ChartSeries
+
+Include:
+1. Header with database name and instance info
+2. Session stats cards (Active, Idle, Total)
+3. A chart showing session duration distribution
+4. A table listing top sessions with status
+
+Example structure:
+    with Column(gap=6, css_class="p-6"):
+        Heading(f"Session Monitor - {database_name}")
+        with Row(gap=4):
+            # Stat cards here
+        # Chart and table here
+            """,
+            "data": {
+                "database": inst_cfg.get("db_name"),
+                "server": inst_cfg.get("db_server"),
+                "active_sessions": active_sessions,
+                "instance": instance,
+                "timestamp": _now_utc_iso()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error in db_sql2019_generate_sessions_dashboard: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def db_sql2019_generate_model_diagram(database_name: str, instance: int = 1) -> dict[str, Any]:
+    """
+    Generate a dynamic Prefab UI diagram for the logical data model.
+    
+    The LLM analyzes the database schema and writes Python code using Prefab
+    to visualize entity relationships, constraints, and health metrics.
+    
+    Returns a Prefab app definition with an interactive schema visualization.
+    """
+    try:
+        if not GENERATIVE_UI_AVAILABLE:
+            return {"status": "error", "message": "GenerativeUI not available. Install with: pip install fastmcp[apps]"}
+        
+        # Get schema info for the LLM to reference
+        inst_cfg = get_instance_config(instance)
+        conn = get_connection(instance=instance)
+        try:
+            cur = conn.cursor()
+            # Count tables and relationships
+            _execute_safe(cur, f"""
+                SELECT COUNT(*) as table_count
+                FROM [{database_name}].INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_TYPE = 'BASE TABLE'
+            """)
+            tables_row = cur.fetchone()
+            table_count = tables_row[0] if tables_row else 0
+            
+            _execute_safe(cur, f"""
+                SELECT COUNT(*) as fk_count
+                FROM [{database_name}].INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+                WHERE CONSTRAINT_TYPE = 'FOREIGN KEY'
+            """)
+            fk_row = cur.fetchone()
+            fk_count = fk_row[0] if fk_row else 0
+        finally:
+            conn.close()
+        
+        return {
+            "status": "ready",
+            "tool_name": "generate_prefab_ui",
+            "instructions": """
+Generate a Prefab Python UI dashboard for the logical data model.
+
+Use these Prefab components:
+- Column, Row, Heading, Text, Badge, Card, CardContent
+- from prefab_ui.components.charts import BarChart, ChartSeries
+- Heading levels, color-coded badges for constraints
+
+Include:
+1. Title with database name
+2. Summary badges (Table Count, FK Count, Health Score)
+3. A chart showing table size distribution
+4. Key constraints and normalization insights
+5. Recommendations for schema improvements
+
+Example structure:
+    with Column(gap=6, css_class="p-8"):
+        Heading(f"Data Model - {database_name}")
+        with Row(gap=4):
+            # Summary badges
+        # Charts and insights
+            """,
+            "data": {
+                "database": database_name,
+                "server": inst_cfg.get("db_server"),
+                "table_count": table_count,
+                "foreign_key_count": fk_count,
+                "instance": instance,
+                "timestamp": _now_utc_iso()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error in db_sql2019_generate_model_diagram: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def db_sql2019_generate_performance_dashboard(database_name: str, instance: int = 1) -> dict[str, Any]:
+    """
+    Generate a dynamic Prefab UI dashboard for performance metrics.
+    
+    The LLM writes Python code to visualize query performance, index fragmentation,
+    CPU usage, and other key performance indicators in an interactive dashboard.
+    
+    Returns a Prefab app definition with performance visualizations.
+    """
+    try:
+        if not GENERATIVE_UI_AVAILABLE:
+            return {"status": "error", "message": "GenerativeUI not available. Install with: pip install fastmcp[apps]"}
+        
+        inst_cfg = get_instance_config(instance)
+        
+        return {
+            "status": "ready",
+            "tool_name": "generate_prefab_ui",
+            "instructions": """
+Generate a Prefab Python UI dashboard for SQL Server performance metrics.
+
+Use these Prefab components:
+- Column, Row, Heading, Text, Badge, Card, CardContent
+- from prefab_ui.components.charts import LineChart, BarChart, ChartSeries
+- Color-coded severity badges (Critical, High, Medium, Low)
+
+Include:
+1. Performance header with database name
+2. KPI cards (Avg Query Time, Fragmentation %, CPU Usage)
+3. A chart showing query execution trends
+4. Index fragmentation severity breakdown
+5. Top slow queries list
+6. Recommendations for performance tuning
+
+Example structure:
+    with Column(gap=6, css_class="p-8"):
+        Heading(f"Performance Metrics - {database_name}")
+        with Row(gap=4):
+            # KPI cards with color-coded badges
+        # Trend charts and recommendations
+            """,
+            "data": {
+                "database": database_name,
+                "server": inst_cfg.get("db_server"),
+                "instance": instance,
+                "timestamp": _now_utc_iso()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error in db_sql2019_generate_performance_dashboard: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def _register_generative_dashboard_tools() -> None:
+    tool_map = {
+        "generate_sessions_dashboard": db_sql2019_generate_sessions_dashboard,
+        "generate_model_diagram": db_sql2019_generate_model_diagram,
+        "generate_performance_dashboard": db_sql2019_generate_performance_dashboard,
+    }
+
+    for instance in [1, 2]:
+        prefix = "db_01_" if instance == 1 else "db_02_"
+        for name, func in tool_map.items():
+            tool_name = f"{prefix}{name}"
+
+            def make_wrapper(f, inst, registered_tool_name: str):
+                @wraps(f)
+                def wrapper(*args, **kwargs):
+                    kwargs.pop("instance", None)
+                    kwargs["instance"] = inst
+                    invocation_id = uuid.uuid4().hex
+                    start = time.perf_counter()
+                    context = {
+                        "instance": inst,
+                        "database_name": kwargs.get("database_name") or kwargs.get("database"),
+                        "schema": kwargs.get("schema") or kwargs.get("schema_name"),
+                        "table_name": kwargs.get("table_name"),
+                        "args_keys": sorted(list(kwargs.keys())),
+                    }
+                    function_name = f.__name__
+                    _log_tool_start(registered_tool_name, function_name, invocation_id, context)
+                    try:
+                        result = f(*args, **kwargs)
+                        elapsed_ms = int((time.perf_counter() - start) * 1000)
+                        _log_tool_success(registered_tool_name, function_name, invocation_id, elapsed_ms, result)
+                        return result
+                    except Exception as exc:
+                        elapsed_ms = int((time.perf_counter() - start) * 1000)
+                        _log_tool_error(registered_tool_name, function_name, invocation_id, elapsed_ms, exc)
+                        raise
+                return wrapper
+
+            wrapped = make_wrapper(func, instance, tool_name)
+            mcp.tool(name=tool_name)(wrapped)
+
+            func_name = getattr(func, "__name__", "")
+            alias_name_set: set[str] = set()
+            if func_name.startswith("db_sql2019_"):
+                suffix = func_name.removeprefix("db_sql2019_")
+                alias_name_set.add(f"{prefix}sql2019_{suffix}")
+                if instance == 1:
+                    alias_name_set.add(func_name)
+
+            alias_name_set.add(f"{prefix}sql2019_{name}")
+            if instance == 1:
+                alias_name_set.add(f"db_sql2019_{name}")
+                alias_name_set.add(f"db_db2019_{name}")
+                if func_name.startswith("db_sql2019_"):
+                    alias_name_set.add(func_name.replace("db_sql2019_", "db_db2019_", 1))
+
+            for alias_name in sorted(alias_name_set):
+                alias_wrapped = make_wrapper(func, instance, alias_name)
+                mcp.tool(name=alias_name)(alias_wrapped)
+
+
+_register_generative_dashboard_tools()
+
+
+try:
+    from starlette.responses import HTMLResponse, JSONResponse
+
+    @mcp.custom_route("/data-model-analysis", methods=["GET"], name="data_model_analysis")
+    async def data_model_analysis_handler(request):
+        """Handler for /data-model-analysis endpoint."""
+        report_id = request.query_params.get("id")
+        if not report_id:
+            return JSONResponse({"error": "Missing 'id' parameter"}, status_code=400)
+
+        with _REPORT_STORAGE_LOCK:
+            report = _REPORT_STORAGE.get(report_id)
+
+        html = report.get("html") if report else None
+        if html is None:
+            html = _load_report_html(report_id)
+
+        if html is None:
+            return JSONResponse({"error": f"Report '{report_id}' not found"}, status_code=404)
+
+        return HTMLResponse(content=html, status_code=200)
+
+    @mcp.custom_route("/sessions-monitor", methods=["GET"], name="sessions_monitor")
+    async def sessions_monitor_handler(request):
+        """Handler for /sessions-monitor endpoint."""
+        raw_instance = request.query_params.get("instance", "1")
+        try:
+            instance = int(raw_instance)
+            html = _generate_sessions_monitor_html_for_instance(instance)
+            return HTMLResponse(content=html, status_code=200)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:
+            logger.exception("Failed to render sessions monitor for instance=%s", raw_instance)
+            return JSONResponse({"error": str(exc)}, status_code=500)
+
+except Exception as e:
+    logger.warning(f"Failed to add web UI routes: {e}")
 
 
 if __name__ == "__main__":
