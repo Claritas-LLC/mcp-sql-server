@@ -64,18 +64,25 @@ _SENSITIVE_LOG_KEYS = {"password", "token", "secret", "api_key", "prompt_context
 _REPORT_STORAGE: dict[str, dict[str, Any]] = {}
 _REPORT_STORAGE_LOCK = Lock()
 _REPORT_STORAGE_DIR = pathlib.Path(os.getenv("MCP_REPORT_STORAGE_DIR", ".mcp_reports"))
-_REPORT_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _sanitize_tool_log_context(payload: dict[str, Any]) -> dict[str, Any]:
     """Remove sensitive fields from log context."""
-    clean: dict[str, Any] = {}
-    for key, value in payload.items():
-        if key.lower() in _SENSITIVE_LOG_KEYS:
-            clean[key] = "[redacted]"
-        else:
-            clean[key] = value
-    return clean
+    def _sanitize_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            clean_dict: dict[str, Any] = {}
+            for key, nested_value in value.items():
+                key_text = str(key)
+                if key_text.lower() in _SENSITIVE_LOG_KEYS:
+                    clean_dict[key_text] = "[redacted]"
+                else:
+                    clean_dict[key_text] = _sanitize_value(nested_value)
+            return clean_dict
+        if isinstance(value, list):
+            return [_sanitize_value(item) for item in value]
+        return value
+
+    return _sanitize_value(payload)
 
 
 def _extract_result_meta(result: Any) -> dict[str, Any]:
@@ -796,7 +803,15 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
                 pass
             conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
             conn.autocommit = True
-            _ensure_connection_database_scope(conn, database, instance)
+            try:
+                _ensure_connection_database_scope(conn, database, instance)
+            except Exception as retry_exc:
+                logger.warning(f"Failed scope reset on replacement pooled connection: {retry_exc}")
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                raise
 
         # Return a wrapped connection with pooled close
         return PooledConnection(conn, pool)
@@ -1209,7 +1224,11 @@ def _report_file_path(report_id: str) -> pathlib.Path:
 
 
 def _persist_report_html(report_id: str, html: str) -> None:
-    _report_file_path(report_id).write_text(html, encoding="utf-8")
+    try:
+        _REPORT_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        _report_file_path(report_id).write_text(html, encoding="utf-8")
+    except OSError as exc:
+        raise IOError(f"Failed to persist report '{report_id}'") from exc
 
 
 def _load_report_html(report_id: str) -> str | None:
@@ -1458,7 +1477,7 @@ def _run_query_internal(
     enforce_readonly: bool = True,
     tool_name: str = "db_sql2019_run_query",
     prompt_context: str | None = None,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, Any]] | dict[str, Any]:
     validate_instance(instance)
     if enforce_readonly and not SETTINGS.allow_write:
         _require_readonly(sql)
@@ -1490,7 +1509,7 @@ def _run_query_internal(
         except pyodbc.ProgrammingError:
             # For DDL (CREATE/ALTER/DROP), fetching results raises ProgrammingError: No results. Previous SQL was not a query.
             if tool_name in {"db_sql2019_create_object", "db_sql2019_alter_object", "db_sql2019_drop_object"}:
-                return [{"status": "success", "message": "DDL executed successfully."}]
+                return {"status": "success", "message": "DDL executed successfully."}
             raise
     finally:
         conn.close()
@@ -2846,8 +2865,13 @@ def db_sql2019_open_logical_model(
     instance: int = 1,
     database_name: str | None = None,
     schema: str | None = None,
-) -> dict[str, Any]:
-    """Generates a shareable data model report URL with UUID."""
+    return_dict: bool = False,
+) -> str | dict[str, Any]:
+    """Generate a logical model report.
+
+    When return_dict is False (default), returns the rendered HTML string for backward compatibility.
+    When return_dict is True, returns metadata including erd_url, report_id, and summary.
+    """
     result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
     html = _render_data_model_html(result, result.get("issues", {}))
     
@@ -2862,16 +2886,19 @@ def db_sql2019_open_logical_model(
             "instance": instance,
         }
     _persist_report_html(report_id, html)
-    
-    # Return dict with URL and metadata
-    return {
-        "message": f"ERD webpage generated for database '{database_name or get_instance_config(instance)['db_name']}'.",
-        "database": database_name or get_instance_config(instance)["db_name"],
-        "erd_url": f"{_public_base_url()}/data-model-analysis?id={report_id}",
-        "report_id": report_id,
-        "summary": result.get("summary", {}),
-        "url_hint": "Set MCP_PUBLIC_BASE_URL when the server runs behind Docker port mapping or a reverse proxy.",
-    }
+
+    if return_dict:
+        # Return dict with URL and metadata
+        return {
+            "message": f"ERD webpage generated for database '{database_name or get_instance_config(instance)['db_name']}'.",
+            "database": database_name or get_instance_config(instance)["db_name"],
+            "erd_url": f"{_public_base_url()}/data-model-analysis?id={report_id}",
+            "report_id": report_id,
+            "summary": result.get("summary", {}),
+            "url_hint": "Set MCP_PUBLIC_BASE_URL when the server runs behind Docker port mapping or a reverse proxy.",
+        }
+
+    return html
 
 
 def db_sql2019_generate_ddl(
@@ -3413,12 +3440,13 @@ def db_sql2019_generate_model_diagram(database_name: str, instance: int = 1) -> 
         # Get schema info for the LLM to reference
         inst_cfg = get_instance_config(instance)
         conn = get_connection(instance=instance)
+        db_ident = _quote_sql_ident(database_name)
         try:
             cur = conn.cursor()
             # Count tables and relationships
             _execute_safe(cur, f"""
                 SELECT COUNT(*) as table_count
-                FROM [{database_name}].INFORMATION_SCHEMA.TABLES
+                FROM {db_ident}.INFORMATION_SCHEMA.TABLES
                 WHERE TABLE_TYPE = 'BASE TABLE'
             """)
             tables_row = cur.fetchone()
@@ -3426,7 +3454,7 @@ def db_sql2019_generate_model_diagram(database_name: str, instance: int = 1) -> 
             
             _execute_safe(cur, f"""
                 SELECT COUNT(*) as fk_count
-                FROM [{database_name}].INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+                FROM {db_ident}.INFORMATION_SCHEMA.TABLE_CONSTRAINTS
                 WHERE CONSTRAINT_TYPE = 'FOREIGN KEY'
             """)
             fk_row = cur.fetchone()
@@ -3485,11 +3513,12 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
     try:
         validate_instance(instance)
         db_name = database_name or get_instance_config(instance)["db_name"]
+        db_name_str = _normalize_db_name(db_name)
         inst_cfg = get_instance_config(instance)
 
         top_q = db_sql2019_show_top_queries(
             instance=instance,
-            database_name=db_name,
+            database_name=db_name_str,
             metric="duration",
             limit=10,
             view="standard",
@@ -3498,11 +3527,11 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
         )
         frag = db_sql2019_check_fragmentation(
             instance=instance,
-            database_name=db_name,
+            database_name=db_name_str,
             page=1,
             page_size=50,
         )
-        sec_perf = db_sql2019_db_sec_perf_metrics(instance=instance, database_name=db_name)
+        sec_perf = db_sql2019_db_sec_perf_metrics(instance=instance, database_name=db_name_str)
 
         queries = top_q.get("queries", []) if isinstance(top_q, dict) else []
         metric_values = [
@@ -3697,7 +3726,8 @@ try:
             return JSONResponse({"error": str(exc)}, status_code=500)
 
 except Exception as e:
-    logger.warning(f"Failed to add web UI routes: {e}")
+    logger.exception("Failed to add web UI routes: %s", e)
+    raise
 
 
 if __name__ == "__main__":
