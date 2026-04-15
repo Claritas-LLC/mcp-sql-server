@@ -1545,27 +1545,33 @@ def db_sql2019_run_query(
     instance: int = 1,
     arg1: str | None = None,
     arg2: str | None = None,
+    database_name: str | None = None,
+    sql: str | None = None,
     params_json: str | None = None,
     max_rows: int | None = None,
     prompt_context: str | None = None,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
-    """Execute SQL; supports both legacy (db, sql) and new (sql only) signatures."""
-    if arg1 is None:
-         raise ValueError("At least one argument (sql) is required")
-         
-    if arg2 is None:
-        database_name = None
-        sql = arg1
+    """Execute SQL; supports legacy positional args and keyword-style database_name/sql."""
+    if sql is not None:
+        resolved_sql = sql
+        resolved_database_name = database_name
     else:
-        database_name = arg1
-        sql = arg2
+        if arg1 is None:
+            raise ValueError("At least one argument (sql) is required")
+
+        if arg2 is None:
+            resolved_database_name = database_name
+            resolved_sql = arg1
+        else:
+            resolved_database_name = database_name or arg1
+            resolved_sql = arg2
 
     rows = _run_query_internal(
         instance=instance,
-        database_name=database_name,
-        sql=sql,
+        database_name=resolved_database_name,
+        sql=resolved_sql,
         params_json=params_json,
         max_rows=max_rows,
         enforce_readonly=True,
@@ -2685,6 +2691,7 @@ def _analyze_logical_data_model_internal(
 def db_sql2019_show_top_queries(
     instance: int = 1,
     database_name: str | None = None,
+    database: str | None = None,
     metric: Literal["cpu", "io", "execution_count", "duration"] = "cpu",
     limit: int = 10,
     view: Literal["summary", "standard", "full"] = "standard",
@@ -2693,7 +2700,7 @@ def db_sql2019_show_top_queries(
 ) -> dict[str, Any]:
     """Performance analysis using Query Store or dm_exec_query_stats."""
     validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
+    db_name = database_name or database or get_instance_config(instance)["db_name"]
     db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
     conn = get_connection(db_name_str, instance=instance)
     try:

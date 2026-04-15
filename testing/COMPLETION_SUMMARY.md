@@ -64,7 +64,7 @@ Schema: 3 schemas (sales, hr, inventory) with FK relationships, indexes, views, 
 **README.md Updates:**
 - Added testing section with quick start commands
 - Updated features to highlight comprehensive test coverage
-- Updated to version 3.14 Python runtime information
+- Updated to version 3.14.2 Python runtime information
 - Added monitoring & logging capabilities
 - Referenced TEST_REPORT.md for detailed results
 
@@ -96,8 +96,8 @@ Schema: 3 schemas (sales, hr, inventory) with FK relationships, indexes, views, 
   7. db_01_sql2019_analyze_logical_data_model()
   8. db_01_sql2019_analyze_sessions()
   9. db_01_sql2019_db_sec_perf_metrics()
-  10. db_01_sql2019_rec_indexes()
-  11. Additional utility functions
+   10. db_01_sql2019_rec_indexes()
+   11. db_01_sql2019_run_query()
   ```
 
 **Security Implementation:** ✓ Comprehensive
@@ -246,4 +246,4 @@ The MCP SQL Server project has been **comprehensively tested**, **thoroughly rev
 ---
 
 **Report Generated:** February 24, 2026  
-**Tested Environment:** Windows 11 + Docker + Python 3.14 + SQL Server 2019
+**Tested Environment:** Windows 11 + Docker + Python 3.14.2 + SQL Server 2019

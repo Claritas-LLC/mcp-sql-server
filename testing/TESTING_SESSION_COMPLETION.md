@@ -234,7 +234,7 @@ All user requirements have been successfully fulfilled:
 
 3. **Test Database**
    - Databases: 5 (master, model, msdb, tempdb, TEST_DB)
-   - Tables: 7 in TEST_DB
+   - Tables: 8 in TEST_DB
    - Views: 1
    - Procedures: 1
    - Indexes: 177

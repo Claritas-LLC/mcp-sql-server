@@ -55,7 +55,7 @@ cat tool_results/db_01_sql2019_db_stats.json
 ```powershell
 # Get tool execution summary
 $summary = Get-Content tool_execution_summary.json | ConvertFrom-Json
-$summary.tools_executed | Select-Object -ExpandProperty '*' | Format-Table
+$summary.tools_executed.GetEnumerator() | ForEach-Object { $_.Value } | Format-Table
 
 # Process individual tool result
 $databases = Get-Content tool_results/db_01_sql2019_list_databases.json | ConvertFrom-Json
@@ -250,7 +250,7 @@ docker run -e 'ACCEPT_EULA=Y' -e 'SA_PASSWORD=McpTestPassword123!' \
 ### Unit Test Mocking
 ```python
 # Load tool results as mock data for unit tests
-with open('tool_results/db_list_databases.json') as f:
+with open('tool_results/db_01_sql2019_list_databases.json') as f:
     mock_db_list = json.load(f)
 
 # Use in test assertions

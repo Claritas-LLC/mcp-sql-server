@@ -1,4 +1,5 @@
 import unittest
+from threading import Lock
 from unittest.mock import patch
 
 from mcp_sqlserver import server
@@ -24,7 +25,7 @@ class TestGetConnectionRetryCleanup(unittest.TestCase):
 
         with patch.object(server, "validate_instance"), \
             patch.object(server, "_CONN_POOLS", {1: _AlwaysFailPool()}), \
-            patch.object(server, "_CONN_POOL_LOCKS", {1: object()}), \
+            patch.object(server, "_CONN_POOL_LOCKS", {1: Lock()}), \
             patch.object(server, "_connection_string", return_value="DRIVER=x;"), \
             patch.object(server.pyodbc, "connect", return_value=replacement_conn), \
             patch.object(server, "_ensure_connection_database_scope", side_effect=[Exception("first scope fail"), Exception("second scope fail")]), \

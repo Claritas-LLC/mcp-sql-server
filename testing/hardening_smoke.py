@@ -49,11 +49,21 @@ def main() -> None:
     s.SETTINGS.audit_log_file = audit_path
     s.SETTINGS.audit_log_include_params = False
     s.SETTINGS.allow_raw_prompts = True
-    # Set db_user for instance 1 (if db_instances is configured)
+    # Ensure instance 1 has a complete config shape so downstream access is safe.
     if 1 in s.SETTINGS.db_instances:
         s.SETTINGS.db_instances[1]["db_user"] = "readonly_user"
     else:
-        s.SETTINGS.db_instances[1] = {"db_user": "readonly_user"}
+        template = next(iter(s.SETTINGS.db_instances.values()), {})
+        s.SETTINGS.db_instances[1] = {
+            "db_server": template.get("db_server", "127.0.0.1"),
+            "db_port": template.get("db_port", 1433),
+            "db_user": "readonly_user",
+            "db_password": template.get("db_password", ""),
+            "db_name": template.get("db_name", "TEST_DB"),
+            "db_driver": template.get("db_driver", "ODBC Driver 17 for SQL Server"),
+            "db_encrypt": template.get("db_encrypt", "no"),
+            "db_trust_cert": template.get("db_trust_cert", "yes"),
+        }
     s._write_query_audit_record(
         tool_name="db_sql2019_run_query",
         database_name="TEST_DB",
