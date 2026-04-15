@@ -1219,6 +1219,15 @@ def _load_report_html(report_id: str) -> str | None:
     return report_path.read_text(encoding="utf-8")
 
 
+def _get_report_html(report_id: str) -> str | None:
+    with _REPORT_STORAGE_LOCK:
+        report = _REPORT_STORAGE.get(report_id)
+    html = report.get("html") if report else None
+    if html is None:
+        html = _load_report_html(report_id)
+    return html
+
+
 
 # FastMCP app initialization
 MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server")
@@ -2402,6 +2411,121 @@ def _render_data_model_html(model: dict[str, Any], issues: dict[str, list[dict[s
     return html
 
 
+def _render_performance_dashboard_html(report: dict[str, Any]) -> str:
+    def fmt_num(value: Any, digits: int = 2) -> str:
+        if isinstance(value, (int, float)):
+            return f"{value:,.{digits}f}" if isinstance(value, float) else f"{value:,}"
+        return "N/A"
+
+    kpis = report.get("kpis", {}) if isinstance(report, dict) else {}
+    top_queries = report.get("top_slow_queries", []) if isinstance(report, dict) else []
+    top_fragments = report.get("top_fragmented_indexes", []) if isinstance(report, dict) else []
+
+    query_rows = []
+    for row in top_queries:
+        if not isinstance(row, dict):
+            continue
+        query_rows.append(
+            "<tr>"
+            f"<td>{escape(str(row.get('query_id', '')))}</td>"
+            f"<td>{escape(fmt_num(row.get('metric_value'), 2))}</td>"
+            f"<td>{escape(str(row.get('count_executions', '')))}</td>"
+            f"<td>{escape(str(row.get('last_execution_time', '')))}</td>"
+            "</tr>"
+        )
+    if not query_rows:
+        query_rows.append("<tr><td colspan='4' class='muted'>No slow query data available.</td></tr>")
+
+    frag_rows = []
+    for row in top_fragments:
+        if not isinstance(row, dict):
+            continue
+        frag_rows.append(
+            "<tr>"
+            f"<td>{escape(str(row.get('schema_name', '')))}</td>"
+            f"<td>{escape(str(row.get('table_name', '')))}</td>"
+            f"<td>{escape(str(row.get('index_name', '')))}</td>"
+            f"<td>{escape(fmt_num(row.get('avg_fragmentation_in_percent'), 2))}</td>"
+            f"<td>{escape(str(row.get('page_count', '')))}</td>"
+            "</tr>"
+        )
+    if not frag_rows:
+        frag_rows.append("<tr><td colspan='5' class='muted'>No fragmentation data available.</td></tr>")
+
+    return f"""
+    <html>
+    <head>
+        <title>SQL Server Performance Dashboard</title>
+        <meta http-equiv="refresh" content="30">
+        <style>
+            body {{ font-family: 'Segoe UI', sans-serif; margin: 0; background: #eef2ff; color: #1f2937; }}
+            .page {{ max-width: 1400px; margin: 0 auto; padding: 28px 24px 48px; }}
+            .hero {{ background: linear-gradient(135deg, #111827, #2563eb); color: white; border-radius: 18px; padding: 24px; box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18); }}
+            .hero h1 {{ margin: 0 0 6px; }}
+            .hero p {{ margin: 4px 0 0; color: rgba(255,255,255,0.88); }}
+            .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 24px 0; }}
+            .card, .panel {{ background: white; border-radius: 16px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
+            .card {{ padding: 18px; }}
+            .label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
+            .value {{ font-size: 28px; font-weight: 700; margin-top: 8px; }}
+            .panel {{ overflow: hidden; margin-top: 20px; }}
+            .panel-head {{ padding: 16px 18px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; gap: 12px; }}
+            .panel-title {{ font-size: 20px; font-weight: 700; }}
+            .muted {{ color: #64748b; }}
+            table {{ width: 100%; border-collapse: collapse; }}
+            th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; vertical-align: top; }}
+            th {{ background: #f8fafc; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
+            .small {{ font-size: 13px; color: #475569; }}
+        </style>
+    </head>
+    <body>
+        <div class="page">
+            <div class="hero">
+                <h1>SQL Server Performance Dashboard</h1>
+                <p>Database {escape(str(report.get('database', '')))} on instance {escape(str(report.get('instance', '')))} ({escape(str(report.get('server', '')))}).</p>
+                <p class="small">Generated at {escape(str(report.get('timestamp', '')))} | Query Store enabled: {escape(str(report.get('query_store_enabled', 'unknown')))}</p>
+            </div>
+
+            <div class="stats">
+                <div class="card"><div class="label">Avg Query Duration Metric</div><div class="value">{escape(fmt_num(kpis.get('avg_query_duration_metric'), 2))}</div></div>
+                <div class="card"><div class="label">Max Query Duration Metric</div><div class="value">{escape(fmt_num(kpis.get('max_query_duration_metric'), 2))}</div></div>
+                <div class="card"><div class="label">Avg Fragmentation %</div><div class="value">{escape(fmt_num(kpis.get('fragmentation_avg_percent'), 2))}</div></div>
+                <div class="card"><div class="label">Data Size MB</div><div class="value">{escape(fmt_num(kpis.get('data_size_mb'), 0))}</div></div>
+                <div class="card"><div class="label">Open Transactions</div><div class="value">{escape(fmt_num(kpis.get('open_transactions'), 0))}</div></div>
+                <div class="card"><div class="label">DB Users</div><div class="value">{escape(fmt_num(kpis.get('user_count'), 0))}</div></div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-head">
+                    <div class="panel-title">Top Slow Queries</div>
+                    <div class="muted">Showing top 5 by duration metric</div>
+                </div>
+                <table>
+                    <thead>
+                        <tr><th>Query ID</th><th>Duration Metric</th><th>Executions</th><th>Last Execution</th></tr>
+                    </thead>
+                    <tbody>{''.join(query_rows)}</tbody>
+                </table>
+            </div>
+
+            <div class="panel">
+                <div class="panel-head">
+                    <div class="panel-title">Top Fragmented Indexes</div>
+                    <div class="muted">Showing top 5 fragmentation rows</div>
+                </div>
+                <table>
+                    <thead>
+                        <tr><th>Schema</th><th>Table</th><th>Index</th><th>Fragmentation %</th><th>Pages</th></tr>
+                    </thead>
+                    <tbody>{''.join(frag_rows)}</tbody>
+                </table>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+
 def _render_entity_cards_html(entities: list[dict[str, Any]]) -> str:
     if not entities:
         return "<div class='empty'>No entities were found for this scope.</div>"
@@ -3359,43 +3483,104 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
     Returns a Prefab app definition with performance visualizations.
     """
     try:
-        if not GENERATIVE_UI_AVAILABLE:
-            return {"status": "error", "message": "GenerativeUI not available. Install with: pip install fastmcp[apps]"}
-        
+        validate_instance(instance)
+        db_name = database_name or get_instance_config(instance)["db_name"]
         inst_cfg = get_instance_config(instance)
-        
-        return {
-            "status": "ready",
-            "tool_name": "generate_prefab_ui",
-            "instructions": """
-Generate a Prefab Python UI dashboard for SQL Server performance metrics.
 
-Use these Prefab components:
-- Column, Row, Heading, Text, Badge, Card, CardContent
-- from prefab_ui.components.charts import LineChart, BarChart, ChartSeries
-- Color-coded severity badges (Critical, High, Medium, Low)
+        top_q = db_sql2019_show_top_queries(
+            instance=instance,
+            database_name=db_name,
+            metric="duration",
+            limit=10,
+            view="standard",
+            page=1,
+            page_size=50,
+        )
+        frag = db_sql2019_check_fragmentation(
+            instance=instance,
+            database_name=db_name,
+            page=1,
+            page_size=50,
+        )
+        sec_perf = db_sql2019_db_sec_perf_metrics(instance=instance, database_name=db_name)
 
-Include:
-1. Performance header with database name
-2. KPI cards (Avg Query Time, Fragmentation %, CPU Usage)
-3. A chart showing query execution trends
-4. Index fragmentation severity breakdown
-5. Top slow queries list
-6. Recommendations for performance tuning
+        queries = top_q.get("queries", []) if isinstance(top_q, dict) else []
+        metric_values = [
+            q.get("metric_value", 0)
+            for q in queries
+            if isinstance(q, dict) and isinstance(q.get("metric_value", 0), (int, float))
+        ]
+        avg_query_metric = (sum(metric_values) / len(metric_values)) if metric_values else None
+        max_query_metric = max(metric_values) if metric_values else None
 
-Example structure:
-    with Column(gap=6, css_class="p-8"):
-        Heading(f"Performance Metrics - {database_name}")
-        with Row(gap=4):
-            # KPI cards with color-coded badges
-        # Trend charts and recommendations
-            """,
-            "data": {
-                "database": database_name,
-                "server": inst_cfg.get("db_server"),
+        frag_items = frag.get("items", []) if isinstance(frag, dict) else []
+        frag_vals = [
+            r.get("avg_fragmentation_in_percent", 0)
+            for r in frag_items
+            if isinstance(r, dict) and isinstance(r.get("avg_fragmentation_in_percent", 0), (int, float))
+        ]
+        avg_frag = (sum(frag_vals) / len(frag_vals)) if frag_vals else 0.0
+
+        report_payload = {
+            "database": db_name,
+            "instance": instance,
+            "server": inst_cfg.get("db_server"),
+            "timestamp": _now_utc_iso(),
+            "query_store_enabled": top_q.get("query_store_enabled") if isinstance(top_q, dict) else None,
+            "kpis": {
+                "avg_query_duration_metric": round(avg_query_metric, 2) if isinstance(avg_query_metric, (int, float)) else None,
+                "max_query_duration_metric": max_query_metric,
+                "fragmentation_avg_percent": round(avg_frag, 2),
+                "fragmentation_high_count_ge_30": len([v for v in frag_vals if v >= 30]),
+                "fragmentation_medium_count_10_29": len([v for v in frag_vals if 10 <= v < 30]),
+                "data_size_mb": sec_perf.get("data_size_mb") if isinstance(sec_perf, dict) else None,
+                "open_transactions": sec_perf.get("open_transactions") if isinstance(sec_perf, dict) else None,
+                "user_count": sec_perf.get("user_count") if isinstance(sec_perf, dict) else None,
+            },
+            "top_slow_queries": [
+                {
+                    "query_id": q.get("query_id"),
+                    "metric_value": q.get("metric_value"),
+                    "count_executions": q.get("count_executions"),
+                    "last_execution_time": q.get("last_execution_time"),
+                }
+                for q in queries[:5]
+                if isinstance(q, dict)
+            ],
+            "top_fragmented_indexes": [
+                {
+                    "schema_name": r.get("schema_name"),
+                    "table_name": r.get("table_name"),
+                    "index_name": r.get("index_name"),
+                    "avg_fragmentation_in_percent": r.get("avg_fragmentation_in_percent"),
+                    "page_count": r.get("page_count"),
+                }
+                for r in frag_items[:5]
+                if isinstance(r, dict)
+            ],
+        }
+
+        html = _render_performance_dashboard_html(report_payload)
+        report_id = uuid.uuid4().hex
+        with _REPORT_STORAGE_LOCK:
+            _REPORT_STORAGE[report_id] = {
+                "html": html,
+                "database": db_name,
                 "instance": instance,
-                "timestamp": _now_utc_iso()
+                "timestamp": report_payload["timestamp"],
+                "report_type": "performance-dashboard",
             }
+        _persist_report_html(report_id, html)
+
+        return {
+            "status": "success",
+            "message": f"Performance dashboard webpage generated for database '{db_name}'.",
+            "database": db_name,
+            "instance": instance,
+            "performance_dashboard_url": f"{_public_base_url()}/performance-dashboard?id={report_id}",
+            "report_id": report_id,
+            "kpis": report_payload["kpis"],
+            "url_hint": "Set MCP_PUBLIC_BASE_URL when the server runs behind Docker port mapping or a reverse proxy.",
         }
     except Exception as e:
         logger.error(f"Error in db_sql2019_generate_performance_dashboard: {e}")
@@ -3477,13 +3662,21 @@ try:
         if not report_id:
             return JSONResponse({"error": "Missing 'id' parameter"}, status_code=400)
 
-        with _REPORT_STORAGE_LOCK:
-            report = _REPORT_STORAGE.get(report_id)
+        html = _get_report_html(report_id)
 
-        html = report.get("html") if report else None
         if html is None:
-            html = _load_report_html(report_id)
+            return JSONResponse({"error": f"Report '{report_id}' not found"}, status_code=404)
 
+        return HTMLResponse(content=html, status_code=200)
+
+    @mcp.custom_route("/performance-dashboard", methods=["GET"], name="performance_dashboard")
+    async def performance_dashboard_handler(request):
+        """Handler for /performance-dashboard endpoint."""
+        report_id = request.query_params.get("id")
+        if not report_id:
+            return JSONResponse({"error": "Missing 'id' parameter"}, status_code=400)
+
+        html = _get_report_html(report_id)
         if html is None:
             return JSONResponse({"error": f"Report '{report_id}' not found"}, status_code=404)
 
