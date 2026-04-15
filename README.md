@@ -1,6 +1,6 @@
 # mcp-sql-server
 
-![CI](https://github.com/harryvaldez/mcp-sql-server/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/harryvaldez/mcp-sql-server/actions/workflows/ci.yml/badge.svg?branch=master)
 
 MCP server for Microsoft SQL Server, built with FastMCP, with support for multi-instance configuration, operational dashboards, and containerized deployment.
 
