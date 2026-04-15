@@ -3,7 +3,8 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+repo_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(repo_root))
 
 from mcp_sqlserver import server
 
@@ -64,7 +65,8 @@ async def main() -> None:
     items = []
     for tool in sorted(tools, key=lambda t: t.name):
         name = tool.name
-        suffix = name.split("_", 2)[2]
+        parts = name.split("_", 2)
+        suffix = parts[2] if len(parts) > 2 else ""
         classification = "read" if suffix in READ_ONLY_SUFFIXES else "write"
         params_schema = tool.parameters if isinstance(tool.parameters, dict) else {}
         param_props = params_schema.get("properties", {})
@@ -100,7 +102,7 @@ async def main() -> None:
     if out["total_tools"] != out["expected_total"]:
         raise SystemExit("Total tool count mismatch")
 
-    target = Path("testing/tool_matrix.json")
+    target = repo_root / "testing" / "tool_matrix.json"
     target.write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(f"Wrote {target} with {out['total_tools']} tools")
 

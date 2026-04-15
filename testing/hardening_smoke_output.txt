@@ -70,7 +70,7 @@ comprehensive_test.py:81: AssertionError
 FAIL Server Info FAILED[0m
 FAIL Error: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')[0m
 ---------------------------- Captured stderr call -----------------------------
-INFO:mcp_sqlserver:[DEBUG] db_sql2019_server_info_mcp: instance=1, server=10.125.1.7, user=mcp_readonly, db=master
+INFO:mcp_sqlserver:[DEBUG] db_sql2019_server_info_mcp: instance=1, server=<SANITIZED_IP>, user=<SANITIZED_USER>, db=master
 Traceback (most recent call last):
   File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\comprehensive_test.py", line 73, in test_server_info
     result = server.db_sql2019_server_info_mcp()
@@ -80,7 +80,7 @@ Traceback (most recent call last):
     conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
 pyodbc.InterfaceError: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
 ------------------------------ Captured log call ------------------------------
-INFO     mcp_sqlserver:server.py:1721 [DEBUG] db_sql2019_server_info_mcp: instance=1, server=10.125.1.7, user=mcp_readonly, db=master
+INFO     mcp_sqlserver:server.py:1721 [DEBUG] db_sql2019_server_info_mcp: instance=1, server=<SANITIZED_IP>, user=<SANITIZED_USER>, db=master
 ______________________________ test_list_objects ______________________________
 
     def test_list_objects():

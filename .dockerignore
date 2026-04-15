@@ -12,5 +12,4 @@
 !mcp_sqlserver/**
 
 # Exclude local-only artifacts inside the package
-mcp_sqlserver/test_server.py
 mcp_sqlserver/__pycache__/

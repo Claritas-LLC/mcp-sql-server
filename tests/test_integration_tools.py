@@ -22,6 +22,8 @@ def _call_tool(tool, *args, **kwargs) -> Any:
 
 @pytest.fixture(autouse=True, scope="module")
 def _require_db_connection(db_available):
+    if not db_available:
+        pytest.skip("database unavailable")
     return db_available
 
 

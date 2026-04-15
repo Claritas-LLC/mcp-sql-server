@@ -15,7 +15,7 @@ class TestReportStorage(unittest.TestCase):
 
     def test_persist_report_wraps_oserror_as_ioerror(self):
         with patch("pathlib.Path.mkdir", autospec=True, side_effect=OSError("read-only fs")):
-            with self.assertRaises(IOError):
+            with self.assertRaisesRegex(OSError, "Failed to persist report"):
                 server._persist_report_html("abc123", "<html>ok</html>")
 
 

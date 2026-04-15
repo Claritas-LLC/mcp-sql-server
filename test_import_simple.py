@@ -8,6 +8,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
+    had_failure = False
+
     print("Attempting to import server module...")
     from mcp_sqlserver import server
     print("PASS server module imported successfully")
@@ -17,12 +19,17 @@ try:
         print("PASS db_sql2019_list_objects function exists")
     else:
         print("FAIL db_sql2019_list_objects function not found")
+        had_failure = True
 
     print("Checking for function get_connection...")
     if hasattr(server, 'get_connection'):
         print("PASS get_connection function exists")
     else:
         print("FAIL get_connection function not found")
+        had_failure = True
+
+    if had_failure:
+        sys.exit(1)
 
     print("\nAll checks passed!")
     

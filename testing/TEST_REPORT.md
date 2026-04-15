@@ -172,7 +172,7 @@ All tools successfully registered with @mcp.tool decorator:
 8. `db_01_sql2019_analyze_sessions()` - Session monitoring
 9. `db_01_sql2019_db_sec_perf_metrics()` - Security & performance metrics
 10. `db_01_sql2019_rec_indexes()` - Recommend missing indexes
-11. Plus additional utility functions
+11. `db_01_sql2019_run_query()` - Execute query using legacy/new signatures
 
 ---
 

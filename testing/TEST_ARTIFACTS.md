@@ -142,7 +142,7 @@ Status: ✓ Running and populated with test data
   - New: "✅ Production Readiness Checklist" (15-point verification)
   - New: "🔒 Security Hardening" section
   - "Database Privileges" - Kept and clarified
-- **Content:** Quick start test commands, prodution hardiness checklist, security best practices
+- **Content:** Quick start test commands, production readiness checklist, security best practices
 
 ---
 
@@ -167,7 +167,7 @@ Status: ✓ Running and populated with test data
 - ✓ Readonly mode blocks INSERT
 - ✓ db_analyze_index_health()
 - ✓ db_check_fragmentation()
-- ✓ db_db_sec_perf_metrics()
+- ✓ db_sql2019_db_sec_perf_metrics()
 
 ### Stress Tests (3 Test Scenarios)
 - ✓ 10 concurrent SELECT queries
@@ -211,22 +211,22 @@ Status: ✓ Running and populated with test data
 ```bash
 # 1. Start test database
 docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=McpTestPassword123!" \
-  --name mcp_test -p 1433:1433 -d \
+  --name mcp_sqlserver_temp -p 14333:1433 -d \
   mcr.microsoft.com/mssql/server:2019-latest
 
 # 2. Wait for startup
 sleep 30
 
 # 3. Populate with test data
-docker exec -i mcp_test /opt/mssql-tools18/bin/sqlcmd \
+docker exec -i mcp_sqlserver_temp /opt/mssql-tools18/bin/sqlcmd \
   -U <admin_user> -P "<admin_password>" < setup_test_simple.sql
 
 # 4. Run test runner
 python test_runner.py
 
 # 5. Cleanup
-docker stop mcp_test
-docker rm mcp_test
+docker stop mcp_sqlserver_temp
+docker rm mcp_sqlserver_temp
 ```
 
 ### Run Specific Test Categories

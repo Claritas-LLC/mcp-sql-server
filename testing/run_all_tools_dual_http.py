@@ -148,7 +148,7 @@ async def main() -> None:
                 "instance": "db_01" if tool_name.startswith("db_01_") else "db_02",
                 "status": status,
                 "duration_ms": duration_ms,
-                "result_file": str(out_file).replace('\\\\', '/'),
+                "result_file": out_file.as_posix(),
                 "error": error,
             }
         )
