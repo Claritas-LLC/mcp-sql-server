@@ -2,11 +2,23 @@
 
 ![CI](https://github.com/harryvaldez/mcp-sql-server/actions/workflows/ci.yml/badge.svg?branch=master)
 
-MCP server for Microsoft SQL Server, built with FastMCP, with support for multi-instance configuration, operational dashboards, and containerized deployment.
+FastMCP server for Microsoft SQL Server with dual-instance support, operational diagnostics, and safe-by-default runtime controls.
+
+Use this project when you want AI clients or MCP-compatible tools to query and inspect SQL Server through a consistent tool interface.
+
+## Why This Project Is Useful
+
+- Provides a structured MCP tool surface for SQL Server operations
+- Supports two independently configured SQL instances in one server
+- Includes diagnostics endpoints and model/report utilities
+- Applies runtime safety controls for write mode, rate limiting, and audit behavior
 
 ## Documentation
 
 - [User Manual](docs/users-manual.md)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security Policy](SECURITY.md)
 
 ## Features
 
@@ -17,6 +29,8 @@ MCP server for Microsoft SQL Server, built with FastMCP, with support for multi-
   - `/sessions-monitor?instance=1` (or `instance=2`)
 - Optional runtime controls for audit logging, rate limiting, and write safety
 
+## Quick Start
+
 ## Prerequisites
 
 - Python 3.12+
@@ -24,7 +38,7 @@ MCP server for Microsoft SQL Server, built with FastMCP, with support for multi-
 - SQL Server credentials for at least one instance
 - Optional: Docker Desktop for container workflows
 
-## Local Setup (Windows PowerShell)
+### Local Setup (Windows PowerShell)
 
 ```powershell
 python -m venv .venv
@@ -48,14 +62,14 @@ MCP_HOST=0.0.0.0
 MCP_PORT=8000
 ```
 
-## Run Locally
+### Run Locally
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 python server_startup.py
 ```
 
-## Run with Docker
+### Run with Docker
 
 ```powershell
 docker build -t mcp-sql-server:local .
@@ -72,6 +86,20 @@ docker run -d --name mcp-sqlserver -p 8085:8000 --env MCP_TRANSPORT=http --env-f
 - `MCP_AUDIT_LOG_QUERIES`, `MCP_AUDIT_LOG_FILE`: audit logging controls
 - `MCP_LOG_LEVEL`, `MCP_LOG_FILE`, `MCP_LOG_ROTATE_*`: runtime logging controls
 - `MCP_TOOL_EXECUTION_LOG_ENABLED`: tool execution event logging toggle
+
+## Where To Get Help
+
+- Start with the [User Manual](docs/users-manual.md)
+- Open a repository issue for bugs or defects
+- Use repository discussions for questions, implementation ideas, and usage patterns (if enabled)
+
+## Who Maintains And Contributes
+
+This project is maintained by repository maintainers and improved through community contributions.
+
+- Contribution process: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Community expectations: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- Vulnerability reporting process: [SECURITY.md](SECURITY.md)
 
 ## Troubleshooting
 
