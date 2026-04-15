@@ -1,0 +1,579 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.2, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 54 items
+
+comprehensive_test.py FFFFFFFFFFF                                        [ 20%]
+tests\test_blackbox_http.py ss                                           [ 24%]
+tests\test_execute_in_database.py ...                                    [ 29%]
+tests\test_hardening_controls.py ............F.s..                       [ 61%]
+tests\test_integration_tools.py sssssssssss                              [ 81%]
+tests\test_readonly_sql.py ...                                           [ 87%]
+tests\test_stress_tools.py s                                             [ 88%]
+tests\test_token_projection.py ......                                    [100%]
+
+================================== FAILURES ===================================
+______________________________ test_server_info _______________________________
+
+    def test_server_info():
+        """Test db_sql2019_server_info_mcp tool"""
+        print_test_header("db_sql2019_server_info_mcp")
+        try:
+>           result = server.db_sql2019_server_info_mcp()
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+comprehensive_test.py:73: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+mcp_sqlserver\server.py:1722: in db_sql2019_server_info_mcp
+    conn = get_connection("master", instance=instance)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+database = 'master', instance = 1
+
+    def get_connection(database: str | None = None, instance: int = 1) -> pyodbc.Connection:
+        validate_instance(instance)
+        if _PYODBC_CONNECT_LOCK is not None:
+            with _PYODBC_CONNECT_LOCK:
+>               conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               pyodbc.InterfaceError: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+
+mcp_sqlserver\server.py:545: InterfaceError
+
+During handling of the above exception, another exception occurred:
+
+    def test_server_info():
+        """Test db_sql2019_server_info_mcp tool"""
+        print_test_header("db_sql2019_server_info_mcp")
+        try:
+            result = server.db_sql2019_server_info_mcp()
+            print("Server Info Result:")
+            print(safe_json_serialize(result))
+            print_test_result("Server Info", True)
+            assert True
+        except Exception as e:
+            print_test_result("Server Info", False, str(e))
+            traceback.print_exc()
+>           assert False
+E           assert False
+
+comprehensive_test.py:81: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: db_sql2019_server_info_mcp[0m
+[95m================================================================================[0m
+FAIL Server Info FAILED[0m
+FAIL Error: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')[0m
+---------------------------- Captured stderr call -----------------------------
+INFO:mcp_sqlserver:[DEBUG] db_sql2019_server_info_mcp: instance=1, server=10.125.1.7, user=mcp_readonly, db=master
+Traceback (most recent call last):
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\comprehensive_test.py", line 73, in test_server_info
+    result = server.db_sql2019_server_info_mcp()
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\mcp_sqlserver\server.py", line 1722, in db_sql2019_server_info_mcp
+    conn = get_connection("master", instance=instance)
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\mcp_sqlserver\server.py", line 545, in get_connection
+    conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+pyodbc.InterfaceError: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+------------------------------ Captured log call ------------------------------
+INFO     mcp_sqlserver:server.py:1721 [DEBUG] db_sql2019_server_info_mcp: instance=1, server=10.125.1.7, user=mcp_readonly, db=master
+______________________________ test_list_objects ______________________________
+
+    def test_list_objects():
+        """Test db_sql2019_list_objects tool with various parameters"""
+        print_test_header("db_sql2019_list_objects")
+        success_count = 0
+        total_tests = 0
+    
+        # Test different object types
+        test_cases = [
+            ("TABLE", None),
+            ("VIEW", None),
+            ("PROCEDURE", None),
+            ("TABLE", "sales"),
+            ("TABLE", "hr"),
+            ("TABLE", "inventory"),
+        ]
+    
+        for object_type, schema in test_cases:
+            total_tests += 1
+            try:
+                result = server.db_sql2019_list_objects(database_name="TEST_DB", object_type=object_type, schema=schema)
+                print(f"\nObjects ({object_type}, schema={schema}):")
+                print(safe_json_serialize(result))
+                success_count += 1
+            except Exception as e:
+                print(f"Error testing {object_type} with schema {schema}: {str(e)}")
+    
+        print_test_result(f"List Objects ({success_count}/{total_tests})", success_count == total_tests)
+>       assert success_count == total_tests
+E       assert 0 == 6
+
+comprehensive_test.py:110: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: db_sql2019_list_objects[0m
+[95m================================================================================[0m
+Error testing TABLE with schema None: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+Error testing VIEW with schema None: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+Error testing PROCEDURE with schema None: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+Error testing TABLE with schema sales: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+Error testing TABLE with schema hr: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+Error testing TABLE with schema inventory: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+FAIL List Objects (0/6) FAILED[0m
+__________________________ test_analyze_table_health __________________________
+
+    def test_analyze_table_health():
+        """Test db_sql2019_analyze_table_health tool"""
+        print_test_header("db_sql2019_analyze_table_health")
+        success_count = 0
+        total_tests = 0
+    
+        test_tables = [
+            ("TEST_DB", "sales", "Customers"),
+            ("TEST_DB", "sales", "Products"),
+            ("TEST_DB", "hr", "Employees"),
+            ("TEST_DB", "inventory", "StockMovements"),
+        ]
+    
+        for database_name, schema, table_name in test_tables:
+            total_tests += 1
+            try:
+                result = server.db_sql2019_analyze_table_health(database_name=database_name, schema=schema, table_name=table_name)
+                print(f"\nTable Health ({database_name}.{schema}.{table_name}):")
+                print(safe_json_serialize(result))
+                success_count += 1
+            except Exception as e:
+                print(f"Error analyzing {database_name}.{schema}.{table_name}: {str(e)}")
+    
+        print_test_result(f"Table Health Analysis ({success_count}/{total_tests})", success_count == total_tests)
+>       assert success_count == total_tests
+E       assert 0 == 4
+
+comprehensive_test.py:136: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: db_sql2019_analyze_table_health[0m
+[95m================================================================================[0m
+Error analyzing TEST_DB.sales.Customers: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+Error analyzing TEST_DB.sales.Products: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+Error analyzing TEST_DB.hr.Employees: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+Error analyzing TEST_DB.inventory.StockMovements: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+FAIL Table Health Analysis (0/4) FAILED[0m
+__________________________ test_check_fragmentation ___________________________
+
+    def test_check_fragmentation():
+        """Test db_sql2019_check_fragmentation tool"""
+        print_test_header("db_sql2019_check_fragmentation")
+        try:
+>           result = server.db_sql2019_check_fragmentation(database_name="TEST_DB")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+comprehensive_test.py:142: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+mcp_sqlserver\server.py:1923: in db_sql2019_check_fragmentation
+    fragmented_indexes = _get_index_fragmentation_data(
+mcp_sqlserver\server.py:1426: in _get_index_fragmentation_data
+    conn = get_connection(database_name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+database = 'TEST_DB', instance = 1
+
+    def get_connection(database: str | None = None, instance: int = 1) -> pyodbc.Connection:
+        validate_instance(instance)
+        if _PYODBC_CONNECT_LOCK is not None:
+            with _PYODBC_CONNECT_LOCK:
+>               conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               pyodbc.InterfaceError: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+
+mcp_sqlserver\server.py:545: InterfaceError
+
+During handling of the above exception, another exception occurred:
+
+    def test_check_fragmentation():
+        """Test db_sql2019_check_fragmentation tool"""
+        print_test_header("db_sql2019_check_fragmentation")
+        try:
+            result = server.db_sql2019_check_fragmentation(database_name="TEST_DB")
+            print("Fragmentation Analysis Result:")
+            print(safe_json_serialize(result))
+            print_test_result("Fragmentation Check", True)
+            assert True
+        except Exception as e:
+            print_test_result("Fragmentation Check", False, str(e))
+            traceback.print_exc()
+>           assert False
+E           assert False
+
+comprehensive_test.py:150: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: db_sql2019_check_fragmentation[0m
+[95m================================================================================[0m
+FAIL Fragmentation Check FAILED[0m
+FAIL Error: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')[0m
+---------------------------- Captured stderr call -----------------------------
+Traceback (most recent call last):
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\comprehensive_test.py", line 142, in test_check_fragmentation
+    result = server.db_sql2019_check_fragmentation(database_name="TEST_DB")
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\mcp_sqlserver\server.py", line 1923, in db_sql2019_check_fragmentation
+    fragmented_indexes = _get_index_fragmentation_data(
+        database_name=database_name,
+    ...<3 lines>...
+        limit=200,
+    )
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\mcp_sqlserver\server.py", line 1426, in _get_index_fragmentation_data
+    conn = get_connection(database_name)
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\mcp_sqlserver\server.py", line 545, in get_connection
+    conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+pyodbc.InterfaceError: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+____________________________ test_show_top_queries ____________________________
+
+    def test_show_top_queries():
+        """Test db_sql2019_show_top_queries tool"""
+        print_test_header("db_sql2019_show_top_queries")
+        try:
+>           result = server.db_sql2019_show_top_queries(database="TEST_DB")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: db_sql2019_show_top_queries() got an unexpected keyword argument 'database'
+
+comprehensive_test.py:156: TypeError
+
+During handling of the above exception, another exception occurred:
+
+    def test_show_top_queries():
+        """Test db_sql2019_show_top_queries tool"""
+        print_test_header("db_sql2019_show_top_queries")
+        try:
+            result = server.db_sql2019_show_top_queries(database="TEST_DB")
+            print("Top Queries Result:")
+            print(safe_json_serialize(result))
+            print_test_result("Top Queries", True)
+            assert True
+        except Exception as e:
+            print_test_result("Top Queries", False, str(e))
+            traceback.print_exc()
+>           assert False
+E           assert False
+
+comprehensive_test.py:164: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: db_sql2019_show_top_queries[0m
+[95m================================================================================[0m
+FAIL Top Queries FAILED[0m
+FAIL Error: db_sql2019_show_top_queries() got an unexpected keyword argument 'database'[0m
+---------------------------- Captured stderr call -----------------------------
+Traceback (most recent call last):
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\comprehensive_test.py", line 156, in test_show_top_queries
+    result = server.db_sql2019_show_top_queries(database="TEST_DB")
+TypeError: db_sql2019_show_top_queries() got an unexpected keyword argument 'database'
+__________________________ test_db_sec_perf_metrics ___________________________
+
+    def test_db_sec_perf_metrics():
+        """Test db_sql2019_db_sec_perf_metrics tool with different profiles"""
+        print_test_header("db_sql2019_db_sec_perf_metrics")
+        success_count = 0
+        total_tests = 0
+    
+        profiles = ["oltp", "analytics", "mixed"]
+    
+        for profile in profiles:
+            total_tests += 1
+            try:
+                result = server.db_sql2019_db_sec_perf_metrics(database_name="TEST_DB", profile=profile)
+                print(f"\nSecurity & Performance Metrics ({profile} profile):")
+                print(safe_json_serialize(result))
+                success_count += 1
+            except Exception as e:
+                print(f"Error testing profile {profile}: {str(e)}")
+    
+        print_test_result(f"DB Security & Performance Metrics ({success_count}/{total_tests})", success_count == total_tests)
+>       assert success_count == total_tests
+E       assert 0 == 3
+
+comprehensive_test.py:185: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: db_sql2019_db_sec_perf_metrics[0m
+[95m================================================================================[0m
+Error testing profile oltp: db_sql2019_db_sec_perf_metrics() got an unexpected keyword argument 'database_name'
+Error testing profile analytics: db_sql2019_db_sec_perf_metrics() got an unexpected keyword argument 'database_name'
+Error testing profile mixed: db_sql2019_db_sec_perf_metrics() got an unexpected keyword argument 'database_name'
+FAIL DB Security & Performance Metrics (0/3) FAILED[0m
+_______________________ test_analyze_logical_data_model _______________________
+
+    def test_analyze_logical_data_model():
+        """Test db_sql2019_analyze_logical_data_model tool"""
+        print_test_header("db_sql2019_analyze_logical_data_model")
+        try:
+>           result = server.db_sql2019_analyze_logical_data_model(database_name="TEST_DB")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+comprehensive_test.py:191: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+mcp_sqlserver\server.py:2268: in db_sql2019_analyze_logical_data_model
+    result = _analyze_logical_data_model_internal(
+mcp_sqlserver\server.py:2531: in _analyze_logical_data_model_internal
+    conn = get_connection(database_name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+database = 'TEST_DB', instance = 1
+
+    def get_connection(database: str | None = None, instance: int = 1) -> pyodbc.Connection:
+        validate_instance(instance)
+        if _PYODBC_CONNECT_LOCK is not None:
+            with _PYODBC_CONNECT_LOCK:
+>               conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               pyodbc.InterfaceError: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+
+mcp_sqlserver\server.py:545: InterfaceError
+
+During handling of the above exception, another exception occurred:
+
+    def test_analyze_logical_data_model():
+        """Test db_sql2019_analyze_logical_data_model tool"""
+        print_test_header("db_sql2019_analyze_logical_data_model")
+        try:
+            result = server.db_sql2019_analyze_logical_data_model(database_name="TEST_DB")
+            print("Logical Data Model Analysis Result:")
+            print(safe_json_serialize(result))
+            print_test_result("Logical Data Model Analysis", True)
+            assert True
+        except Exception as e:
+            print_test_result("Logical Data Model Analysis", False, str(e))
+            traceback.print_exc()
+>           assert False
+E           assert False
+
+comprehensive_test.py:199: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: db_sql2019_analyze_logical_data_model[0m
+[95m================================================================================[0m
+FAIL Logical Data Model Analysis FAILED[0m
+FAIL Error: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')[0m
+---------------------------- Captured stderr call -----------------------------
+Traceback (most recent call last):
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\comprehensive_test.py", line 191, in test_analyze_logical_data_model
+    result = server.db_sql2019_analyze_logical_data_model(database_name="TEST_DB")
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\mcp_sqlserver\server.py", line 2268, in db_sql2019_analyze_logical_data_model
+    result = _analyze_logical_data_model_internal(
+        database_name=database_name,
+    ...<3 lines>...
+        include_attributes=include_attributes,
+    )
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\mcp_sqlserver\server.py", line 2531, in _analyze_logical_data_model_internal
+    conn = get_connection(database_name)
+  File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\mcp_sqlserver\server.py", line 545, in get_connection
+    conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+pyodbc.InterfaceError: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+______________________________ test_generate_ddl ______________________________
+
+    def test_generate_ddl():
+        """Test db_sql2019_generate_ddl tool"""
+        print_test_header("db_sql2019_generate_ddl")
+        success_count = 0
+        total_tests = 0
+    
+        test_objects = [
+            ("TEST_DB", "sales.Customers", "TABLE"),
+            ("TEST_DB", "sales.Products", "TABLE"),
+        ]
+    
+        for database_name, object_name, object_type in test_objects:
+            total_tests += 1
+            try:
+                result = server.db_sql2019_generate_ddl(database_name=database_name, object_name=object_name, object_type=object_type)
+                print(f"\nDDL Generation ({database_name}.{object_name}):")
+                print(safe_json_serialize(result))
+                success_count += 1
+            except Exception as e:
+                print(f"Error generating DDL for {database_name}.{object_name}: {str(e)}")
+    
+        print_test_result(f"DDL Generation ({success_count}/{total_tests})", success_count == total_tests)
+>       assert success_count == total_tests
+E       assert 0 == 2
+
+comprehensive_test.py:223: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: db_sql2019_generate_ddl[0m
+[95m================================================================================[0m
+Error generating DDL for TEST_DB.sales.Customers: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+Error generating DDL for TEST_DB.sales.Products: ('IM002', '[IM002] [Microsoft][ODBC Driver Manager] Data source name not found and no default driver specified (0) (SQLDriverConnect)')
+FAIL DDL Generation (0/2) FAILED[0m
+_____________________________ test_explain_query ______________________________
+
+    def test_explain_query():
+        """Test db_sql2019_explain_query tool"""
+        print_test_header("db_sql2019_explain_query")
+        success_count = 0
+        total_tests = 0
+    
+        test_queries = [
+            "SELECT * FROM sales.Customers WHERE CustomerID = 1",
+            "SELECT c.FirstName, c.LastName, COUNT(o.OrderID) as OrderCount FROM sales.Customers c LEFT JOIN sales.Orders o ON c.CustomerID = o.CustomerID GROUP BY c.CustomerID, c.FirstName, c.LastName",
+            "SELECT * FROM sales.Products WHERE Price > 100 ORDER BY Price DESC",
+        ]
+    
+        for query in test_queries:
+            total_tests += 1
+            try:
+                result = server.db_sql2019_explain_query(database_name="TEST_DB", query=query)
+                print(f"\nQuery Explanation ({query[:50]}...):")
+                print(safe_json_serialize(result))
+                success_count += 1
+            except Exception as e:
+                print(f"Error explaining query {query[:50]}...: {str(e)}")
+    
+        print_test_result(f"Query Explanation ({success_count}/{total_tests})", success_count == total_tests)
+>       assert success_count == total_tests
+E       assert 0 == 3
+
+comprehensive_test.py:248: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: db_sql2019_explain_query[0m
+[95m================================================================================[0m
+Error explaining query SELECT * FROM sales.Customers WHERE CustomerID = 1...: db_sql2019_explain_query() got an unexpected keyword argument 'database_name'
+Error explaining query SELECT c.FirstName, c.LastName, COUNT(o.OrderID) a...: db_sql2019_explain_query() got an unexpected keyword argument 'database_name'
+Error explaining query SELECT * FROM sales.Products WHERE Price > 100 ORD...: db_sql2019_explain_query() got an unexpected keyword argument 'database_name'
+FAIL Query Explanation (0/3) FAILED[0m
+_______________________________ test_run_query ________________________________
+
+    def test_run_query():
+        """Test db_sql2019_run_query tool in read mode"""
+        print_test_header("db_sql2019_run_query (READ mode)")
+        success_count = 0
+        total_tests = 0
+    
+        test_queries = [
+            "SELECT COUNT(*) as CustomerCount FROM sales.Customers",
+            "SELECT TOP 5 * FROM sales.Products ORDER BY Price DESC",
+            "SELECT Department, COUNT(*) as EmployeeCount FROM hr.Employees GROUP BY Department",
+        ]
+    
+        for query in test_queries:
+            total_tests += 1
+            try:
+                result = server.db_sql2019_run_query(database_name="TEST_DB", query=query, mode="read")
+                print(f"\nQuery Result ({query[:50]}...):")
+                print(safe_json_serialize(result))
+                success_count += 1
+            except Exception as e:
+                print(f"Error running query {query[:50]}...: {str(e)}")
+    
+        print_test_result(f"Run Query Read Mode ({success_count}/{total_tests})", success_count == total_tests)
+>       assert success_count == total_tests
+E       assert 0 == 3
+
+comprehensive_test.py:273: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: db_sql2019_run_query (READ mode)[0m
+[95m================================================================================[0m
+Error running query SELECT COUNT(*) as CustomerCount FROM sales.Custom...: db_sql2019_run_query() got an unexpected keyword argument 'database_name'
+Error running query SELECT TOP 5 * FROM sales.Products ORDER BY Price ...: db_sql2019_run_query() got an unexpected keyword argument 'database_name'
+Error running query SELECT Department, COUNT(*) as EmployeeCount FROM ...: db_sql2019_run_query() got an unexpected keyword argument 'database_name'
+FAIL Run Query Read Mode (0/3) FAILED[0m
+____________________________ test_user_management _____________________________
+
+    def test_user_management():
+        """Test user management tools"""
+        print_test_header("User Management Tools")
+        success_count = 0
+        total_tests = 0
+    
+        # Test create user
+        total_tests += 1
+        try:
+            result = server.db_sql2019_create_db_user(database_name="TEST_DB", username="test_user_2024", password="TestPass123!")
+            print("Create User Result:")
+            print(safe_json_serialize(result))
+            success_count += 1
+        except Exception as e:
+            print(f"Error creating user: {str(e)}")
+    
+        # Test drop user
+        total_tests += 1
+        try:
+            result = server.db_sql2019_drop_db_user(database_name="TEST_DB", username="test_user_2024")
+            print("Drop User Result:")
+            print(safe_json_serialize(result))
+            success_count += 1
+        except Exception as e:
+            print(f"Error dropping user: {str(e)}")
+    
+        print_test_result(f"User Management ({success_count}/{total_tests})", success_count == total_tests)
+>       assert success_count == total_tests
+E       assert 0 == 2
+
+comprehensive_test.py:302: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+[95m================================================================================[0m
+[95mTESTING: User Management Tools[0m
+[95m================================================================================[0m
+Error creating user: db_sql2019_create_db_user() got an unexpected keyword argument 'database_name'
+Error dropping user: db_sql2019_drop_db_user() got an unexpected keyword argument 'database_name'
+FAIL User Management (0/2) FAILED[0m
+_________________ test_audit_log_includes_api_caller_identity _________________
+
+tmp_path = WindowsPath('C:/Users/HarryValdez/AppData/Local/Temp/pytest-of-HarryValdez/pytest-39/test_audit_log_includes_api_ca0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002A524BEAC60>
+
+    def test_audit_log_includes_api_caller_identity(tmp_path, monkeypatch):
+        audit_file = tmp_path / "query_audit_caller.jsonl"
+    
+        monkeypatch.setattr(server.SETTINGS, "audit_log_queries", True)
+        monkeypatch.setattr(server.SETTINGS, "audit_log_file", str(audit_file))
+        monkeypatch.setattr(server.SETTINGS, "audit_log_include_params", False)
+        monkeypatch.setattr(server, "_current_api_caller", lambda: "token:abc123def456")
+    
+        server._write_query_audit_record(
+            tool_name="db_sql2019_run_query",
+            database_name="TEST_DB",
+            sql="SELECT 1",
+            params_json=None,
+            prompt_context=None,
+        )
+    
+        payload = json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])
+        assert payload.get("api_caller") == "token:abc123def456"
+>       assert payload.get("db_user") == server.SETTINGS.db_user
+                                         ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'Settings' object has no attribute 'db_user'
+
+tests\test_hardening_controls.py:249: AttributeError
+=========================== short test summary info ===========================
+FAILED comprehensive_test.py::test_server_info - assert False
+FAILED comprehensive_test.py::test_list_objects - assert 0 == 6
+FAILED comprehensive_test.py::test_analyze_table_health - assert 0 == 4
+FAILED comprehensive_test.py::test_check_fragmentation - assert False
+FAILED comprehensive_test.py::test_show_top_queries - assert False
+FAILED comprehensive_test.py::test_db_sec_perf_metrics - assert 0 == 3
+FAILED comprehensive_test.py::test_analyze_logical_data_model - assert False
+FAILED comprehensive_test.py::test_generate_ddl - assert 0 == 2
+FAILED comprehensive_test.py::test_explain_query - assert 0 == 3
+FAILED comprehensive_test.py::test_run_query - assert 0 == 3
+FAILED comprehensive_test.py::test_user_management - assert 0 == 2
+FAILED tests/test_hardening_controls.py::test_audit_log_includes_api_caller_identity
+================== 12 failed, 27 passed, 15 skipped in 6.57s ==================

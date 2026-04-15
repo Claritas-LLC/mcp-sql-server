@@ -27,13 +27,6 @@ testing/*_results.txt
 pytest_results.txt
 test_output.txt
 
-# Test scripts and test plans (exclude from production pushes)
-tests/
-testing/
-test_*.py
-*_test.py
-mcp_sqlserver/test_server.py
-
 .DS_Store
 *.pyc
 .pytest_cache/
