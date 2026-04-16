@@ -8,7 +8,7 @@ Security fixes are applied to the default branch and latest container image tag.
 
 Do not open public issues for sensitive vulnerabilities.
 
-Report vulnerabilities to: maintainers@example.com
+Report vulnerabilities to: harry.valdez@gmail.com
 
 Include:
 
