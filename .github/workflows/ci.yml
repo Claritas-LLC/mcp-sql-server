@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           if [ -d tests ] && [ -n "$(find tests -type f -name '*.py' -print -quit)" ]; then
-            pytest -q
+            PYTHONPATH=. pytest -q
           else
             echo "No tests detected; skipping pytest"
           fi
