@@ -222,16 +222,24 @@ _audit_log_rotate_backup_count = int(os.getenv("MCP_AUDIT_LOG_ROTATE_BACKUP_COUN
 
 # Module-level audit log handler and lock
 _AUDIT_LOG_HANDLER = None
+_AUDIT_LOG_HANDLER_PATH: str | None = None
 _AUDIT_LOG_HANDLER_INIT_LOCK = Lock()
 
 def _get_audit_handler():
-    global _AUDIT_LOG_HANDLER
-    if _AUDIT_LOG_HANDLER is not None:
+    global _AUDIT_LOG_HANDLER, _AUDIT_LOG_HANDLER_PATH
+    log_path = str(getattr(SETTINGS, "audit_log_file", _audit_log_file) or _audit_log_file)
+    if _AUDIT_LOG_HANDLER is not None and _AUDIT_LOG_HANDLER_PATH == log_path:
         return _AUDIT_LOG_HANDLER
     with _AUDIT_LOG_HANDLER_INIT_LOCK:
-        if _AUDIT_LOG_HANDLER is not None:
+        if _AUDIT_LOG_HANDLER is not None and _AUDIT_LOG_HANDLER_PATH == log_path:
             return _AUDIT_LOG_HANDLER
-        log_path = _audit_log_file
+        if _AUDIT_LOG_HANDLER is not None:
+            try:
+                _AUDIT_LOG_HANDLER.close()
+            except Exception:
+                pass
+            _AUDIT_LOG_HANDLER = None
+            _AUDIT_LOG_HANDLER_PATH = None
         log_dir = os.path.dirname(log_path)
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
@@ -247,6 +255,7 @@ def _get_audit_handler():
         handler.setLevel(logging.INFO)
         handler.setFormatter(logging.Formatter("%(message)s"))
         _AUDIT_LOG_HANDLER = handler
+        _AUDIT_LOG_HANDLER_PATH = log_path
         return handler
 
 
@@ -2366,7 +2375,40 @@ def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict
     return issues
 
 
-def _render_data_model_html(model: dict[str, Any], issues: dict[str, list[dict[str, Any]]]) -> str:
+def _sanitize_relationship_label(value: Any) -> str:
+    raw = str(value or "")
+    return re.sub(r"[^A-Za-z0-9_]", "", raw)
+
+
+def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus_entity: str | None = None) -> str:
+    # Backward compatibility path used by tests: _render_data_model_html(report_id, model, page=..., focus_entity=...)
+    if isinstance(model, str) and isinstance(issues, dict):
+        report_id = model
+        legacy_model = issues
+        logical_model = legacy_model.get("logical_model", {}) if isinstance(legacy_model, dict) else {}
+        relationships = logical_model.get("relationships", []) if isinstance(logical_model, dict) else []
+        mermaid_lines = ["graph TD"]
+        for rel in relationships:
+            if not isinstance(rel, dict):
+                continue
+            from_entity = str(rel.get("from_entity", "")).replace(".", "_")
+            to_entity = str(rel.get("to_entity", "")).replace(".", "_")
+            safe_label = _sanitize_relationship_label(rel.get("name", ""))
+            if from_entity and to_entity:
+                mermaid_lines.append(f"{from_entity} -->|\"{safe_label}\"| {to_entity}")
+        mermaid_markup = escape("\n".join(mermaid_lines))
+        return (
+            "<html><head><title>Logical Data Model</title></head><body>"
+            f"<div id=\"reportMeta\">{escape(report_id)}</div>"
+            f"<div id=\"diagramLayer\" class=\"mermaid\">{mermaid_markup}</div>"
+            "</body></html>"
+        )
+
+    if not isinstance(model, dict):
+        return "<html><body><p>Invalid model payload.</p></body></html>"
+    if not isinstance(issues, dict):
+        issues = {}
+
     database_name = escape(str(model.get("database", "Unknown database")))
     summary = model.get("summary", {}) if isinstance(model.get("summary"), dict) else {}
     entities = model.get("entities", []) if isinstance(model.get("entities"), list) else []
@@ -2913,8 +2955,16 @@ def db_sql2019_generate_ddl(
     database_name: str | None = None,
     schema_name: str = "dbo",
     table_name: str | None = None,
+    object_name: str | None = None,
+    object_type: str | None = None,
 ) -> str:
     """Generate T-SQL CREATE TABLE script."""
+    if object_type and str(object_type).strip().lower() not in {"table", "tables"}:
+        raise ValueError("object_type must be 'table' for DDL generation")
+    if not table_name and object_name:
+        parsed_schema, parsed_table = _parse_schema_qualified_name(object_name, default_schema=schema_name)
+        schema_name = parsed_schema
+        table_name = parsed_table
     if not table_name:
         raise ValueError("table_name is required")
     validate_instance(instance)

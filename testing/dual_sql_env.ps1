@@ -3,7 +3,7 @@
 # credentials are set via DB_01_USER/DB_01_PASSWORD.
 
 param(
-    [switch]$WriteMode = $true
+    [switch]$WriteMode
 )
 
 $ErrorActionPreference = 'Stop'
@@ -50,7 +50,9 @@ if ($isInsecureTls) {
     }
 }
 
-if ($WriteMode) {
+$enableWriteMode = $WriteMode.IsPresent -or (-not $PSBoundParameters.ContainsKey('WriteMode'))
+
+if ($enableWriteMode) {
     $env:MCP_ALLOW_WRITE = 'true'
     $env:MCP_CONFIRM_WRITE = 'true'
     $env:FASTMCP_AUTH_TYPE = 'apikey'
