@@ -546,7 +546,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002A524BEAC60>
         monkeypatch.setattr(server.SETTINGS, "audit_log_queries", True)
         monkeypatch.setattr(server.SETTINGS, "audit_log_file", str(audit_file))
         monkeypatch.setattr(server.SETTINGS, "audit_log_include_params", False)
-        monkeypatch.setattr(server, "_current_api_caller", lambda: "token:abc123def456")
+        monkeypatch.setattr(server, "_current_api_caller", lambda: "token:test-caller-id")
     
         server._write_query_audit_record(
             tool_name="db_sql2019_run_query",
@@ -557,7 +557,7 @@ monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002A524BEAC60>
         )
     
         payload = json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])
-        assert payload.get("api_caller") == "token:abc123def456"
+        assert payload.get("api_caller") == "token:test-caller-id"
 >       assert payload.get("db_user") == server.SETTINGS.db_user
                                          ^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: 'Settings' object has no attribute 'db_user'
