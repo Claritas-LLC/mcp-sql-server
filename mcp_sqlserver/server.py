@@ -1593,6 +1593,7 @@ def db_sql2019_run_query(
 def db_sql2019_list_objects(
     instance: int = 1,
     database_name: str | None = None,
+    database: str | None = None,
     object_type: str = "TABLE",
     object_name: str | None = None,
     schema: str | None = None,
@@ -1603,7 +1604,7 @@ def db_sql2019_list_objects(
 ) -> dict[str, Any]:
     """Unified object listing for database/schema/table/view/index/function/procedure/trigger."""
     validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
+    db_name = database_name or database or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
     try:
@@ -1912,6 +1913,7 @@ def _get_index_fragmentation_data(
 def db_sql2019_get_index_fragmentation(
     instance: int = 1,
     database_name: str | None = None,
+    database: str | None = None,
     schema: str | None = None,
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
@@ -1922,7 +1924,7 @@ def db_sql2019_get_index_fragmentation(
     """Return index fragmentation rows from dm_db_index_physical_stats."""
     items = _get_index_fragmentation_data(
         instance=instance,
-        database_name=database_name,
+        database_name=database_name or database,
         schema=schema,
         min_fragmentation=min_fragmentation,
         min_page_count=min_page_count,
@@ -1934,6 +1936,7 @@ def db_sql2019_get_index_fragmentation(
 def db_sql2019_analyze_index_health(
     instance: int = 1,
     database_name: str | None = None,
+    database: str | None = None,
     schema: str | None = None,
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
@@ -1944,7 +1947,7 @@ def db_sql2019_analyze_index_health(
     """High-level index health summary."""
     items = _get_index_fragmentation_data(
         instance=instance,
-        database_name=database_name,
+        database_name=database_name or database,
         schema=schema,
         min_fragmentation=min_fragmentation,
         min_page_count=min_page_count,
@@ -1954,7 +1957,7 @@ def db_sql2019_analyze_index_health(
     severe = [r for r in items if (r.get("avg_fragmentation_in_percent") or 0) >= 30]
     medium = [r for r in items if 10 <= (r.get("avg_fragmentation_in_percent") or 0) < 30]
 
-    db_name = database_name or get_instance_config(instance)["db_name"]
+    db_name = database_name or database or get_instance_config(instance)["db_name"]
     result = {
         "database": db_name,
         "schema": schema,
@@ -2816,15 +2819,19 @@ def db_sql2019_show_top_queries(
 def db_sql2019_check_fragmentation(
     instance: int = 1,
     database_name: str | None = None,
+    database: str | None = None,
     schema_name: str | None = None,
     table_name: str | None = None,
+    min_fragmentation: float = 0.0,
+    min_page_count: int = 1,
+    include_recommendations: bool = False,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Check fragmentation for a specific table or all tables in a schema."""
     items = _get_index_fragmentation_data(
         instance=instance,
-        database_name=str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name,
+        database_name=database_name or database,
         schema=schema_name,
     )
     if table_name:
@@ -2835,12 +2842,14 @@ def db_sql2019_check_fragmentation(
 def db_sql2019_db_sec_perf_metrics(
     instance: int = 1,
     database_name: str | None = None,
+    database: str | None = None,
+    profile: str | None = None,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Database security and basic performance metrics."""
     validate_instance(instance)
-    db_name = database_name or get_instance_config(instance)["db_name"]
+    db_name = database_name or database or get_instance_config(instance)["db_name"]
     db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
     conn = get_connection(db_name_str, instance=instance)
     try:
@@ -2953,16 +2962,18 @@ def db_sql2019_open_logical_model(
 def db_sql2019_generate_ddl(
     instance: int = 1,
     database_name: str | None = None,
-    schema_name: str = "dbo",
+    schema_name: str | None = None,
     table_name: str | None = None,
+    schema: str | None = None,
     object_name: str | None = None,
     object_type: str | None = None,
 ) -> str:
     """Generate T-SQL CREATE TABLE script."""
     if object_type and str(object_type).strip().lower() not in {"table", "tables"}:
         raise ValueError("object_type must be 'table' for DDL generation")
+    schema_val = schema_name or schema or "dbo"
     if not table_name and object_name:
-        parsed_schema, parsed_table = _parse_schema_qualified_name(object_name, default_schema=schema_name)
+        parsed_schema, parsed_table = _parse_schema_qualified_name(object_name, default_schema=schema_val)
         schema_name = parsed_schema
         table_name = parsed_table
     if not table_name:
