@@ -19,6 +19,8 @@ from functools import wraps
 import fastmcp
 import pyodbc
 from fastmcp import FastMCP
+import xml.etree.ElementTree as ET
+import math
 
 
 # --- Helper for normalizing db_name consistently ---
@@ -603,6 +605,97 @@ def _extract_jwt_subject(token: str) -> str | None:
     if not isinstance(subject, str) or not subject.strip():
         return None
     return subject.strip()
+
+
+def _convert_sqlplan_to_mermaid(xml_str: str) -> str:
+    """Convert SQL Server Execution Plan (XML) to a detailed Mermaid flow chart."""
+    if not xml_str or not xml_str.strip().startswith("<"):
+        return "graph TD\n  Start[No plan available]"
+
+    try:
+        # Prepare XML for parsing (remove root namespaces for simpler lookups)
+        xml_clean = re.sub(r'\s+xmlns="[^"]+"', '', xml_str, count=1)
+        root = ET.fromstring(xml_clean)
+        
+        nodes: list[str] = ["graph BT"]
+        counter = [0]
+
+        def process_node(element, parent_id=None):
+            # Focus on RelOp (Relationship Operation) nodes
+            if element.tag.endswith("RelOp"):
+                counter[0] += 1
+                curr_id = f"node_{counter[0]}"
+                
+                physical_op = element.attrib.get("PhysicalOp", "Operation")
+                logical_op = element.attrib.get("LogicalOp", "")
+                cost = element.attrib.get("EstimatedTotalSubtreeCost", "0")
+                
+                # Sub-elements for detail
+                details = []
+                
+                # 1. DB Objects (Tables/Indexes)
+                objects = element.findall(".//Object")
+                for obj in objects:
+                    schema = obj.attrib.get("Schema", "").replace("[", "").replace("]", "")
+                    table = obj.attrib.get("Table", "").replace("[", "").replace("]", "")
+                    if table:
+                        details.append(f"OBJ: {schema}.{table}" if schema else f"OBJ: {table}")
+                        break # Show primary object
+                
+                # 2. Predicates (Filter/Seek)
+                # Note: Predicates can be deep, taking a peek at SeekPredicates or Filter
+                for pred_type in ["SeekPredicate", "Filter", "Predicate"]:
+                    p_node = element.find(f".//{pred_type}")
+                    if p_node is not None:
+                        # Extract some text to show intent
+                        text = "".join(p_node.itertext()).strip()
+                        if text:
+                            details.append(f"PRED: {escape(text[:30])}...")
+                            break
+                
+                # 3. Runtime Stats (Actuals)
+                runtime = element.find(".//RunTimeCountersPerThread")
+                if runtime is not None:
+                    ms = runtime.attrib.get("ActualElapsedms")
+                    rows = runtime.attrib.get("ActualRows")
+                    if ms: details.append(f"TIME: {ms}ms")
+                    if rows: details.append(f"ROWS: {rows}")
+
+                # Build final label
+                label_lines = [f"<b>{physical_op}</b>", f"({logical_op})"] + details + [f"Cost: {cost}"]
+                label = "<br/>".join(label_lines)
+                
+                # Style based on cost
+                style = ""
+                try:
+                    cost_val = float(cost)
+                    if cost_val > 0.5: style = f"style {curr_id} fill:#fecaca,stroke:#b91c1c"
+                    elif cost_val > 0.1: style = f"style {curr_id} fill:#fef3c7,stroke:#b45309"
+                except ValueError:
+                    pass
+
+                nodes.append(f"  {curr_id}[\"{label}\"]")
+                if style:
+                    nodes.append(f"  {style}")
+                
+                if parent_id:
+                    # In SQL plans, data flows from child to parent (Bottom up)
+                    nodes.append(f"  {curr_id} --> {parent_id}")
+                
+                new_parent = curr_id
+            else:
+                new_parent = parent_id
+
+            for child in element:
+                process_node(child, new_parent)
+
+        process_node(root)
+        if len(nodes) <= 1:
+            return "graph TD\n  Start[Empty or Unparseable Plan]"
+        return "\n".join(nodes)
+    except Exception as exc:
+        logger.warning(f"Failed to convert SQL plan to Mermaid: {exc}")
+        return f"graph TD\n  Error[Failed to parse plan: {escape(str(exc))}]"
 
 
 def _write_query_audit_record(
@@ -2495,6 +2588,10 @@ def _render_performance_dashboard_html(report: dict[str, Any]) -> str:
     for row in top_queries:
         if not isinstance(row, dict):
             continue
+        plan_xml = str(row.get("query_plan", "No plan available"))
+        sql_text = str(row.get("query_sql_text", ""))
+        mermaid_plan = str(row.get("mermaid_plan", "graph TD\n  NoPlan[Plan data missing]"))
+        
         query_rows.append(
             "<tr>"
             f"<td>{escape(str(row.get('query_id', '')))}</td>"
@@ -2502,6 +2599,13 @@ def _render_performance_dashboard_html(report: dict[str, Any]) -> str:
             f"<td>{escape(str(row.get('count_executions', '')))}</td>"
             f"<td>{escape(str(row.get('last_execution_time', '')))}</td>"
             "</tr>"
+            "<tr>"
+            "<td colspan='4'>"
+            f"<details><summary class='small-link'>View Graphical Plan & SQL</summary>"
+            f"<div class='code-block'><strong>Visual Execution Plan:</strong><div class='mermaid'>{mermaid_plan}</div></div>"
+            f"<div class='code-block'><strong>SQL Source:</strong><pre><code>{escape(sql_text)}</code></pre></div>"
+            f"<div class='code-block'><strong>XML Execution Plan:</strong><pre><code>{escape(plan_xml[:5000])}{'...' if len(plan_xml) > 5000 else ''}</code></pre></div>"
+            "</details></td></tr>"
         )
     if not query_rows:
         query_rows.append("<tr><td colspan='4' class='muted'>No slow query data available.</td></tr>")
@@ -2522,11 +2626,29 @@ def _render_performance_dashboard_html(report: dict[str, Any]) -> str:
     if not frag_rows:
         frag_rows.append("<tr><td colspan='5' class='muted'>No fragmentation data available.</td></tr>")
 
+    table_frag_rows = []
+    top_fragmented_tables = report.get("top_fragmented_tables", [])
+    for row in top_fragmented_tables:
+        if not isinstance(row, dict):
+            continue
+        table_frag_rows.append(
+            "<tr>"
+            f"<td>{escape(str(row.get('schema_name', '')))}</td>"
+            f"<td>{escape(str(row.get('table_name', '')))}</td>"
+            f"<td>{escape(fmt_num(row.get('max_fragmentation'), 2))}</td>"
+            f"<td>{escape(str(row.get('page_count_total', '')))}</td>"
+            "</tr>"
+        )
+    if not table_frag_rows:
+        table_frag_rows.append("<tr><td colspan='4' class='muted'>No table fragmentation data available.</td></tr>")
+
     return f"""
     <html>
     <head>
         <title>SQL Server Performance Dashboard</title>
         <meta http-equiv="refresh" content="30">
+        <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+        <script>mermaid.initialize({{startOnLoad:true, theme:'neutral', securityLevel:'loose'}});</script>
         <style>
             body {{ font-family: 'Segoe UI', sans-serif; margin: 0; background: #eef2ff; color: #1f2937; }}
             .page {{ max-width: 1400px; margin: 0 auto; padding: 28px 24px 48px; }}
@@ -2546,6 +2668,10 @@ def _render_performance_dashboard_html(report: dict[str, Any]) -> str:
             th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; vertical-align: top; }}
             th {{ background: #f8fafc; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
             .small {{ font-size: 13px; color: #475569; }}
+            .small-link {{ cursor: pointer; color: #2563eb; font-size: 13px; font-weight: 600; text-decoration: underline; margin: 4px 0; display: block; }}
+            .code-block {{ background: #f1f5f9; padding: 12px; border-radius: 8px; margin: 8px 0; border: 1px solid #e2e8f0; overflow-x: auto; }}
+            pre {{ margin: 0; font-family: 'Consolas', 'Monaco', monospace; font-size: 11px; white-space: pre-wrap; }}
+            .mermaid {{ display: flex; justify-content: center; background: white; padding: 10px; border-radius: 6px; }}
         </style>
     </head>
     <body>
@@ -2578,6 +2704,19 @@ def _render_performance_dashboard_html(report: dict[str, Any]) -> str:
                 </table>
             </div>
 
+            <div class="panel">
+                <div class="panel-head">
+                    <div class="panel-title">Top Fragmented Tables</div>
+                    <div class="muted">Showing top 5 tables by max fragmentation</div>
+                </div>
+                <table>
+                    <thead>
+                        <tr><th>Schema</th><th>Table</th><th>Max Fragmentation %</th><th>Total Pages</th></tr>
+                    </thead>
+                    <tbody>{''.join(table_frag_rows)}</tbody>
+                </table>
+            </div>
+            
             <div class="panel">
                 <div class="panel-head">
                     <div class="panel-title">Top Fragmented Indexes</div>
@@ -2772,7 +2911,8 @@ def db_sql2019_show_top_queries(
                 qt.query_sql_text,
                 rs.{sort_col} AS metric_value,
                 rs.count_executions,
-                CAST(rs.last_execution_time AS nvarchar(40)) AS last_execution_time
+                CAST(rs.last_execution_time AS nvarchar(40)) AS last_execution_time,
+                p.query_plan
             FROM sys.query_store_query q
             JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
             JOIN sys.query_store_plan p ON q.query_id = p.query_id
@@ -2796,9 +2936,11 @@ def db_sql2019_show_top_queries(
                 st.text AS query_sql_text,
                 {sort_col} AS metric_value,
                 count.execution_count,
-                CAST(count.last_execution_time AS nvarchar(40)) AS last_execution_time
+                CAST(count.last_execution_time AS nvarchar(40)) AS last_execution_time,
+                qp.query_plan
             FROM sys.dm_exec_query_stats count
             CROSS APPLY sys.dm_exec_sql_text(count.sql_handle) st
+            CROSS APPLY sys.dm_exec_query_plan(count.plan_handle) qp
             ORDER BY metric_value DESC
             """
             _execute_safe(cur, sql, [limit])
@@ -3640,6 +3782,9 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
                     "metric_value": q.get("metric_value"),
                     "count_executions": q.get("count_executions"),
                     "last_execution_time": q.get("last_execution_time"),
+                    "query_sql_text": q.get("query_sql_text"),
+                    "query_plan": q.get("query_plan"),
+                    "mermaid_plan": _convert_sqlplan_to_mermaid(str(q.get("query_plan") or "")),
                 }
                 for q in queries[:5]
                 if isinstance(q, dict)
@@ -3655,6 +3800,20 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
                 for r in frag_items[:5]
                 if isinstance(r, dict)
             ],
+            "top_fragmented_tables": sorted(
+                [
+                    {
+                        "schema_name": r.get("schema_name"),
+                        "table_name": r.get("table_name"),
+                        "max_fragmentation": r.get("avg_fragmentation_in_percent"),
+                        "page_count_total": r.get("page_count"),
+                    }
+                    for r in frag_items
+                    if isinstance(r, dict) and r.get("index_name")
+                ],
+                key=lambda x: x["max_fragmentation"],
+                reverse=True
+            )[:5],
         }
 
         html = _render_performance_dashboard_html(report_payload)
