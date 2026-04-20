@@ -1,3 +1,7 @@
+# Security Note
+
+**Never commit real secrets or passwords to .env, code, or documentation.**
+Always use environment variables or a secrets manager for production credentials. Replace example secrets with placeholders like `CHANGEME`.
 # mcp-sql-server User Manual
 
 ## 1. Overview
@@ -331,6 +335,28 @@ This server does not aim to:
 - Guarantee behavior for non-SQL-Server dialects
 
 ## 11. Security Expectations
+
+## 11.1 SQL Injection and Multi-Statement Enforcement
+
+All SQL entry points (including `execute_query`, `run_query`, `create_object`, `alter_object`, and `drop_object`) enforce a strict single-statement policy:
+
+- **Multi-statement SQL is blocked.** Any attempt to submit more than one SQL statement (e.g., using multiple semicolons or statement chaining) will be rejected with an error.
+- **Trailing semicolon is allowed.** A single trailing semicolon is permitted if it is the only one present.
+- **Why:** This prevents SQL injection attacks that rely on statement chaining and ensures only one operation is performed per tool call.
+
+If you receive an error about multi-statement SQL, review your input and ensure only a single statement is present. Example of rejected input:
+
+```sql
+SELECT * FROM users; DROP TABLE users;
+```
+
+Example of accepted input:
+
+```sql
+SELECT * FROM users;
+```
+
+This applies to all tool APIs that accept SQL input.
 
 - Never commit `.env` or credential-bearing files.
 - Use least-privilege SQL accounts for production.

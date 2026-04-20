@@ -2,15 +2,22 @@ import re
 
 def _contains_multistatement(sql: str) -> bool:
     """Detects if SQL contains multiple statements (semicolon outside string literals and comments)."""
+    # Remove string literals (single and double quotes) first
+    s = re.sub(r"'([^']|'')*'", '', sql)
+    s = re.sub(r'"([^"\\]|\\.)*"', '', s)
     # Remove single-line comments
-    s = re.sub(r'--.*?$', '', sql, flags=re.MULTILINE)
+    s = re.sub(r'--.*?$', '', s, flags=re.MULTILINE)
     # Remove block comments
     s = re.sub(r'/\*.*?\*/', '', s, flags=re.DOTALL)
-    # Remove string literals
-    s = re.sub(r"'([^']|'')*'", '', s)
-    s = re.sub(r'"([^"]|"")*"', '', s)
-    # Look for semicolon
-    return ";" in s
+    # Look for semicolon outside of string/comments
+    # Allow trailing semicolon if it's the only one
+    semicolons = [m.start() for m in re.finditer(';', s)]
+    if not semicolons:
+        return False
+    # If only one semicolon and it's at the end (ignoring whitespace), allow
+    if len(semicolons) == 1 and s.strip().endswith(';'):
+        return False
+    return True
 
 def _is_strong_password(password: str) -> bool:
     """Checks for minimum password complexity."""
@@ -1657,6 +1664,8 @@ def db_sql2019_execute_query(
     """Legacy-compatible query executor (read-only unless write mode is enabled)."""
     if not sql:
         raise ValueError("sql is required")
+    if _contains_multistatement(sql):
+        raise ValueError("Multi-statement SQL is not allowed. Only a single statement is permitted.")
     rows = _run_query_internal(
         instance=instance,
         database_name=database_name,
@@ -1697,6 +1706,8 @@ def db_sql2019_run_query(
             resolved_database_name = database_name or arg1
             resolved_sql = arg2
 
+    if resolved_sql is not None and _contains_multistatement(resolved_sql):
+        raise ValueError("Multi-statement SQL is not allowed. Only a single statement is permitted.")
     rows = _run_query_internal(
         instance=instance,
         database_name=resolved_database_name,
