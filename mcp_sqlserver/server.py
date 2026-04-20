@@ -192,7 +192,7 @@ class Settings:
         self.port = kwargs.get('port', 8000)
         self.auth_type = kwargs.get('auth_type', '')
         self.mcp_access_key = kwargs.get('mcp_access_key', '')
-        self.query_token_validation_enabled = kwargs.get('query_token_validation_enabled', False)
+        self.query_access_validation_enabled = kwargs.get('query_access_validation_enabled', False)
         self.public_base_url = kwargs.get('public_base_url', '')
         self.ssl_cert = kwargs.get('ssl_cert', '')
         self.ssl_key = kwargs.get('ssl_key', '')
@@ -1669,7 +1669,7 @@ def db_sql2019_execute_query(
     if not sql:
         raise ValueError("sql is required")
     if _validate_single_statement(sql):
-        raise ValueError("Multi-statement SQL is not allowed. Only a single statement is permitted.")
+        raise ValueError("SQL validation failed: multiple operations detected in a single call. Use separate calls for each statement.")
     rows = _run_query_internal(
         instance=instance,
         database_name=database_name,
@@ -1711,7 +1711,7 @@ def db_sql2019_run_query(
             resolved_sql = arg2
 
     if resolved_sql is not None and _validate_single_statement(resolved_sql):
-        raise ValueError("Multi-statement SQL is not allowed. Only a single statement is permitted.")
+        raise ValueError("SQL validation failed: multiple operations detected in a single call. Use separate calls for each statement.")
     rows = _run_query_internal(
         instance=instance,
         database_name=resolved_database_name,
@@ -3300,7 +3300,7 @@ def db_sql2019_create_object(
     if not sql:
         raise ValueError("sql is required")
     if _validate_single_statement(sql):
-        raise ValueError("Multi-statement SQL is not allowed. Only a single CREATE statement is permitted.")
+        raise ValueError("SQL validation failed: multiple operations detected in a single call. Use a separate call for this CREATE statement.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
@@ -3323,7 +3323,7 @@ def db_sql2019_alter_object(
     if not sql:
         raise ValueError("sql is required")
     if _validate_single_statement(sql):
-        raise ValueError("Multi-statement SQL is not allowed. Only a single ALTER statement is permitted.")
+        raise ValueError("SQL validation failed: multiple operations detected in a single call. Use a separate call for this ALTER statement.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
@@ -3346,7 +3346,7 @@ def db_sql2019_drop_object(
     if not sql:
         raise ValueError("sql is required")
     if _validate_single_statement(sql):
-        raise ValueError("Multi-statement SQL is not allowed. Only a single DROP statement is permitted.")
+        raise ValueError("SQL validation failed: multiple operations detected in a single call. Use a separate call for this DROP statement.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
