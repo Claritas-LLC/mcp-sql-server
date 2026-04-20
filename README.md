@@ -76,6 +76,18 @@ docker build -t mcp-sql-server:local .
 docker run -d --name mcp-sqlserver -p 8085:8000 --env MCP_TRANSPORT=http --env-file .env mcp-sql-server:local
 ```
 
+To reduce image size, install only one SQL ODBC driver at build time:
+
+```powershell
+# Install only ODBC Driver 18
+docker build --build-arg ODBC_DRIVER_MAJOR=18 -t mcp-sql-server:local .
+
+# Install only ODBC Driver 17
+docker build --build-arg ODBC_DRIVER_MAJOR=17 -t mcp-sql-server:local .
+```
+
+`ODBC_DRIVER_MAJOR` accepts `17`, `18`, or `both` (default).
+
 ## Key Environment Variables
 
 - `DB_01_*`, `DB_02_*`: SQL Server instance settings

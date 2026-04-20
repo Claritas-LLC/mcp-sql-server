@@ -1,3 +1,24 @@
+def _contains_multistatement(sql: str) -> bool:
+    """Detects if SQL contains multiple statements (semicolon outside string literals)."""
+    # Remove string literals
+    s = re.sub(r"'([^']|'')*'", "", sql)
+    s = re.sub(r'"([^"]|"")*"', "", s)
+    # Look for semicolon
+    return ";" in s
+
+def _is_strong_password(password: str) -> bool:
+    """Checks for minimum password complexity."""
+    if len(password) < 8:
+        return False
+    if not re.search(r"[A-Z]", password):
+        return False
+    if not re.search(r"[a-z]", password):
+        return False
+    if not re.search(r"[0-9]", password):
+        return False
+    if not re.search(r"[^A-Za-z0-9]", password):
+        return False
+    return True
 import queue
 import logging
 from logging.handlers import RotatingFileHandler
@@ -3114,14 +3135,15 @@ def db_sql2019_generate_ddl(
     if object_type and str(object_type).strip().lower() not in {"table", "tables"}:
         raise ValueError("object_type must be 'table' for DDL generation")
     schema_val = schema_name or schema or "dbo"
+    resolved_schema_name = schema_val
     if not table_name and object_name:
         parsed_schema, parsed_table = _parse_schema_qualified_name(object_name, default_schema=schema_val)
-        schema_name = parsed_schema
+        resolved_schema_name = parsed_schema
         table_name = parsed_table
     if not table_name:
         raise ValueError("table_name is required")
     validate_instance(instance)
-    _enforce_table_scope_for_ident(schema_name, table_name)
+    _enforce_table_scope_for_ident(resolved_schema_name, table_name)
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
     conn = get_connection(db_name_str, instance=instance)
@@ -3146,13 +3168,13 @@ def db_sql2019_generate_ddl(
             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
             ORDER BY ORDINAL_POSITION
             """,
-            [schema_name, table_name],
+            [resolved_schema_name, table_name],
         )
         rows = cur.fetchall()
         if not rows:
-            raise ValueError(f"Table not found: {schema_name}.{table_name}")
+            raise ValueError(f"Table not found: {resolved_schema_name}.{table_name}")
 
-        lines = [f"CREATE TABLE [{schema_name}]. [{table_name}] ("]
+        lines = [f"CREATE TABLE [{resolved_schema_name}]. [{table_name}] ("]
         col_lines = []
         for r in rows:
             line = f"    [{r[0]}] {_render_type(r)}"
@@ -3178,6 +3200,8 @@ def db_sql2019_create_db_user(
     _ensure_write_enabled()
     if not username or not password:
         raise ValueError("username and password are required")
+    if not _is_strong_password(password):
+        raise ValueError("Password does not meet minimum complexity requirements.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
@@ -3252,6 +3276,8 @@ def db_sql2019_create_object(
     _ensure_write_enabled()
     if not sql:
         raise ValueError("sql is required")
+    if _contains_multistatement(sql):
+        raise ValueError("Multi-statement SQL is not allowed. Only a single CREATE statement is permitted.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
@@ -3273,6 +3299,8 @@ def db_sql2019_alter_object(
     _ensure_write_enabled()
     if not sql:
         raise ValueError("sql is required")
+    if _contains_multistatement(sql):
+        raise ValueError("Multi-statement SQL is not allowed. Only a single ALTER statement is permitted.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
@@ -3294,6 +3322,8 @@ def db_sql2019_drop_object(
     _ensure_write_enabled()
     if not sql:
         raise ValueError("sql is required")
+    if _contains_multistatement(sql):
+        raise ValueError("Multi-statement SQL is not allowed. Only a single DROP statement is permitted.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
@@ -3805,13 +3835,13 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
                     {
                         "schema_name": r.get("schema_name"),
                         "table_name": r.get("table_name"),
-                        "max_fragmentation": r.get("avg_fragmentation_in_percent"),
+                        "max_fragmentation": float(r.get("avg_fragmentation_in_percent") or 0.0),
                         "page_count_total": r.get("page_count"),
                     }
                     for r in frag_items
                     if isinstance(r, dict) and r.get("index_name")
                 ],
-                key=lambda x: x["max_fragmentation"],
+                key=lambda x: float(x.get("max_fragmentation") or 0.0),
                 reverse=True
             )[:5],
         }
