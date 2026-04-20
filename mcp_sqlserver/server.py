@@ -1,8 +1,14 @@
+import re
+
 def _contains_multistatement(sql: str) -> bool:
-    """Detects if SQL contains multiple statements (semicolon outside string literals)."""
+    """Detects if SQL contains multiple statements (semicolon outside string literals and comments)."""
+    # Remove single-line comments
+    s = re.sub(r'--.*?$', '', sql, flags=re.MULTILINE)
+    # Remove block comments
+    s = re.sub(r'/\*.*?\*/', '', s, flags=re.DOTALL)
     # Remove string literals
-    s = re.sub(r"'([^']|'')*'", "", sql)
-    s = re.sub(r'"([^"]|"")*"', "", s)
+    s = re.sub(r"'([^']|'')*'", '', s)
+    s = re.sub(r'"([^"]|"")*"', '', s)
     # Look for semicolon
     return ";" in s
 
@@ -3174,7 +3180,7 @@ def db_sql2019_generate_ddl(
         if not rows:
             raise ValueError(f"Table not found: {resolved_schema_name}.{table_name}")
 
-        lines = [f"CREATE TABLE [{resolved_schema_name}]. [{table_name}] ("]
+        lines = [f"CREATE TABLE [{resolved_schema_name}].[{table_name}] ("]
         col_lines = []
         for r in rows:
             line = f"    [{r[0]}] {_render_type(r)}"
