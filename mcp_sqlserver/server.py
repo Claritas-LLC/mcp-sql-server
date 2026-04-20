@@ -421,7 +421,7 @@ def _load_settings() -> Settings:
         port=_env_int("MCP_PORT", 8000),
         auth_type=_env("FASTMCP_AUTH_TYPE", "").lower(),
         mcp_access_key=_env("FASTMCP_API_KEY", ""),
-        query_token_validation_enabled=_env_bool("MCP_ALLOW_QUERY_TOKEN_AUTH", False),
+        query_access_validation_enabled=_env_bool("MCP_ALLOW_QUERY_TOKEN_AUTH", False),
         public_base_url=_env("MCP_PUBLIC_BASE_URL", "").strip(),
         ssl_cert=_env("MCP_SSL_CERT", "").strip(),
         ssl_key=_env("MCP_SSL_KEY", "").strip(),
