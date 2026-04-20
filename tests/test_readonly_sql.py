@@ -16,30 +16,30 @@ def test_require_readonly_raises_for_write():
         server._require_readonly("DELETE FROM sales.Customers")
 
 
-def test_contains_multistatement_blocks_chained():
+def test_validate_single_statement_blocks_chained():
     sql = "SELECT 1; DROP TABLE users;"
-    assert server._contains_multistatement(sql) is True
+    assert server._validate_single_statement(sql) is True
 
-def test_contains_multistatement_allows_single():
+def test_validate_single_statement_allows_single():
     sql = "SELECT 1"
-    assert server._contains_multistatement(sql) is False
+    assert server._validate_single_statement(sql) is False
 
-def test_contains_multistatement_allows_trailing_semicolon():
+def test_validate_single_statement_allows_trailing_semicolon():
     sql = "SELECT 1;   "
-    assert server._contains_multistatement(sql) is False
+    assert server._validate_single_statement(sql) is False
 
-def test_contains_multistatement_blocks_multiple_semicolons():
+def test_validate_single_statement_blocks_multiple_semicolons():
     sql = "SELECT 1;;"
-    assert server._contains_multistatement(sql) is True
+    assert server._validate_single_statement(sql) is True
 
-def test_contains_multistatement_ignores_semicolon_in_string():
+def test_validate_single_statement_ignores_semicolon_in_string():
     sql = "SELECT ';' as semi"
-    assert server._contains_multistatement(sql) is False
+    assert server._validate_single_statement(sql) is False
 
-def test_contains_multistatement_comment_token_in_string():
+def test_validate_single_statement_comment_token_in_string():
     sql = "SELECT '-- not a comment'; DROP TABLE users;"
-    assert server._contains_multistatement(sql) is True
+    assert server._validate_single_statement(sql) is True
     sql2 = "SELECT '/* not a comment */'; DROP TABLE users;"
-    assert server._contains_multistatement(sql2) is True
+    assert server._validate_single_statement(sql2) is True
     sql3 = "SELECT '-- not a comment' as col"
-    assert server._contains_multistatement(sql3) is False
+    assert server._validate_single_statement(sql3) is False

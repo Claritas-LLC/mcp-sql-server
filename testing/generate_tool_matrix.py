@@ -49,7 +49,7 @@ ARG_TEMPLATES = {
     "analyze_logical_data_model": {"database_name": "TEST_DB", "schema": "sales", "view": "summary"},
     "open_logical_model": {"database_name": "TEST_DB", "schema": "sales"},
     "generate_ddl": {"database_name": "TEST_DB", "schema_name": "sales", "table_name": "Customers"},
-    "create_db_user": {"database_name": "TEST_DB", "username": "mcp_tmp_user", "password": "McpTempPwd123!"},
+    "create_db_user": {"database_name": "TEST_DB", "username": "mcp_tmp_user", "password": "[REDACTED_EXAMPLE_PASSWORD]"},
     "drop_db_user": {"database_name": "TEST_DB", "username": "mcp_tmp_user"},
     "kill_session": {"session_id": 0},
     "create_object": {"database_name": "TEST_DB", "sql": "CREATE TABLE sales.MCP_TMP_TABLE (Id INT PRIMARY KEY, Name NVARCHAR(50) NULL)"},

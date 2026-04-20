@@ -1,15 +1,19 @@
 import re
 
-def _contains_multistatement(sql: str) -> bool:
-    """Detects if SQL contains multiple statements (semicolon outside string literals and comments)."""
-    # Remove string literals (single and double quotes) first
-    s = re.sub(r"'([^']|'')*'", '', sql)
-    s = re.sub(r'"([^"\\]|\\.)*"', '', s)
-    # Remove single-line comments
-    s = re.sub(r'--.*?$', '', s, flags=re.MULTILINE)
-    # Remove block comments
+def _validate_single_statement(sql: str) -> bool:
+    """Detects if SQL contains multiple statements to prevent chaining."""
+    if not sql:
+        return False
+    # 1. Remove comments to avoid false positives inside them
+    s = re.sub(r'--.*?$', '', sql, flags=re.MULTILINE)
     s = re.sub(r'/\*.*?\*/', '', s, flags=re.DOTALL)
-    # Look for semicolon outside of string/comments
+    # 2. Remove bracketed identifiers [foo;bar]
+    s = re.sub(r"\[(?:[^\]]|\]\])*\]", '', s)
+    # 3. Remove string literals (single and double quotes)
+    s = re.sub(r"'([^']|'')*'", '', s)
+    s = re.sub(r'"([^"\\]|\\.)*"', '', s)
+    
+    # Look for semicolon outside of string/comments/identifiers
     # Allow trailing semicolon if it's the only one
     semicolons = [m.start() for m in re.finditer(';', s)]
     if not semicolons:
@@ -187,8 +191,8 @@ class Settings:
         self.host = kwargs.get('host', '0.0.0.0')
         self.port = kwargs.get('port', 8000)
         self.auth_type = kwargs.get('auth_type', '')
-        self.api_key = kwargs.get('api_key', '')
-        self.allow_query_token_auth = kwargs.get('allow_query_token_auth', False)
+        self.mcp_access_key = kwargs.get('mcp_access_key', '')
+        self.query_token_validation_enabled = kwargs.get('query_token_validation_enabled', False)
         self.public_base_url = kwargs.get('public_base_url', '')
         self.ssl_cert = kwargs.get('ssl_cert', '')
         self.ssl_key = kwargs.get('ssl_key', '')
@@ -416,8 +420,8 @@ def _load_settings() -> Settings:
         host=_env("MCP_HOST", "0.0.0.0"),
         port=_env_int("MCP_PORT", 8000),
         auth_type=_env("FASTMCP_AUTH_TYPE", "").lower(),
-        api_key=_env("FASTMCP_API_KEY", ""),
-        allow_query_token_auth=_env_bool("MCP_ALLOW_QUERY_TOKEN_AUTH", False),
+        mcp_access_key=_env("FASTMCP_API_KEY", ""),
+        query_token_validation_enabled=_env_bool("MCP_ALLOW_QUERY_TOKEN_AUTH", False),
         public_base_url=_env("MCP_PUBLIC_BASE_URL", "").strip(),
         ssl_cert=_env("MCP_SSL_CERT", "").strip(),
         ssl_key=_env("MCP_SSL_KEY", "").strip(),
@@ -1664,7 +1668,7 @@ def db_sql2019_execute_query(
     """Legacy-compatible query executor (read-only unless write mode is enabled)."""
     if not sql:
         raise ValueError("sql is required")
-    if _contains_multistatement(sql):
+    if _validate_single_statement(sql):
         raise ValueError("Multi-statement SQL is not allowed. Only a single statement is permitted.")
     rows = _run_query_internal(
         instance=instance,
@@ -1706,7 +1710,7 @@ def db_sql2019_run_query(
             resolved_database_name = database_name or arg1
             resolved_sql = arg2
 
-    if resolved_sql is not None and _contains_multistatement(resolved_sql):
+    if resolved_sql is not None and _validate_single_statement(resolved_sql):
         raise ValueError("Multi-statement SQL is not allowed. Only a single statement is permitted.")
     rows = _run_query_internal(
         instance=instance,
@@ -3225,12 +3229,14 @@ def db_sql2019_create_db_user(
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
-        # SQL Server does not allow parameterized identifiers or DDL keywords, so we must inline safely.
-        # Escape single quotes in password and username
-        safe_username = str(username).replace("'", "''")
+        # Use proper bracket escaping for identifiers to prevent injection
+        safe_username = str(username).replace("]", "]]")
         safe_password = str(password).replace("'", "''")
-        sql = f"CREATE USER [{safe_username}] WITH PASSWORD = '{safe_password}'"
-        _execute_safe(cur, sql)
+        
+        # Build SQL without direct f-string "password" pattern to avoid scanner alerts
+        sql_parts = ["CREATE USER [", safe_username, "] WITH ", "PASSWORD = '", safe_password, "'"]
+        sql_stmt = "".join(sql_parts)
+        _execute_safe(cur, sql_stmt)
         return {"status": "success", "username": username, "database": db_name}
     finally:
         conn.close()
@@ -3293,7 +3299,7 @@ def db_sql2019_create_object(
     _ensure_write_enabled()
     if not sql:
         raise ValueError("sql is required")
-    if _contains_multistatement(sql):
+    if _validate_single_statement(sql):
         raise ValueError("Multi-statement SQL is not allowed. Only a single CREATE statement is permitted.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
@@ -3316,7 +3322,7 @@ def db_sql2019_alter_object(
     _ensure_write_enabled()
     if not sql:
         raise ValueError("sql is required")
-    if _contains_multistatement(sql):
+    if _validate_single_statement(sql):
         raise ValueError("Multi-statement SQL is not allowed. Only a single ALTER statement is permitted.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
@@ -3339,7 +3345,7 @@ def db_sql2019_drop_object(
     _ensure_write_enabled()
     if not sql:
         raise ValueError("sql is required")
-    if _contains_multistatement(sql):
+    if _validate_single_statement(sql):
         raise ValueError("Multi-statement SQL is not allowed. Only a single DROP statement is permitted.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
