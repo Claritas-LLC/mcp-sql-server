@@ -1353,10 +1353,9 @@ def _public_base_url() -> str:
     if SETTINGS.public_base_url:
         return SETTINGS.public_base_url.rstrip("/")
 
-    host = SETTINGS.host.strip() or "localhost"
-    if host in {"0.0.0.0", "::", "127.0.0.1"}:
-        host = "localhost"
-    return f"http://{host}:{SETTINGS.port}"
+    host = SETTINGS.host.strip()
+    safe_host = host if host and host not in {"0.0.0.0", "::", "127.0.0.1"} else "localhost"
+    return f"http://{safe_host}:{SETTINGS.port}"
 
 
 def _report_file_path(report_id: str) -> pathlib.Path:
