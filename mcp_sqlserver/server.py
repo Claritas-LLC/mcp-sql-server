@@ -3661,6 +3661,7 @@ ABSOLUTE REQUIREMENTS - YOUR RESPONSE MUST FOLLOW THESE EXACTLY:
 2. NO ```python blocks, NO conversational text before or after code
 3. Start immediately with the import statements
 4. End with the last closing parenthesis - nothing after
+5. Use ONLY "with" syntax for containers (Column, Row, Card, CardContent)
 
 Available data variables (use these exact names):
 - database_name (string)
@@ -3679,10 +3680,13 @@ from prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, 
 from prefab_ui.components.charts import BarChart, ChartSeries
 
 with Column(gap=6, css_class="p-6"):
-    Heading("Session Monitor - " + database_name)
+    Heading(content="Session Monitor - " + database_name)
     Text("Server: " + server + " | Instance: " + str(instance))
     with Row(gap=4):
-        Card(CardContent(Heading("Active Sessions"), Text(str(active_sessions))))
+        with Card():
+            with CardContent():
+                Heading(content="Active Sessions")
+                Text(str(active_sessions))
     BarChart(
         title="Session Overview",
         series=[ChartSeries(name="Active", data=[active_sessions])]
@@ -3750,6 +3754,7 @@ ABSOLUTE REQUIREMENTS - YOUR RESPONSE MUST FOLLOW THESE EXACTLY:
 2. NO ```python blocks, NO conversational text before or after code
 3. Start immediately with the import statements
 4. End with the last closing parenthesis - nothing after
+5. Use ONLY "with" syntax for containers (Column, Row, Card, CardContent)
 
 Available data variables (use these exact names):
 - database_name (string)
@@ -3769,11 +3774,17 @@ from prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardCo
 from prefab_ui.components.charts import BarChart, ChartSeries
 
 with Column(gap=6, css_class="p-8"):
-    Heading("Data Model - " + database_name)
+    Heading(content="Data Model - " + database_name)
     Text("Server: " + server)
     with Row(gap=4):
-        Card(CardContent(Heading("Tables"), Text(str(table_count))))
-        Card(CardContent(Heading("Foreign Keys"), Text(str(foreign_key_count))))
+        with Card():
+            with CardContent():
+                Heading(content="Tables")
+                Text(str(table_count))
+        with Card():
+            with CardContent():
+                Heading(content="Foreign Keys")
+                Text(str(foreign_key_count))
     BarChart(
         title="Schema Overview",
         series=[ChartSeries(name="Tables", data=[table_count, foreign_key_count])]
