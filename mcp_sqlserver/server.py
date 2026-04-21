@@ -3664,7 +3664,7 @@ CRITICAL RULES:
 5. Ensure all parentheses, brackets, and quotes are properly closed
 
 Required imports:
-    from prefab_ui import Column, Row, Heading, Text, Card, CardContent, Badge
+    from prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, Badge
     from prefab_ui.components.charts import BarChart, LineChart, ChartSeries
 
 Dashboard must include:
@@ -3674,7 +3674,7 @@ Dashboard must include:
 4. Text component listing top sessions with status
 
 Example code structure (DO NOT copy verbatim, adapt to your data):
-    from prefab_ui import Column, Row, Heading, Text, Card, CardContent, Badge
+    from prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, Badge
     from prefab_ui.components.charts import BarChart, LineChart, ChartSeries
     
     with Column(gap=6, css_class="p-6"):
@@ -3754,7 +3754,7 @@ CRITICAL RULES:
 5. Ensure all parentheses, brackets, and quotes are properly closed
 
 Required imports:
-    from prefab_ui import Column, Row, Heading, Text, Badge, Card, CardContent
+    from prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardContent
     from prefab_ui.components.charts import BarChart, ChartSeries
 
 Dashboard must include:
@@ -3765,7 +3765,7 @@ Dashboard must include:
 5. Text with recommendations for schema improvements
 
 Example code structure (DO NOT copy verbatim, adapt to your data):
-    from prefab_ui import Column, Row, Heading, Text, Badge, Card, CardContent
+    from prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardContent
     from prefab_ui.components.charts import BarChart, ChartSeries
     
     with Column(gap=6, css_class="p-8"):
