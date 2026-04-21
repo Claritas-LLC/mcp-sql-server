@@ -3656,39 +3656,38 @@ def db_sql2019_generate_sessions_dashboard(instance: int = 1) -> dict[str, Any]:
             "instructions": """
 Generate a Prefab Python UI dashboard for SQL Server session monitoring.
 
-CRITICAL RULES:
-1. Return ONLY raw Python code - NO markdown backticks, NO conversational text
-2. All imports must be at the top of the file
-3. Use proper indentation (4 spaces)
-4. Use f-strings for dynamic values
-5. Ensure all parentheses, brackets, and quotes are properly closed
+ABSOLUTE REQUIREMENTS - YOUR RESPONSE MUST FOLLOW THESE EXACTLY:
+1. Output ONLY valid Python code - no markdown, no backticks, no explanations
+2. NO ```python blocks, NO conversational text before or after code
+3. Start immediately with the import statements
+4. End with the last closing parenthesis - nothing after
 
-Required imports:
-    from prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, Badge
-    from prefab_ui.components.charts import BarChart, LineChart, ChartSeries
+Available data variables (use these exact names):
+- database_name (string)
+- server (string)  
+- active_sessions (integer)
+- instance (integer)
+- timestamp (string)
 
-Dashboard must include:
-1. Heading with database name and instance info
-2. Row of stat cards showing Active, Idle, Total sessions
-3. BarChart showing session duration distribution  
-4. Text component listing top sessions with status
+Required imports at the very top:
+from prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, Badge
+from prefab_ui.components.charts import BarChart, ChartSeries
 
-Example code structure (DO NOT copy verbatim, adapt to your data):
-    from prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, Badge
-    from prefab_ui.components.charts import BarChart, LineChart, ChartSeries
-    
-    with Column(gap=6, css_class="p-6"):
-        Heading(f"Session Monitor - {database_name}")
-        Text(f"Server: {server} | Active Sessions: {active_sessions}")
-        with Row(gap=4):
-            Card(CardContent(Heading("Active"), Text(str(active_sessions))))
-            Card(CardContent(Heading("Idle"), Text("0")))
-            Card(CardContent(Heading("Total"), Text(str(active_sessions))))
-        BarChart(
-            title="Session Duration",
-            series=[ChartSeries(name="Sessions", data=[10, 20, 15])]
-        )
-            """,
+Complete working template - replace values with actual data:
+
+from prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, Badge
+from prefab_ui.components.charts import BarChart, ChartSeries
+
+with Column(gap=6, css_class="p-6"):
+    Heading("Session Monitor - " + database_name)
+    Text("Server: " + server + " | Instance: " + str(instance))
+    with Row(gap=4):
+        Card(CardContent(Heading("Active Sessions"), Text(str(active_sessions))))
+    BarChart(
+        title="Session Overview",
+        series=[ChartSeries(name="Active", data=[active_sessions])]
+    )
+""",
             "data": {
                 "database_name": str(inst_cfg.get("db_name", "master")),
                 "server": str(inst_cfg.get("db_server", "localhost")),
@@ -3746,39 +3745,41 @@ def db_sql2019_generate_model_diagram(database_name: str, instance: int = 1) -> 
             "instructions": """
 Generate a Prefab Python UI dashboard for the logical data model.
 
-CRITICAL RULES:
-1. Return ONLY raw Python code - NO markdown backticks, NO conversational text
-2. All imports must be at the top of the file
-3. Use proper indentation (4 spaces)
-4. Use f-strings for dynamic values
-5. Ensure all parentheses, brackets, and quotes are properly closed
+ABSOLUTE REQUIREMENTS - YOUR RESPONSE MUST FOLLOW THESE EXACTLY:
+1. Output ONLY valid Python code - no markdown, no backticks, no explanations
+2. NO ```python blocks, NO conversational text before or after code
+3. Start immediately with the import statements
+4. End with the last closing parenthesis - nothing after
 
-Required imports:
-    from prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardContent
-    from prefab_ui.components.charts import BarChart, ChartSeries
+Available data variables (use these exact names):
+- database_name (string)
+- server (string)
+- table_count (integer)
+- foreign_key_count (integer)
+- instance (integer)
+- timestamp (string)
 
-Dashboard must include:
-1. Heading with database name
-2. Row of summary badges showing Table Count, FK Count, Health Score
-3. BarChart showing table size distribution
-4. Text with key constraints and normalization insights
-5. Text with recommendations for schema improvements
+Required imports at the very top:
+from prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardContent
+from prefab_ui.components.charts import BarChart, ChartSeries
 
-Example code structure (DO NOT copy verbatim, adapt to your data):
-    from prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardContent
-    from prefab_ui.components.charts import BarChart, ChartSeries
-    
-    with Column(gap=6, css_class="p-8"):
-        Heading(f"Data Model - {database_name}")
-        with Row(gap=4):
-            Card(CardContent(Heading("Tables"), Text(str(table_count))))
-            Card(CardContent(Heading("Foreign Keys"), Text(str(foreign_key_count))))
-        BarChart(
-            title="Table Distribution",
-            series=[ChartSeries(name="Tables", data=[table_count, foreign_key_count])]
-        )
-        Text("Analysis and recommendations here")
-            """,
+Complete working template - replace values with actual data:
+
+from prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardContent
+from prefab_ui.components.charts import BarChart, ChartSeries
+
+with Column(gap=6, css_class="p-8"):
+    Heading("Data Model - " + database_name)
+    Text("Server: " + server)
+    with Row(gap=4):
+        Card(CardContent(Heading("Tables"), Text(str(table_count))))
+        Card(CardContent(Heading("Foreign Keys"), Text(str(foreign_key_count))))
+    BarChart(
+        title="Schema Overview",
+        series=[ChartSeries(name="Tables", data=[table_count, foreign_key_count])]
+    )
+    Text("Schema analysis and recommendations here")
+""",
             "data": {
                 "database_name": database_name,
                 "server": inst_cfg.get("db_server"),
