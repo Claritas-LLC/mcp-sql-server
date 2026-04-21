@@ -3656,6 +3656,8 @@ def db_sql2019_generate_sessions_dashboard(instance: int = 1) -> dict[str, Any]:
             "instructions": """
 Generate a Prefab Python UI dashboard for SQL Server session monitoring.
 
+IMPORTANT: Return ONLY raw Python code. Do NOT wrap in markdown backticks or include any conversational text.
+
 Use these Prefab components:
 - Column, Row, Heading, Text, Card, CardContent, Badge
 - from prefab_ui.components.charts import BarChart, LineChart, ChartSeries
@@ -3674,8 +3676,8 @@ Example structure:
         # Chart and table here
             """,
             "data": {
-                "database": inst_cfg.get("db_name"),
-                "server": inst_cfg.get("db_server"),
+                "database_name": str(inst_cfg.get("db_name", "master")),
+                "server": str(inst_cfg.get("db_server", "localhost")),
                 "active_sessions": active_sessions,
                 "instance": instance,
                 "timestamp": _now_utc_iso()
@@ -3730,6 +3732,8 @@ def db_sql2019_generate_model_diagram(database_name: str, instance: int = 1) -> 
             "instructions": """
 Generate a Prefab Python UI dashboard for the logical data model.
 
+IMPORTANT: Return ONLY raw Python code. Do NOT wrap in markdown backticks or include any conversational text.
+
 Use these Prefab components:
 - Column, Row, Heading, Text, Badge, Card, CardContent
 - from prefab_ui.components.charts import BarChart, ChartSeries
@@ -3750,7 +3754,7 @@ Example structure:
         # Charts and insights
             """,
             "data": {
-                "database": database_name,
+                "database_name": database_name,
                 "server": inst_cfg.get("db_server"),
                 "table_count": table_count,
                 "foreign_key_count": fk_count,

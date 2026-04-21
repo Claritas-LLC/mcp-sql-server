@@ -43,8 +43,11 @@ RUN python -m pip install --upgrade pip && \
     pip wheel --no-cache-dir --wheel-dir /tmp/wheels -r requirements.txt
 
 
+FROM denoland/deno:bin-2.1.9 AS deno-bin
+
 FROM base AS runtime
 
+COPY --from=deno-bin /deno /usr/local/bin/deno
 COPY requirements.txt ./
 COPY --from=builder /tmp/wheels /tmp/wheels
 
