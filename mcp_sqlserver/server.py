@@ -3832,10 +3832,8 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
     """
     Generate a dynamic Prefab UI dashboard for performance metrics.
     
-    The LLM writes Python code to visualize query performance, index fragmentation,
-    CPU usage, and other key performance indicators in an interactive dashboard.
-    
-    Returns a Prefab app definition with performance visualizations.
+    Returns a URL to the performance dashboard webpage. The data is fetched
+    on-demand when the URL is visited, avoiding MCP timeouts.
     """
     try:
         validate_instance(instance)
@@ -3843,59 +3841,14 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
         db_name_str = _normalize_db_name(db_name)
         inst_cfg = get_instance_config(instance)
 
-        # Fetch ONLY fast security/perf metrics (3 simple queries, <2s)
-        # Skip top_queries and fragmentation - they have dedicated tools
-        sec_perf: dict[str, Any] = {}
-        try:
-            sec_perf_raw = db_sql2019_db_sec_perf_metrics(instance=instance, database_name=db_name_str)
-            sec_perf = sec_perf_raw.get("items", sec_perf_raw) if isinstance(sec_perf_raw, dict) else {}
-        except Exception as exc:
-            logger.warning("Sec/perf metrics failed for performance dashboard: %s", exc)
-
-        # Build lightweight payload - no heavy query results
-        report_payload = {
-            "database": db_name,
-            "instance": instance,
-            "server": inst_cfg.get("db_server"),
-            "timestamp": _now_utc_iso(),
-            "query_store_enabled": None,
-            "kpis": {
-                "avg_query_duration_metric": None,
-                "max_query_duration_metric": None,
-                "fragmentation_avg_percent": None,
-                "fragmentation_high_count_ge_30": None,
-                "fragmentation_medium_count_10_29": None,
-                "data_size_mb": sec_perf.get("data_size_mb") if isinstance(sec_perf, dict) else None,
-                "open_transactions": sec_perf.get("open_transactions") if isinstance(sec_perf, dict) else None,
-                "user_count": sec_perf.get("user_count") if isinstance(sec_perf, dict) else None,
-            },
-            "top_slow_queries": [],
-            "top_fragmented_indexes": [],
-            "top_fragmented_tables": [],
-            "note": "Use db_sql2019_show_top_queries and db_sql2019_check_fragmentation for detailed analysis.",
-        }
-
-        html = _render_performance_dashboard_html(report_payload)
-        report_id = uuid.uuid4().hex
-        with _REPORT_STORAGE_LOCK:
-            _REPORT_STORAGE[report_id] = {
-                "html": html,
-                "database": db_name,
-                "instance": instance,
-                "timestamp": report_payload["timestamp"],
-                "report_type": "performance-dashboard",
-            }
-        _persist_report_html(report_id, html)
-
+        # Return URL immediately - data is fetched on-demand by the web endpoint
         return {
             "status": "success",
-            "message": f"Performance dashboard webpage generated for database '{db_name}'.",
+            "message": f"Performance dashboard ready for database '{db_name}'.",
             "database": db_name,
             "instance": instance,
-            "performance_dashboard_url": f"{_public_base_url()}/performance-dashboard?id={report_id}",
-            "report_id": report_id,
-            "kpis": report_payload["kpis"],
-            "url_hint": "Set MCP_PUBLIC_BASE_URL when the server runs behind Docker port mapping or a reverse proxy.",
+            "performance_dashboard_url": f"{_public_base_url()}/performance-dashboard?instance={instance}&database={db_name_str}",
+            "url_hint": "The dashboard fetches data on-demand when visited. Use dedicated tools (show_top_queries, check_fragmentation) for detailed analysis.",
         }
     except Exception as e:
         logger.error(f"Error in db_sql2019_generate_performance_dashboard: {e}")
@@ -3986,16 +3939,145 @@ try:
 
     @mcp.custom_route("/performance-dashboard", methods=["GET"], name="performance_dashboard")
     async def performance_dashboard_handler(request):
-        """Handler for /performance-dashboard endpoint."""
+        """Handler for /performance-dashboard endpoint - fetches data on-demand."""
         report_id = request.query_params.get("id")
-        if not report_id:
-            return JSONResponse({"error": "Missing 'id' parameter"}, status_code=400)
+        instance = request.query_params.get("instance", "1")
+        database = request.query_params.get("database")
 
-        html = _get_report_html(report_id)
-        if html is None:
-            return JSONResponse({"error": f"Report '{report_id}' not found"}, status_code=404)
+        # If cached report exists, serve it
+        if report_id:
+            html = _get_report_html(report_id)
+            if html is not None:
+                return HTMLResponse(content=html, status_code=200)
 
-        return HTMLResponse(content=html, status_code=200)
+        # Otherwise fetch data on-demand
+        try:
+            instance_int = int(instance)
+            validate_instance(instance_int)
+            db_name = database or get_instance_config(instance_int)["db_name"]
+            db_name_str = _normalize_db_name(db_name)
+            inst_cfg = get_instance_config(instance_int)
+
+            # Fetch all data on-demand
+            queries: list[dict[str, Any]] = []
+            qs_enabled = None
+            try:
+                top_q = db_sql2019_show_top_queries(
+                    instance=instance_int,
+                    database_name=db_name_str,
+                    metric="duration",
+                    limit=10,
+                    view="standard",
+                    page=1,
+                    page_size=50,
+                )
+                queries = top_q.get("queries", []) if isinstance(top_q, dict) else []
+                qs_enabled = top_q.get("query_store_enabled") if isinstance(top_q, dict) else None
+            except Exception as exc:
+                logger.warning("Top queries failed for performance dashboard: %s", exc)
+
+            frag_items: list[dict[str, Any]] = []
+            try:
+                frag = db_sql2019_check_fragmentation(
+                    instance=instance_int,
+                    database_name=db_name_str,
+                    page=1,
+                    page_size=50,
+                )
+                frag_items = frag.get("items", []) if isinstance(frag, dict) else []
+            except Exception as exc:
+                logger.warning("Fragmentation check failed for performance dashboard: %s", exc)
+
+            sec_perf: dict[str, Any] = {}
+            try:
+                sec_perf_raw = db_sql2019_db_sec_perf_metrics(instance=instance_int, database_name=db_name_str)
+                sec_perf = sec_perf_raw.get("items", sec_perf_raw) if isinstance(sec_perf_raw, dict) else {}
+            except Exception as exc:
+                logger.warning("Sec/perf metrics failed for performance dashboard: %s", exc)
+
+            metric_values = [
+                q.get("metric_value", 0)
+                for q in queries
+                if isinstance(q, dict) and isinstance(q.get("metric_value", 0), (int, float))
+            ]
+            avg_query_metric = (sum(metric_values) / len(metric_values)) if metric_values else None
+            max_query_metric = max(metric_values) if metric_values else None
+
+            frag_vals = [
+                r.get("avg_fragmentation_in_percent", 0)
+                for r in frag_items
+                if isinstance(r, dict) and isinstance(r.get("avg_fragmentation_in_percent", 0), (int, float))
+            ]
+            avg_frag = (sum(frag_vals) / len(frag_vals)) if frag_vals else 0.0
+
+            report_payload = {
+                "database": db_name,
+                "instance": instance_int,
+                "server": inst_cfg.get("db_server"),
+                "timestamp": _now_utc_iso(),
+                "query_store_enabled": qs_enabled,
+                "kpis": {
+                    "avg_query_duration_metric": round(avg_query_metric, 2) if isinstance(avg_query_metric, (int, float)) else None,
+                    "max_query_duration_metric": max_query_metric,
+                    "fragmentation_avg_percent": round(avg_frag, 2),
+                    "fragmentation_high_count_ge_30": len([v for v in frag_vals if v >= 30]),
+                    "fragmentation_medium_count_10_29": len([v for v in frag_vals if 10 <= v < 30]),
+                    "data_size_mb": sec_perf.get("data_size_mb") if isinstance(sec_perf, dict) else None,
+                    "open_transactions": sec_perf.get("open_transactions") if isinstance(sec_perf, dict) else None,
+                    "user_count": sec_perf.get("user_count") if isinstance(sec_perf, dict) else None,
+                },
+                "top_slow_queries": [
+                    {
+                        "query_id": q.get("query_id"),
+                        "metric_value": q.get("metric_value"),
+                        "count_executions": q.get("count_executions"),
+                        "last_execution_time": q.get("last_execution_time"),
+                        "query_sql_text": q.get("query_sql_text"),
+                        "query_plan": q.get("query_plan"),
+                        "mermaid_plan": (
+                            _convert_sqlplan_to_mermaid(plan_str)
+                            if len(plan_str := str(q.get("query_plan") or "")) < 100000
+                            else "graph TD\n  Start[Plan too large to render]"
+                        ),
+                    }
+                    for q in queries[:5]
+                    if isinstance(q, dict)
+                ],
+                "top_fragmented_indexes": [
+                    {
+                        "schema_name": r.get("schema_name"),
+                        "table_name": r.get("table_name"),
+                        "index_name": r.get("index_name"),
+                        "avg_fragmentation_in_percent": r.get("avg_fragmentation_in_percent"),
+                        "page_count": r.get("page_count"),
+                    }
+                    for r in frag_items[:5]
+                    if isinstance(r, dict)
+                ],
+                "top_fragmented_tables": sorted(
+                    [
+                        {
+                            "schema_name": r.get("schema_name"),
+                            "table_name": r.get("table_name"),
+                            "max_fragmentation": float(r.get("avg_fragmentation_in_percent") or 0.0),
+                            "page_count_total": r.get("page_count"),
+                        }
+                        for r in frag_items
+                        if isinstance(r, dict) and r.get("index_name")
+                    ],
+                    key=lambda x: float(x.get("max_fragmentation") or 0.0),
+                    reverse=True
+                )[:5],
+            }
+
+            html = _render_performance_dashboard_html(report_payload)
+            return HTMLResponse(content=html, status_code=200)
+
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:
+            logger.exception("Failed to render performance dashboard")
+            return JSONResponse({"error": str(exc)}, status_code=500)
 
     @mcp.custom_route("/sessions-monitor", methods=["GET"], name="sessions_monitor")
     async def sessions_monitor_handler(request):
