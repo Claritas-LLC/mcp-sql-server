@@ -967,6 +967,22 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
         return conn
 
 
+def _set_statement_timeout(conn: pyodbc.Connection, timeout_ms: int) -> None:
+    """Set query timeout on a pyodbc connection."""
+    try:
+        cur = conn.cursor()
+        try:
+            # SQL Server uses SET QUERY_GOVERNOR_COST_LIMIT for query timeout in seconds
+            # Also set LOCK_TIMEOUT for safety
+            seconds = max(1, timeout_ms // 1000)
+            cur.execute(f"SET QUERY_GOVERNOR_COST_LIMIT {seconds}")
+            cur.execute(f"SET LOCK_TIMEOUT {timeout_ms}")
+        finally:
+            cur.close()
+    except Exception:
+        pass
+
+
 def _execute_safe(cur: pyodbc.Cursor, sql: str, params: list[Any] | tuple[Any, ...] | None = None) -> None:
     if params is None:
         cur.execute(sql)
@@ -2014,6 +2030,8 @@ def _get_index_fragmentation_data(
     db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
     try:
+        # Set a shorter statement timeout for fragmentation queries (30 seconds)
+        _set_statement_timeout(conn, 30000)
         cur = conn.cursor()
         sql = """
         SELECT TOP (?)
@@ -2023,7 +2041,7 @@ def _get_index_fragmentation_data(
             ips.avg_fragmentation_in_percent,
             ips.page_count,
             i.type_desc AS index_type
-        FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'SAMPLED') ips
+        FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ips
         JOIN sys.indexes i
             ON ips.object_id = i.object_id AND ips.index_id = i.index_id
         JOIN sys.tables t ON i.object_id = t.object_id
@@ -2040,6 +2058,9 @@ def _get_index_fragmentation_data(
 
         _execute_safe(cur, sql, params)
         return _rows_to_dicts(cur, cur.fetchall())
+    except Exception as exc:
+        logger.warning("Fragmentation query failed for %s: %s", db_name_str, exc)
+        return []
     finally:
         conn.close()
 
@@ -3820,24 +3841,45 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
         db_name_str = _normalize_db_name(db_name)
         inst_cfg = get_instance_config(instance)
 
-        top_q = db_sql2019_show_top_queries(
-            instance=instance,
-            database_name=db_name_str,
-            metric="duration",
-            limit=10,
-            view="standard",
-            page=1,
-            page_size=50,
-        )
-        frag = db_sql2019_check_fragmentation(
-            instance=instance,
-            database_name=db_name_str,
-            page=1,
-            page_size=50,
-        )
-        sec_perf = db_sql2019_db_sec_perf_metrics(instance=instance, database_name=db_name_str)
+        # Fetch top queries with timeout protection
+        queries: list[dict[str, Any]] = []
+        qs_enabled = None
+        try:
+            top_q = db_sql2019_show_top_queries(
+                instance=instance,
+                database_name=db_name_str,
+                metric="duration",
+                limit=10,
+                view="standard",
+                page=1,
+                page_size=50,
+            )
+            queries = top_q.get("queries", []) if isinstance(top_q, dict) else []
+            qs_enabled = top_q.get("query_store_enabled") if isinstance(top_q, dict) else None
+        except Exception as exc:
+            logger.warning("Top queries failed for performance dashboard: %s", exc)
 
-        queries = top_q.get("queries", []) if isinstance(top_q, dict) else []
+        # Fetch fragmentation with timeout protection
+        frag_items: list[dict[str, Any]] = []
+        try:
+            frag = db_sql2019_check_fragmentation(
+                instance=instance,
+                database_name=db_name_str,
+                page=1,
+                page_size=50,
+            )
+            frag_items = frag.get("items", []) if isinstance(frag, dict) else []
+        except Exception as exc:
+            logger.warning("Fragmentation check failed for performance dashboard: %s", exc)
+
+        # Fetch security/perf metrics with timeout protection
+        sec_perf: dict[str, Any] = {}
+        try:
+            sec_perf_raw = db_sql2019_db_sec_perf_metrics(instance=instance, database_name=db_name_str)
+            sec_perf = sec_perf_raw.get("items", sec_perf_raw) if isinstance(sec_perf_raw, dict) else {}
+        except Exception as exc:
+            logger.warning("Sec/perf metrics failed for performance dashboard: %s", exc)
+
         metric_values = [
             q.get("metric_value", 0)
             for q in queries
@@ -3846,7 +3888,6 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
         avg_query_metric = (sum(metric_values) / len(metric_values)) if metric_values else None
         max_query_metric = max(metric_values) if metric_values else None
 
-        frag_items = frag.get("items", []) if isinstance(frag, dict) else []
         frag_vals = [
             r.get("avg_fragmentation_in_percent", 0)
             for r in frag_items
@@ -3859,7 +3900,7 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
             "instance": instance,
             "server": inst_cfg.get("db_server"),
             "timestamp": _now_utc_iso(),
-            "query_store_enabled": top_q.get("query_store_enabled") if isinstance(top_q, dict) else None,
+            "query_store_enabled": qs_enabled,
             "kpis": {
                 "avg_query_duration_metric": round(avg_query_metric, 2) if isinstance(avg_query_metric, (int, float)) else None,
                 "max_query_duration_metric": max_query_metric,
