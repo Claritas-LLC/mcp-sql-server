@@ -2958,7 +2958,7 @@ def db_sql2019_show_top_queries(
         qs_enabled = qs_row[0] != "OFF" if qs_row else False
         
         if qs_enabled:
-            # Query Store metrics
+            # Query Store metrics - aggregate by query, filter last 24h for speed
             metric_cols = {
                 "cpu": "avg_cpu_time",
                 "io": "avg_logical_io_reads",
@@ -2979,18 +2979,19 @@ def db_sql2019_show_top_queries(
             JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
             JOIN sys.query_store_plan p ON q.query_id = p.query_id
             JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            WHERE rs.last_execution_time >= DATEADD(hour, -24, GETUTCDATE())
             ORDER BY rs.{sort_col} DESC
             """
             _execute_safe(cur, sql, [limit])
         else:
-            # DMV fallback
+            # DMV fallback - filter to plans executed in last 24h
             metric_cols = {
-                "cpu": "total_worker_time / execution_count",
-                "io": "total_logical_reads / execution_count",
+                "cpu": "total_worker_time / NULLIF(execution_count, 0)",
+                "io": "total_logical_reads / NULLIF(execution_count, 0)",
                 "execution_count": "execution_count",
-                "duration": "total_elapsed_time / execution_count"
+                "duration": "total_elapsed_time / NULLIF(execution_count, 0)"
             }
-            sort_col = metric_cols.get(metric, "total_worker_time / execution_count")
+            sort_col = metric_cols.get(metric, "total_worker_time / NULLIF(execution_count, 0)")
             
             sql = f"""
             SELECT TOP (?)
@@ -3003,6 +3004,7 @@ def db_sql2019_show_top_queries(
             FROM sys.dm_exec_query_stats count
             CROSS APPLY sys.dm_exec_sql_text(count.sql_handle) st
             CROSS APPLY sys.dm_exec_query_plan(count.plan_handle) qp
+            WHERE count.last_execution_time >= DATEADD(hour, -24, GETUTCDATE())
             ORDER BY metric_value DESC
             """
             _execute_safe(cur, sql, [limit])
@@ -3919,7 +3921,11 @@ def db_sql2019_generate_performance_dashboard(database_name: str, instance: int 
                     "last_execution_time": q.get("last_execution_time"),
                     "query_sql_text": q.get("query_sql_text"),
                     "query_plan": q.get("query_plan"),
-                    "mermaid_plan": _convert_sqlplan_to_mermaid(str(q.get("query_plan") or "")),
+                    "mermaid_plan": (
+                        _convert_sqlplan_to_mermaid(plan_str)
+                        if len(plan_str := str(q.get("query_plan") or "")) < 100000
+                        else "graph TD\n  Start[Plan too large to render]"
+                    ),
                 }
                 for q in queries[:5]
                 if isinstance(q, dict)
