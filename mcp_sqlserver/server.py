@@ -3258,10 +3258,29 @@ def db_sql2019_analyze_logical_data_model(
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
-    """Analyze database schema for logical data modeling issues."""
-    result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
-    shaped = _apply_logical_model_view(result, view)
-    return _paginate_tool_result(shaped, page=page, page_size=page_size)
+    """Analyze database schema for logical data modeling issues.
+    
+    Returns a URL to the logical data model viewer. The data is fetched
+    on-demand when the URL is visited, avoiding MCP timeouts.
+    """
+    try:
+        validate_instance(instance)
+        db_name = database_name or get_instance_config(instance)["db_name"]
+        db_name_str = _normalize_db_name(db_name)
+        inst_cfg = get_instance_config(instance)
+
+        # Return URL immediately - data is fetched on-demand by the web endpoint
+        return {
+            "status": "success",
+            "message": f"Logical data model analysis ready for database '{db_name}'.",
+            "database": db_name,
+            "instance": instance,
+            "logical_model_url": f"{_public_base_url()}/logical-model?instance={instance}&database={db_name_str}&view={view}&page={page}&page_size={page_size}",
+            "url_hint": "The model viewer fetches data on-demand when visited. Use schema or table_name parameters to limit scope for faster results.",
+        }
+    except Exception as e:
+        logger.error(f"Error in db_sql2019_analyze_logical_data_model: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 def db_sql2019_open_logical_model(
@@ -4287,6 +4306,39 @@ try:
             return JSONResponse({"error": str(exc)}, status_code=400)
         except Exception as exc:
             logger.exception("Failed to render sessions monitor for instance=%s", raw_instance)
+            return JSONResponse({"error": str(exc)}, status_code=500)
+
+    @mcp.custom_route("/logical-model", methods=["GET"], name="logical_model")
+    async def logical_model_handler(request):
+        """Handler for /logical-model endpoint - fetches data on-demand."""
+        try:
+            instance = int(request.query_params.get("instance", "1"))
+            validate_instance(instance)
+            database = request.query_params.get("database")
+            schema = request.query_params.get("schema")
+            view = request.query_params.get("view", "standard")
+            page = int(request.query_params.get("page", "1"))
+            page_size = int(request.query_params.get("page_size", str(DEFAULT_TOOL_PAGE_SIZE)))
+
+            db_name = database or get_instance_config(instance)["db_name"]
+            db_name_str = _normalize_db_name(db_name)
+
+            # Fetch data on-demand
+            result = _analyze_logical_data_model_internal(instance, db_name_str, schema)
+            shaped = _apply_logical_model_view(result, view)
+            paginated = _paginate_tool_result(shaped, page=page, page_size=page_size)
+
+            # Render as JSON for browser viewing
+            return JSONResponse(
+                content=paginated,
+                status_code=200,
+                headers={"Content-Type": "application/json"}
+            )
+
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except Exception as exc:
+            logger.exception("Failed to render logical model for instance=%s database=%s", instance, database)
             return JSONResponse({"error": str(exc)}, status_code=500)
 
 except Exception as e:
