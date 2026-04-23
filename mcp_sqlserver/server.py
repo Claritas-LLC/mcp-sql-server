@@ -13,6 +13,7 @@ import base64
 import hashlib
 import uuid
 import sys
+import inspect
 from datetime import datetime, timezone
 from threading import Lock
 from contextvars import ContextVar
@@ -3584,6 +3585,19 @@ def _register_dual_instance_tools():
                         elapsed_ms = int((time.perf_counter() - start) * 1000)
                         _log_tool_error(registered_tool_name, function_name, invocation_id, elapsed_ms, exc)
                         raise
+                
+                # Remove 'instance' parameter from the exposed signature
+                # This prevents MCP clients from seeing/passing it
+                try:
+                    orig_sig = inspect.signature(f)
+                    new_params = [
+                        p for name, p in orig_sig.parameters.items() 
+                        if name != 'instance'
+                    ]
+                    wrapper.__signature__ = inspect.Signature(parameters=new_params)
+                except (ValueError, TypeError):
+                    pass  # If signature inspection fails, continue anyway
+                
                 return wrapper
             
             wrapped = make_wrapper(func, instance, tool_name)
@@ -4035,6 +4049,19 @@ def _register_generative_dashboard_tools() -> None:
                         elapsed_ms = int((time.perf_counter() - start) * 1000)
                         _log_tool_error(registered_tool_name, function_name, invocation_id, elapsed_ms, exc)
                         raise
+                
+                # Remove 'instance' parameter from the exposed signature
+                # This prevents MCP clients from seeing/passing it
+                try:
+                    orig_sig = inspect.signature(f)
+                    new_params = [
+                        p for name, p in orig_sig.parameters.items() 
+                        if name != 'instance'
+                    ]
+                    wrapper.__signature__ = inspect.Signature(parameters=new_params)
+                except (ValueError, TypeError):
+                    pass  # If signature inspection fails, continue anyway
+                
                 return wrapper
 
             wrapped = make_wrapper(func, instance, tool_name)
