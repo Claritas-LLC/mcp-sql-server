@@ -48,20 +48,34 @@ if ($isInsecureTls) {
     if (($env:FORCE_INSECURE_TEST | ForEach-Object { $_.ToLowerInvariant() }) -ne 'true') {
         throw "Refusing insecure test config without explicit opt-in. Set FORCE_INSECURE_TEST=true to continue."
     }
-}
 
+
+# ---
+# SECURITY NOTE (OWASP A05, A07):
+# The following block sets environment variables for MCP write mode and authentication.
+# The hardcoded 'mcp-test-key' and API key authentication are for local testing ONLY.
+# Never use these values or this configuration in production environments.
+# In production, always manage secrets via environment variables or a secure vault (see users-manual.md).
+# Write-mode and test credentials must never be enabled or reused in production.
+# ---
+
+$WriteMode controls whether destructive/write operations are enabled for testing.
+#
+# If enabled, test API key and write permissions are set for local test automation.
+# If disabled, write is blocked and no test credentials are present.
+# This ensures that production deployments cannot accidentally run with test credentials or write-mode enabled.
 $enableWriteMode = $WriteMode.IsPresent -or (-not $PSBoundParameters.ContainsKey('WriteMode'))
 
 if ($enableWriteMode) {
-    $env:MCP_ALLOW_WRITE = 'true'
-    $env:MCP_CONFIRM_WRITE = 'true'
-    $env:FASTMCP_AUTH_TYPE = 'apikey'
-    $env:FASTMCP_API_KEY = 'mcp-test-key'
+    $env:MCP_ALLOW_WRITE = 'true'           # Allow write-mode tools for test
+    $env:MCP_CONFIRM_WRITE = 'true'         # Auto-confirm write actions for test
+    $env:FASTMCP_AUTH_TYPE = 'apikey'       # Use API key auth for test
+    $env:FASTMCP_API_KEY = 'mcp-test-key'   # Hardcoded test key (never use in prod)
 } else {
-    $env:MCP_ALLOW_WRITE = 'false'
-    $env:MCP_CONFIRM_WRITE = 'false'
-    $env:FASTMCP_AUTH_TYPE = ''
-    $env:FASTMCP_API_KEY = ''
+    $env:MCP_ALLOW_WRITE = 'false'          # Block write-mode tools
+    $env:MCP_CONFIRM_WRITE = 'false'        # Block write confirmations
+    $env:FASTMCP_AUTH_TYPE = ''             # No auth for read-only
+    $env:FASTMCP_API_KEY = ''               # No API key for read-only
 }
 
 Write-Host 'Dual SQL MCP test environment variables configured for current shell.'

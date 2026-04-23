@@ -41,7 +41,7 @@ CREATE DATABASE TEST_DB;
 
     $count = docker exec $container /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P $password -C -d TEST_DB -Q "SET NOCOUNT ON; SELECT COUNT(*) AS c FROM dbo.sample_table" -h -1 2>$null
     if ($LASTEXITCODE -ne 0) {
-        $count = docker exec $container /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P $password -d TEST_DB -Q "SET NOCOUNT ON; SELECT COUNT(*) AS c FROM dbo.sample_table" -h -1
+        $count = docker exec $container /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P $password -C -d TEST_DB -Q "SET NOCOUNT ON; SELECT COUNT(*) AS c FROM dbo.sample_table" -h -1
     }
     if ($LASTEXITCODE -ne 0) {
         throw "Verification query failed for $container"

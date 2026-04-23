@@ -1,4 +1,3 @@
-import re
 
 def _validate_single_statement(sql: str) -> bool:
     """Detects if SQL contains multiple statements to prevent chaining."""
@@ -3965,7 +3964,12 @@ try:
             db_name_str = _normalize_db_name(db_name)
             inst_cfg = get_instance_config(instance_int)
 
-            logger.info("Resolved instance=%r, db_name=%r, db_name_str=%r, inst_cfg=%r", instance_int, db_name, db_name_str, inst_cfg)
+            # Sanitize inst_cfg before logging (remove/mask secrets)
+            _inst_cfg_log = dict(inst_cfg)
+            for _k in list(_inst_cfg_log.keys()):
+                if _k.lower() in ("db_password", "db_user", "password", "user", "sa_password"):
+                    _inst_cfg_log[_k] = "***REDACTED***"
+            logger.info("Resolved instance=%r, db_name=%r, db_name_str=%r, inst_cfg=%r", instance_int, db_name, db_name_str, _inst_cfg_log)
 
             # Fetch all data on-demand
             queries: list[dict[str, Any]] = []

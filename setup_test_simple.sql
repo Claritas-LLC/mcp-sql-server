@@ -1,21 +1,5 @@
--- Add mcp_readonly login and user for MCP tool tests
-IF NOT EXISTS (SELECT * FROM sys.sql_logins WHERE name = 'mcp_readonly')
-BEGIN
-    CREATE LOGIN mcp_readonly WITH PASSWORD = '***REMOVED***';
-END;
-GO
-USE TEST_DB;
-GO
-IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = 'mcp_readonly')
-BEGIN
-    CREATE USER mcp_readonly FOR LOGIN mcp_readonly;
-    ALTER ROLE db_datareader ADD MEMBER mcp_readonly;
-END;
-GO
--- setup_test_simple.sql
--- Sample data setup for dual SQL Server test containers
 
--- Create a test database
+-- Create a test database (move to top)
 IF DB_ID('TEST_DB') IS NULL
 BEGIN
     CREATE DATABASE TEST_DB;
@@ -23,6 +7,19 @@ END;
 GO
 
 USE TEST_DB;
+GO
+
+-- Add mcp_readonly login and user for MCP tool tests
+IF NOT EXISTS (SELECT * FROM sys.sql_logins WHERE name = 'mcp_readonly')
+BEGIN
+    CREATE LOGIN mcp_readonly WITH PASSWORD = '$(MCP_READONLY_PASSWORD)';
+END;
+GO
+IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = 'mcp_readonly')
+BEGIN
+    CREATE USER mcp_readonly FOR LOGIN mcp_readonly;
+    ALTER ROLE db_datareader ADD MEMBER mcp_readonly;
+END;
 GO
 
 -- Create a sample table
@@ -37,13 +34,20 @@ BEGIN
 END;
 GO
 
--- Insert sample data
-INSERT INTO dbo.sample_table (name, value) VALUES
+
+-- Idempotent insert for sample data
+INSERT INTO dbo.sample_table (name, value)
+SELECT v.name, v.value
+FROM (VALUES
     (N'Alice', 10),
     (N'Bob', 20),
     (N'Charlie', 30),
     (N'Diana', 40),
-    (N'Eve', 50);
+    (N'Eve', 50)
+) AS v(name, value)
+WHERE NOT EXISTS (
+    SELECT 1 FROM dbo.sample_table s WHERE s.name = v.name
+);
 GO
 
 -- Create a second table for join/query tests
@@ -79,13 +83,12 @@ BEGIN
 END;
 GO
 
+
 -- Add a user for admin tool tests
 IF NOT EXISTS (SELECT * FROM sys.sql_logins WHERE name = 'test_user')
 BEGIN
-    CREATE LOGIN test_user WITH PASSWORD = 'TestUserPassword123!';
+    CREATE LOGIN test_user WITH PASSWORD = '$(TEST_USER_PASSWORD)';
 END;
-GO
-USE TEST_DB;
 GO
 IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = 'test_user')
 BEGIN

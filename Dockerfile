@@ -29,6 +29,7 @@ RUN apt-get update && \
         echo "Invalid ODBC_DRIVER_MAJOR='$ODBC_DRIVER_MAJOR' (expected: 17, 18, both)"; \
         exit 1; \
     fi && \
+    apt-get purge -y --auto-remove curl gpg && \
     rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
@@ -64,5 +65,6 @@ COPY --chown=appuser:appuser . .
 EXPOSE 8000
 ENV MCP_HOST=0.0.0.0
 ENV MCP_PORT=8000
+ENV PIP_NO_CACHE_DIR=1
 USER appuser
 CMD ["python", "server_startup.py"]
