@@ -60,35 +60,68 @@ def _get_tool_usage(tool_name, params):
 def list_registered_tools(instance: int = 1, as_json: bool = False) -> dict:
     """
     List all available tools, descriptions, parameters, and usage for the given instance.
-    Set as_json=True for structured output, otherwise returns human-readable text in 'text' key.
+    
+    This introspection tool helps users discover available tools and understand how to use them.
+    
+    Args:
+        instance: Instance number (1 or 2) to list tools for
+        as_json: If True, returns structured JSON; if False, returns human-readable text
+    
+    Returns:
+        Dictionary with 'tools' list (JSON mode) or 'text' string (human-readable mode)
     """
     import asyncio
-    # Use FastMCP public API to enumerate tools (async)
-    tool_infos = asyncio.run(mcp.list_tools())
-    tool_list = []
-    for tool_info in tool_infos:
+    # Use FastMCP public API to enumerate all tools (async)
+    all_tool_infos = asyncio.run(mcp.list_tools())
+    
+    # Filter tools by instance prefix
+    instance_prefix = "db_01_" if instance == 1 else "db_02_"
+    filtered_tools = []
+    
+    for tool_info in all_tool_infos:
         tool_name = tool_info.name
-        func = tool_info.fn
-        # Prefer explicit description, fallback to function docstring
-        doc = tool_info.description or (func.__doc__ or "")
-        params = _get_tool_param_info(func)
-        usage = _get_tool_usage(tool_name, params)
-        tool_list.append({
-            'name': tool_name,
-            'description': doc.strip(),
-            'parameters': params,
-            'usage': usage,
-        })
+        # Include tools that match the instance prefix, plus generic tools (no prefix)
+        if tool_name.startswith(instance_prefix) or not tool_name.startswith("db_0"):
+            func = tool_info.fn
+            # Prefer explicit description, fallback to function docstring
+            doc = tool_info.description or (func.__doc__ or "")
+            params = _get_tool_param_info(func)
+            usage = _get_tool_usage(tool_name, params)
+            filtered_tools.append({
+                'name': tool_name,
+                'description': doc.strip(),
+                'parameters': params,
+                'usage': usage,
+            })
+    
+    # Sort by tool name for consistent output
+    filtered_tools.sort(key=lambda t: t['name'])
+    
     if as_json:
-        return {'tools': tool_list}
+        return {
+            'status': 'success',
+            'instance': instance,
+            'tool_count': len(filtered_tools),
+            'tools': filtered_tools
+        }
+    
     # Human-readable text
-    lines = []
-    for t in tool_list:
-        lines.append(f"Tool: {t['name']}\nDescription: {t['description']}\nParameters:")
+    lines = [
+        f"Registered Tools for Instance {instance}",
+        f"=" * 50,
+        f"Total tools: {len(filtered_tools)}",
+        ""
+    ]
+    for t in filtered_tools:
+        lines.append(f"Tool: {t['name']}")
+        lines.append(f"Description: {t['description']}")
+        lines.append("Parameters:")
         for p in t['parameters']:
             req = 'required' if p['required'] else f"optional, default={p['default']!r}"
             lines.append(f"  - {p['name']} ({p['type']}): {req}")
-        lines.append(f"Usage: {t['usage']}\n")
+        lines.append(f"Usage: {t['usage']}")
+        lines.append("")
+    
     return {'text': '\n'.join(lines)}
 
 
@@ -122,9 +155,6 @@ if GENERATIVE_UI_AVAILABLE and GenerativeUI is not None:
         logger.warning(f"Failed to add GenerativeUI provider: {e}")
 
 print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: {fastmcp.__version__}\n========================\n")
-
-# Register the introspection tool after mcp is defined
-mcp.tool(name="list_registered_tools", description="List all available tools, descriptions, parameters, and usage for the given instance.")(list_registered_tools)
 
 def _validate_single_statement(sql: str) -> bool:
     """Detects if SQL contains multiple statements to prevent chaining."""
@@ -3492,6 +3522,7 @@ def db_sql2019_drop_object(
 def _register_dual_instance_tools():
     """Systematically register all tools for both db_01 and db_02 instances."""
     tool_map = {
+        "list_registered_tools": list_registered_tools,
         "ping": db_sql2019_ping,
         "list_databases": db_sql2019_list_databases,
         "list_tables": db_sql2019_list_tables,

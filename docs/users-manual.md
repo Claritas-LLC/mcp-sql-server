@@ -2,50 +2,83 @@
 
 ### 7.1 Overview
 
-The `list_registered_tools` tool provides a dynamic, up-to-date list of all available tools, their descriptions, parameters (required and optional), and usage instructions for the current server instance. This is useful for discovering available capabilities and for programmatic documentation.
+The `list_registered_tools` tool provides a dynamic, up-to-date list of all available tools, their descriptions, parameters (required and optional), and usage instructions for a specific instance. This is useful for discovering available capabilities and for programmatic documentation.
+
+**Key features:**
+- Automatically discovers all registered tools at runtime
+- Filters tools by instance (shows only tools for instance 1 or 2)
+- Supports both JSON and human-readable text output
+- Includes parameter types, defaults, and usage examples
+- No server restart required to reflect new or removed tools
+- Does not expose sensitive information or internal implementation details
 
 ### 7.2 Usage
 
-**Invoke via MCP:**
-
+**Invoke via MCP (JSON output):**
 ```json
 {
-  "tool": "list_registered_tools",
-  "args": { "instance": 1, "as_json": true }
+  "tool": "db_01_list_registered_tools",
+  "args": { "as_json": true }
+}
+```
+
+**Invoke via MCP (Text output):**
+```json
+{
+  "tool": "db_02_list_registered_tools",
+  "args": { "as_json": false }
 }
 ```
 
 **Parameters:**
-
-- `instance` (int, required): Which SQL Server instance to enumerate tools for (1 or 2)
 - `as_json` (bool, optional): If true, returns structured JSON; if false or omitted, returns human-readable text
+
+**Note:** The tool is automatically registered for both instances:
+- `db_01_list_registered_tools` - Lists tools for instance 1
+- `db_02_list_registered_tools` - Lists tools for instance 2
 
 ### 7.3 Example Output
 
 **JSON:**
 ```json
 {
+  "status": "success",
+  "instance": 1,
+  "tool_count": 25,
   "tools": [
     {
-      "name": "db_sql2019_ping",
-      "description": "Basic connectivity probe.",
+      "name": "db_01_ping",
+      "description": "Basic connectivity probe to a SQL Server instance.",
       "parameters": [
         {"name": "instance", "type": "<class 'int'>", "required": false, "default": 1}
       ],
-      "usage": "db_sql2019_ping [instance=1]"
+      "usage": "db_01_ping [instance=1]"
     },
-    ...
+    {
+      "name": "db_01_list_tables",
+      "description": "List user tables in a database.",
+      "parameters": [
+        {"name": "database_name", "type": "<class 'str'>", "required": true, "default": null},
+        {"name": "schema_name", "type": "<class 'str'>", "required": false, "default": "dbo"}
+      ],
+      "usage": "db_01_list_tables database_name=<value> [schema_name='dbo']"
+    }
   ]
 }
 ```
 
 **Text:**
 ```
-Tool: db_sql2019_ping
-Description: Basic connectivity probe.
+Registered Tools for Instance 1
+==================================================
+Total tools: 25
+
+Tool: db_01_list_tables
+Description: List user tables in a database.
 Parameters:
-  - instance (<class 'int'>): optional, default=1
-Usage: db_sql2019_ping [instance=1]
+  - database_name (<class 'str'>): required
+  - schema_name (<class 'str'>): optional, default='dbo'
+Usage: db_01_list_tables database_name=<value> [schema_name='dbo']
 
 ... (other tools)
 ```
@@ -54,6 +87,8 @@ Usage: db_sql2019_ping [instance=1]
 
 - The list is always current and reflects all tools registered in the server.
 - Use this tool to programmatically discover tool names, required arguments, and usage patterns for automation or documentation.
+- The tool filters results to show only tools for the specified instance (db_01_* or db_02_*).
+- Generic tools without an instance prefix are also included in the output.
 
 # Security Note
 
@@ -262,6 +297,10 @@ Example 7: Generative sessions dashboard
 
 All suffixes below are available as both `db_01_<suffix>` and `db_02_<suffix>` when both instances are configured.
 
+#### Introspection and discovery
+
+- `list_registered_tools`
+
 #### Connectivity and discovery
 
 - `ping`
@@ -314,6 +353,7 @@ These are registered separately and available as both `db_01_<suffix>` and `db_0
 
 | Family | Canonical Suffix Examples | Primary Intent |
 | --- | --- | --- |
+| Introspection | `list_registered_tools` | Discover available tools, parameters, and usage |
 | Connectivity | `ping`, `server_info_mcp` | Validate server/db availability and runtime info |
 | Discovery | `list_databases`, `list_tables`, `get_schema`, `list_objects` | Inspect database structure |
 | Query | `execute_query`, `run_query`, `explain_query` | Execute SQL and inspect plans |
