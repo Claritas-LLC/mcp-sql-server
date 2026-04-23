@@ -3559,6 +3559,8 @@ def _register_dual_instance_tools():
             def make_wrapper(f, inst, registered_tool_name: str):
                 @wraps(f)
                 def wrapper(*args, **kwargs):
+                    # Capture original args keys before modification
+                    original_args_keys = sorted(list(kwargs.keys()))
                     # Remove instance from kwargs if it was passed by MCP (it shouldn't be, but just in case)
                     kwargs.pop("instance", None)
                     kwargs["instance"] = inst
@@ -3569,7 +3571,7 @@ def _register_dual_instance_tools():
                         "database_name": kwargs.get("database_name") or kwargs.get("database"),
                         "schema": kwargs.get("schema") or kwargs.get("schema_name"),
                         "table_name": kwargs.get("table_name"),
-                        "args_keys": sorted(list(kwargs.keys())),
+                        "args_keys": original_args_keys,
                     }
                     function_name = f.__name__
                     _log_tool_start(registered_tool_name, function_name, invocation_id, context)
@@ -4009,6 +4011,8 @@ def _register_generative_dashboard_tools() -> None:
             def make_wrapper(f, inst, registered_tool_name: str):
                 @wraps(f)
                 def wrapper(*args, **kwargs):
+                    # Capture original args keys before modification
+                    original_args_keys = sorted(list(kwargs.keys()))
                     kwargs.pop("instance", None)
                     kwargs["instance"] = inst
                     invocation_id = uuid.uuid4().hex
@@ -4018,7 +4022,7 @@ def _register_generative_dashboard_tools() -> None:
                         "database_name": kwargs.get("database_name") or kwargs.get("database"),
                         "schema": kwargs.get("schema") or kwargs.get("schema_name"),
                         "table_name": kwargs.get("table_name"),
-                        "args_keys": sorted(list(kwargs.keys())),
+                        "args_keys": original_args_keys,
                     }
                     function_name = f.__name__
                     _log_tool_start(registered_tool_name, function_name, invocation_id, context)
