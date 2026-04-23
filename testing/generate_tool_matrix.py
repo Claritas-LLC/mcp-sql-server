@@ -59,11 +59,12 @@ ARG_TEMPLATES = {
 
 
 async def main() -> None:
-    tools = await server.mcp.list_tools()
-    names = sorted(t.name for t in tools)
 
+    tools = await server.mcp.list_tools()
+    # Only include db_01_ and db_02_ tools (ignore aliases)
+    filtered_tools = [t for t in tools if t.name.startswith("db_01_") or t.name.startswith("db_02_")]
     items = []
-    for tool in sorted(tools, key=lambda t: t.name):
+    for tool in sorted(filtered_tools, key=lambda t: t.name):
         name = tool.name
         parts = name.split("_", 2)
         suffix = parts[2] if len(parts) > 2 else ""

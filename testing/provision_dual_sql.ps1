@@ -5,7 +5,11 @@ $container2 = 'mcp_sqlserver_test_02'
 $password = 'McpTestPassword123!'
 
 foreach ($name in @($container1, $container2)) {
-    docker rm -f $name 2>$null | Out-Null
+    try {
+        docker rm -f $name 2>$null | Out-Null
+    } catch {
+        # Ignore error if container does not exist
+    }
 }
 
 docker run -d --name $container1 -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=$password -p 14331:1433 mcr.microsoft.com/mssql/server:2019-latest | Out-Null

@@ -967,7 +967,7 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
         return conn
 
 
-def _set_statement_timeout(conn: pyodbc.Connection, timeout_ms: int) -> None:
+def _set_statement_timeout(conn: Union[pyodbc.Connection, 'PooledConnection'], timeout_ms: int) -> None:
     """Set query timeout on a pyodbc connection."""
     try:
         cur = conn.cursor()
@@ -1474,7 +1474,7 @@ def db_sql2019_ping(instance: int = 1) -> dict[str, Any]:
 
 
 def db_sql2019_list_databases(instance: int = 1, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
-    """List online databases visible to the current login."""
+    """List all online databases accessible to the current login."""
     validate_instance(instance)
     conn = get_connection("master", instance=instance)
     try:
@@ -1501,7 +1501,7 @@ def db_sql2019_list_tables(
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
-    """List tables for a database/schema."""
+    """List all tables in a database and schema."""
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
@@ -1557,7 +1557,7 @@ def db_sql2019_get_schema(
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
-    """Get column metadata for a table."""
+    """Get column details and metadata for a specific table."""
     if not table_name:
         raise ValueError("table_name is required")
     validate_instance(instance)
@@ -1680,7 +1680,7 @@ def db_sql2019_execute_query(
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
-    """Legacy-compatible query executor (read-only unless write mode is enabled)."""
+    """Execute a SQL query (read-only unless write mode is enabled)."""
     if not sql:
         raise ValueError("sql is required")
     if _validate_single_statement(sql):
@@ -1710,7 +1710,7 @@ def db_sql2019_run_query(
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
-    """Execute SQL; supports legacy positional args and keyword-style database_name/sql."""
+    """Execute a SQL query with support for both positional and keyword arguments."""
     if sql is not None:
         resolved_sql = sql
         resolved_database_name = database_name
@@ -1752,7 +1752,7 @@ def db_sql2019_list_objects(
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
-    """Unified object listing for database/schema/table/view/index/function/procedure/trigger."""
+    """List objects (tables, views, indexes, functions, procedures, triggers) in a database or schema."""
     validate_instance(instance)
     db_name = database_name or database or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
@@ -3939,14 +3939,21 @@ try:
 
     @mcp.custom_route("/performance-dashboard", methods=["GET"], name="performance_dashboard")
     async def performance_dashboard_handler(request):
+
         """Handler for /performance-dashboard endpoint - fetches data on-demand."""
+
+        # Extract query parameters safely
         report_id = request.query_params.get("id")
         instance = request.query_params.get("instance", "1")
         database = request.query_params.get("database")
 
+        # --- Enhanced diagnostics ---
+        logger.info("/performance-dashboard called with id=%r, instance=%r, database=%r", report_id, instance, database)
+
         # If cached report exists, serve it
         if report_id:
             html = _get_report_html(report_id)
+            logger.info("Serving cached report for id=%r: found=%r", report_id, html is not None)
             if html is not None:
                 return HTMLResponse(content=html, status_code=200)
 
@@ -3958,10 +3965,13 @@ try:
             db_name_str = _normalize_db_name(db_name)
             inst_cfg = get_instance_config(instance_int)
 
+            logger.info("Resolved instance=%r, db_name=%r, db_name_str=%r, inst_cfg=%r", instance_int, db_name, db_name_str, inst_cfg)
+
             # Fetch all data on-demand
             queries: list[dict[str, Any]] = []
             qs_enabled = None
             try:
+                logger.info("Calling db_sql2019_show_top_queries(instance=%r, database_name=%r)", instance_int, db_name_str)
                 top_q = db_sql2019_show_top_queries(
                     instance=instance_int,
                     database_name=db_name_str,
@@ -3973,11 +3983,13 @@ try:
                 )
                 queries = top_q.get("queries", []) if isinstance(top_q, dict) else []
                 qs_enabled = top_q.get("query_store_enabled") if isinstance(top_q, dict) else None
+                logger.info("Top queries result: queries_count=%d, qs_enabled=%r", len(queries), qs_enabled)
             except Exception as exc:
-                logger.warning("Top queries failed for performance dashboard: %s", exc)
+                logger.warning("Top queries failed for performance dashboard: %s", exc, exc_info=True)
 
             frag_items: list[dict[str, Any]] = []
             try:
+                logger.info("Calling db_sql2019_check_fragmentation(instance=%r, database_name=%r)", instance_int, db_name_str)
                 frag = db_sql2019_check_fragmentation(
                     instance=instance_int,
                     database_name=db_name_str,
@@ -3985,15 +3997,18 @@ try:
                     page_size=50,
                 )
                 frag_items = frag.get("items", []) if isinstance(frag, dict) else []
+                logger.info("Fragmentation result: items_count=%d", len(frag_items))
             except Exception as exc:
-                logger.warning("Fragmentation check failed for performance dashboard: %s", exc)
+                logger.warning("Fragmentation check failed for performance dashboard: %s", exc, exc_info=True)
 
             sec_perf: dict[str, Any] = {}
             try:
+                logger.info("Calling db_sql2019_db_sec_perf_metrics(instance=%r, database_name=%r)", instance_int, db_name_str)
                 sec_perf_raw = db_sql2019_db_sec_perf_metrics(instance=instance_int, database_name=db_name_str)
                 sec_perf = sec_perf_raw.get("items", sec_perf_raw) if isinstance(sec_perf_raw, dict) else {}
+                logger.info("Sec/perf metrics result: keys=%r", list(sec_perf.keys()) if isinstance(sec_perf, dict) else None)
             except Exception as exc:
-                logger.warning("Sec/perf metrics failed for performance dashboard: %s", exc)
+                logger.warning("Sec/perf metrics failed for performance dashboard: %s", exc, exc_info=True)
 
             metric_values = [
                 q.get("metric_value", 0)
@@ -4009,6 +4024,8 @@ try:
                 if isinstance(r, dict) and isinstance(r.get("avg_fragmentation_in_percent", 0), (int, float))
             ]
             avg_frag = (sum(frag_vals) / len(frag_vals)) if frag_vals else 0.0
+
+            logger.info("KPI summary: avg_query_metric=%r, max_query_metric=%r, avg_frag=%r, frag_vals_count=%d", avg_query_metric, max_query_metric, avg_frag, len(frag_vals))
 
             report_payload = {
                 "database": db_name,
@@ -4070,10 +4087,14 @@ try:
                 )[:5],
             }
 
+            logger.info("Report payload summary: %r", {k: report_payload[k] for k in ('database','instance','server','timestamp','query_store_enabled')})
+
             html = _render_performance_dashboard_html(report_payload)
+            logger.info("Dashboard HTML generated, length=%d", len(html) if html else -1)
             return HTMLResponse(content=html, status_code=200)
 
         except ValueError as exc:
+            logger.error("ValueError in dashboard handler: %s", exc, exc_info=True)
             return JSONResponse({"error": str(exc)}, status_code=400)
         except Exception as exc:
             logger.exception("Failed to render performance dashboard")
