@@ -1,4 +1,131 @@
 
+
+# --- Standard Library Imports ---
+import os
+import re
+import queue
+import logging
+from logging.handlers import RotatingFileHandler
+import pathlib
+import json
+import time
+import base64
+import hashlib
+import uuid
+import sys
+from datetime import datetime, timezone
+from threading import Lock
+from contextvars import ContextVar
+from typing import Any, Sequence, Literal, Union, get_type_hints
+from html import escape
+from functools import wraps
+
+# --- Third-Party Imports ---
+import fastmcp
+from fastmcp import FastMCP
+import pyodbc
+import xml.etree.ElementTree as ET
+import math
+
+# --- Tool Introspection Utility ---
+
+def _get_tool_param_info(func):
+    """Extract parameter info from a function's signature and type hints."""
+    import inspect
+    sig = inspect.signature(func)
+    hints = get_type_hints(func)
+    params = []
+    for name, param in sig.parameters.items():
+        if name == 'ctx':
+            continue  # Skip context param
+        param_info = {
+            'name': name,
+            'type': str(hints.get(name, param.annotation)),
+            'required': param.default is inspect.Parameter.empty,
+            'default': None if param.default is inspect.Parameter.empty else param.default,
+        }
+        params.append(param_info)
+    return params
+
+def _get_tool_usage(tool_name, params):
+    """Generate usage string for a tool."""
+    param_strs = []
+    for p in params:
+        if p['required']:
+            param_strs.append(f"{p['name']}=<value>")
+        else:
+            param_strs.append(f"[{p['name']}={p['default']!r}]")
+    return f"{tool_name} " + " ".join(param_strs)
+
+def list_registered_tools(instance: int = 1, as_json: bool = False) -> dict:
+    """
+    List all available tools, descriptions, parameters, and usage for the given instance.
+    Set as_json=True for structured output, otherwise returns human-readable text in 'text' key.
+    """
+    import asyncio
+    # Use FastMCP public API to enumerate tools (async)
+    tool_infos = asyncio.run(mcp.list_tools())
+    tool_list = []
+    for tool_info in tool_infos:
+        tool_name = tool_info.name
+        func = tool_info.fn
+        # Prefer explicit description, fallback to function docstring
+        doc = tool_info.description or (func.__doc__ or "")
+        params = _get_tool_param_info(func)
+        usage = _get_tool_usage(tool_name, params)
+        tool_list.append({
+            'name': tool_name,
+            'description': doc.strip(),
+            'parameters': params,
+            'usage': usage,
+        })
+    if as_json:
+        return {'tools': tool_list}
+    # Human-readable text
+    lines = []
+    for t in tool_list:
+        lines.append(f"Tool: {t['name']}\nDescription: {t['description']}\nParameters:")
+        for p in t['parameters']:
+            req = 'required' if p['required'] else f"optional, default={p['default']!r}"
+            lines.append(f"  - {p['name']} ({p['type']}): {req}")
+        lines.append(f"Usage: {t['usage']}\n")
+    return {'text': '\n'.join(lines)}
+
+
+
+
+# --- Logger Setup (must be before MCP server init and GenerativeUI registration) ---
+logger = logging.getLogger("mcp_sqlserver")
+
+# --- Generative UI support (FastMCP 3.2.0+; must be before MCP server init) ---
+try:
+    from fastmcp.apps.generative import GenerativeUI
+    GENERATIVE_UI_AVAILABLE = True
+except ImportError:
+    GenerativeUI = None  # type: ignore
+    GENERATIVE_UI_AVAILABLE = False
+    logger.debug("GenerativeUI not available; fastmcp[apps] not installed")
+
+# --- MCP Server Initialization and Tool Registration ---
+# (This must be after all function definitions and after mcp is defined)
+
+# FastMCP app initialization
+MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server")
+mcp = FastMCP(name=MCP_SERVER_NAME)
+
+# Add Generative UI provider for dynamic dashboard generation
+if GENERATIVE_UI_AVAILABLE and GenerativeUI is not None:
+    try:
+        mcp.add_provider(GenerativeUI())  # type: ignore
+        logger.info("GenerativeUI provider registered for dynamic dashboard generation")
+    except Exception as e:
+        logger.warning(f"Failed to add GenerativeUI provider: {e}")
+
+print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: {fastmcp.__version__}\n========================\n")
+
+# Register the introspection tool after mcp is defined
+mcp.tool(name="list_registered_tools", description="List all available tools, descriptions, parameters, and usage for the given instance.")(list_registered_tools)
+
 def _validate_single_statement(sql: str) -> bool:
     """Detects if SQL contains multiple statements to prevent chaining."""
     if not sql:
@@ -39,25 +166,7 @@ import queue
 import logging
 from logging.handlers import RotatingFileHandler
 import os
-import pathlib
-import re
-import json
-import time
-import base64
-import hashlib
-import uuid
-import sys
-from datetime import datetime, timezone
-from threading import Lock
-from contextvars import ContextVar
-from typing import Any, Sequence, Literal, Union
-from html import escape
-from functools import wraps
-import fastmcp
-import pyodbc
-from fastmcp import FastMCP
-import xml.etree.ElementTree as ET
-import math
+
 
 
 # --- Helper for normalizing db_name consistently ---

@@ -45,9 +45,11 @@ $isInsecureTls = ($db01Encrypt -eq 'no') -or ($db01TrustCert -eq 'yes')
 if ($isInsecureTls) {
     Write-Warning "Insecure test TLS configuration detected (DB_01_ENCRYPT=$($env:DB_01_ENCRYPT), DB_01_TRUST_CERT=$($env:DB_01_TRUST_CERT))."
     Write-Warning "Credentials supplied via DB_01_USER/DB_01_PASSWORD are for local testing only and must never be reused in production."
+
     if (($env:FORCE_INSECURE_TEST | ForEach-Object { $_.ToLowerInvariant() }) -ne 'true') {
         throw "Refusing insecure test config without explicit opt-in. Set FORCE_INSECURE_TEST=true to continue."
     }
+}
 
 
 # ---
@@ -59,7 +61,7 @@ if ($isInsecureTls) {
 # Write-mode and test credentials must never be enabled or reused in production.
 # ---
 
-$WriteMode controls whether destructive/write operations are enabled for testing.
+# $WriteMode controls whether destructive/write operations are enabled for testing.
 #
 # If enabled, test API key and write permissions are set for local test automation.
 # If disabled, write is blocked and no test credentials are present.

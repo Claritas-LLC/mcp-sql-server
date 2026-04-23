@@ -15,18 +15,11 @@
 mcp_sqlserver/__pycache__/
 
 # Exclude test, docs, and local artifacts
-!logs/
-!README.md
-!LICENSE
-!SECURITY.md
-!CONTRIBUTING.md
-!CODE_OF_CONDUCT.md
-!requirements.txt
-!Dockerfile
-!plan/
-!docs/
-!testing/
-!tests/
-!pytest_results.txt
-!test_output.txt
-!setup_test_simple.sql
+logs/
+docs/
+plan/
+testing/
+tests/
+pytest_results.txt
+test_output.txt
+setup_test_simple.sql

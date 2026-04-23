@@ -1,3 +1,60 @@
+## 7. Tool Introspection Utility
+
+### 7.1 Overview
+
+The `list_registered_tools` tool provides a dynamic, up-to-date list of all available tools, their descriptions, parameters (required and optional), and usage instructions for the current server instance. This is useful for discovering available capabilities and for programmatic documentation.
+
+### 7.2 Usage
+
+**Invoke via MCP:**
+
+```json
+{
+  "tool": "list_registered_tools",
+  "args": { "instance": 1, "as_json": true }
+}
+```
+
+**Parameters:**
+
+- `instance` (int, required): Which SQL Server instance to enumerate tools for (1 or 2)
+- `as_json` (bool, optional): If true, returns structured JSON; if false or omitted, returns human-readable text
+
+### 7.3 Example Output
+
+**JSON:**
+```json
+{
+  "tools": [
+    {
+      "name": "db_sql2019_ping",
+      "description": "Basic connectivity probe.",
+      "parameters": [
+        {"name": "instance", "type": "<class 'int'>", "required": false, "default": 1}
+      ],
+      "usage": "db_sql2019_ping [instance=1]"
+    },
+    ...
+  ]
+}
+```
+
+**Text:**
+```
+Tool: db_sql2019_ping
+Description: Basic connectivity probe.
+Parameters:
+  - instance (<class 'int'>): optional, default=1
+Usage: db_sql2019_ping [instance=1]
+
+... (other tools)
+```
+
+### 7.4 Notes
+
+- The list is always current and reflects all tools registered in the server.
+- Use this tool to programmatically discover tool names, required arguments, and usage patterns for automation or documentation.
+
 # Security Note
 
 **Never commit real secrets or passwords to .env, code, or documentation.**
