@@ -2622,8 +2622,35 @@ def _fetch_relationships(cur: pyodbc.Cursor, database: str) -> list[dict[str, An
     return _rows_to_dicts(cur, cur.fetchall())
 
 
-def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    issues: dict[str, list[dict[str, Any]]] = {
+def _sanitize_mermaid_id(name: str) -> str:
+    """Sanitize a table name for Mermaid node ID compatibility.
+    
+    Mermaid node IDs must:
+    - Start with a letter
+    - Contain only alphanumeric characters and underscores
+    - Not contain spaces, dots, hyphens, or special characters
+    """
+    # Remove all non-alphanumeric characters except underscores
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', str(name))
+    # Ensure it starts with a letter (prepend 'T' if it starts with digit or underscore)
+    if sanitized and not sanitized[0].isalpha():
+        sanitized = 'T' + sanitized
+    # Remove consecutive underscores
+    sanitized = re.sub(r'_+', '_', sanitized)
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip('_')
+    # Fallback if empty
+    if not sanitized:
+        sanitized = 'Unknown'
+    return sanitized
+
+
+def _render_data_model_html(
+    model: dict[str, Any],
+    issues: dict[str, list[dict[str, Any]]],
+    page: int = 1,
+) -> str:
+    issues = {
         "entities": [],
         "attributes": [],
         "relationships": [],
@@ -2664,8 +2691,8 @@ def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict
                 }
             )
 
-        # Duplicate Column Names Check (within entity)
-        col_names = [c.get("name", "").lower() for c in cols]
+        # Duplicate Column Names Check (within entity) - case-sensitive check
+        col_names = [c.get("name", "") for c in cols]
         seen = set()
         duplicates = set()
         for col_name in col_names:
@@ -3199,8 +3226,8 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
                 <div class="erd-container">
                     <div class="mermaid">
 graph TD
-{"".join([f"    {e.get('name').replace('-', '_').replace(' ', '_')}[\"{escape(e.get('name'))}\"]" for e in entities])}
-{"".join([f"    {r.get('from_table').replace('-', '_').replace(' ', '_')} -->|\"{escape(r.get('name', 'FK'))}\"| {r.get('referenced_table').replace('-', '_').replace(' ', '_')}" for r in relationships])}
+{"".join([f"    {_sanitize_mermaid_id(e.get('name'))}[\"{escape(e.get('name'))}\"]" for e in entities])}
+{"".join([f"    {_sanitize_mermaid_id(r.get('from_table'))} -->|\"{escape(r.get('name', 'FK'))}\"| {_sanitize_mermaid_id(r.get('referenced_table'))}" for r in relationships])}
                     </div>
                 </div>
             </div>
