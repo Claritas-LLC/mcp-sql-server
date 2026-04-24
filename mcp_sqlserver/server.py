@@ -2629,33 +2629,387 @@ def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict
         "relationships": [],
         "identifiers": [],
         "normalization": [],
+        "missing_relationships": [],
+        "datatype_mismatches": [],
+        "anomalies": [],
     }
 
+    # Build lookup structures for analysis
+    entity_lookup = {}
+    entity_columns = {}
     for entity in entities:
         table_name = entity.get("name")
         schema_name = entity.get("schema")
+        full_name = f"{schema_name}.{table_name}"
+        entity_lookup[full_name] = entity
+        cols = entity.get("columns", [])
+        entity_columns[full_name] = {c.get("name", "").lower(): c for c in cols}
+
+    # Analyze each entity for issues
+    for entity in entities:
+        table_name = entity.get("name")
+        schema_name = entity.get("schema")
+        full_name = f"{schema_name}.{table_name}"
         cols = entity.get("columns", [])
 
+        # Missing Primary Key Check
         if not any(c.get("is_primary_key") for c in cols):
             issues["identifiers"].append(
                 {
-                    "entity": f"{schema_name}.{table_name}",
+                    "entity": full_name,
                     "issue": "Missing primary key",
                     "severity": "High",
                     "impact": "Entity identity cannot be guaranteed, impacting data integrity and join performance.",
+                    "recommendation": "Add a primary key or identity column to ensure unique identification of each row.",
                 }
             )
 
+        # Duplicate Column Names Check (within entity)
+        col_names = [c.get("name", "").lower() for c in cols]
+        seen = set()
+        duplicates = set()
+        for col_name in col_names:
+            if col_name in seen:
+                duplicates.add(col_name)
+            seen.add(col_name)
+        for dup in duplicates:
+            issues["attributes"].append(
+                {
+                    "entity": full_name,
+                    "issue": f"Duplicate column name: {dup}",
+                    "severity": "High",
+                    "impact": "Duplicate column names cause ambiguity and potential data corruption.",
+                    "recommendation": "Rename duplicate columns to be unique within the entity.",
+                }
+            )
+
+        # Normalization Analysis (1NF - Repeating Groups)
+        repeating_group_patterns = ["_1", "_2", "_3", "_4", "_5", "_01", "_02", "_03", "_04", "_05"]
+        base_names = {}
+        for col in cols:
+            col_name = col.get("name", "")
+            for pattern in repeating_group_patterns:
+                if col_name.endswith(pattern):
+                    base = col_name[: -len(pattern)]
+                    if base not in base_names:
+                        base_names[base] = []
+                    base_names[base].append(col_name)
+
+        for base, group_cols in base_names.items():
+            if len(group_cols) >= 3:  # 3 or more numbered columns suggest repeating group
+                issues["normalization"].append(
+                    {
+                        "entity": full_name,
+                        "issue": f"Repeating group detected: {base}_* columns",
+                        "severity": "Medium",
+                        "impact": "Violation of 1NF - Repeating groups should be extracted to a separate entity.",
+                        "recommendation": f"Extract columns {', '.join(group_cols)} into a separate entity with a foreign key to {full_name}.",
+                        "columns": group_cols,
+                    }
+                )
+
+        # Normalization Analysis (High column count - possible 2NF/3NF violation)
         if len(cols) > 30:
             issues["normalization"].append(
                 {
-                    "entity": f"{schema_name}.{table_name}",
+                    "entity": full_name,
                     "issue": "Large number of attributes",
                     "severity": "Medium",
                     "impact": "Possible violation of normalization; consider splitting into multiple entities.",
+                    "recommendation": "Review attributes for partial dependencies (2NF) and transitive dependencies (3NF).",
+                    "column_count": len(cols),
                 }
             )
 
+        # Sparse Columns Detection (Potential 3NF violation)
+        nullable_cols = [c for c in cols if c.get("is_nullable")]
+        if len(cols) > 10 and len(nullable_cols) / len(cols) > 0.7:
+            issues["normalization"].append(
+                {
+                    "entity": full_name,
+                    "issue": "High proportion of nullable columns",
+                    "severity": "Low",
+                    "impact": "Possible 3NF violation - sparse data may indicate entity should be split into subtypes.",
+                    "recommendation": "Consider extracting optional attributes into a separate entity to reduce NULL values.",
+                    "nullable_percentage": round(len(nullable_cols) / len(cols) * 100, 1),
+                }
+            )
+
+    # Relationship Analysis
+    # Build relationship graph
+    entity_relationships = {f"{e.get('schema')}.{e.get('name')}": {"outgoing": [], "incoming": []} for e in entities}
+
+    for rel in relationships:
+        from_schema = rel.get("from_schema")
+        from_table = rel.get("from_table")
+        to_schema = rel.get("referenced_schema")
+        to_table = rel.get("referenced_table")
+        from_key = f"{from_schema}.{from_table}"
+        to_key = f"{to_schema}.{to_table}"
+
+        if from_key in entity_relationships:
+            entity_relationships[from_key]["outgoing"].append(rel)
+        if to_key in entity_relationships:
+            entity_relationships[to_key]["incoming"].append(rel)
+
+    # Missing Relationships Detection
+    # Look for potential relationships based on naming conventions
+    for entity in entities:
+        schema_name = entity.get("schema")
+        table_name = entity.get("name")
+        full_name = f"{schema_name}.{table_name}"
+        cols = entity.get("columns", [])
+
+        # Check for columns that look like foreign keys but aren't
+        fk_patterns = ["_id", "_code", "_key", "_fk", "_ref"]
+        for col in cols:
+            col_name = col.get("name", "").lower()
+            is_fk = any(col_name.endswith(pattern) for pattern in fk_patterns)
+            is_pk = col.get("is_primary_key", False)
+
+            if is_fk and not is_pk:
+                # Check if this column is already part of a relationship
+                is_in_relationship = False
+                for rel in relationships:
+                    if rel.get("from_schema") == schema_name and rel.get("from_table") == table_name:
+                        rel_cols = rel.get("from_columns", [])
+                        if isinstance(rel_cols, list) and any(
+                            c.lower() == col_name for c in rel_cols
+                        ):
+                            is_in_relationship = True
+                            break
+
+                if not is_in_relationship:
+                    # Try to find a potential parent entity
+                    potential_parent = col_name.replace("_id", "").replace("_code", "").replace("_key", "").replace("_fk", "").replace("_ref", "")
+                    for other_entity in entities:
+                        other_name = other_entity.get("name", "").lower()
+                        if other_name == potential_parent and other_entity != entity:
+                            issues["missing_relationships"].append(
+                                {
+                                    "entity": full_name,
+                                    "issue": f"Potential missing relationship: {col_name}",
+                                    "severity": "Medium",
+                                    "impact": f"Column '{col_name}' suggests a relationship to '{other_name}' but no foreign key is defined.",
+                                    "recommendation": f"Add a foreign key constraint from {full_name}.{col.get('name')} to {other_entity.get('schema')}.{other_entity.get('name')}.",
+                                    "column": col.get("name"),
+                                    "suggested_parent": f"{other_entity.get('schema')}.{other_entity.get('name')}",
+                                }
+                            )
+
+        # Isolated Entity Detection
+        if entity_relationships.get(full_name):
+            outgoing = entity_relationships[full_name]["outgoing"]
+            incoming = entity_relationships[full_name]["incoming"]
+            if len(outgoing) == 0 and len(incoming) == 0 and len(entities) > 1:
+                issues["missing_relationships"].append(
+                    {
+                        "entity": full_name,
+                        "issue": "Isolated entity",
+                        "severity": "Low",
+                        "impact": "Entity has no relationships with other entities, which may indicate missing foreign keys or unnecessary entity.",
+                        "recommendation": "Review if this entity should relate to others, or consider merging if it stores redundant data.",
+                    }
+                )
+
+    # Datatype Mismatch Analysis
+    # Compare datatypes between related entities
+    for rel in relationships:
+        from_schema = rel.get("from_schema")
+        from_table = rel.get("from_table")
+        to_schema = rel.get("referenced_schema")
+        to_table = rel.get("referenced_table")
+        from_cols = rel.get("from_columns", [])
+        to_cols = rel.get("referenced_columns", [])
+        from_key = f"{from_schema}.{from_table}"
+        to_key = f"{to_schema}.{to_table}"
+
+        if from_key in entity_columns and to_key in entity_columns:
+            from_entity_cols = entity_columns[from_key]
+            to_entity_cols = entity_columns[to_key]
+
+            for fc, tc in zip(from_cols, to_cols):
+                fc_lower = fc.lower() if fc else ""
+                tc_lower = tc.lower() if tc else ""
+
+                if fc_lower in from_entity_cols and tc_lower in to_entity_cols:
+                    from_type = from_entity_cols[fc_lower].get("data_type", "").lower()
+                    to_type = to_entity_cols[tc_lower].get("data_type", "").lower()
+                    from_length = from_entity_cols[fc_lower].get("max_length")
+                    to_length = to_entity_cols[tc_lower].get("max_length")
+
+                    # Check for significant type mismatches
+                    type_compatibility = {
+                        ("int", "bigint"): True,
+                        ("bigint", "int"): False,  # Potential data loss
+                        ("varchar", "nvarchar"): True,
+                        ("nvarchar", "varchar"): False,  # Potential data loss
+                        ("char", "varchar"): True,
+                        ("varchar", "char"): True,
+                    }
+
+                    compatible = type_compatibility.get((from_type, to_type), from_type == to_type)
+
+                    if not compatible:
+                        issues["datatype_mismatches"].append(
+                            {
+                                "relationship": f"{from_key}.{fc} -> {to_key}.{tc}",
+                                "issue": "Datatype mismatch in relationship",
+                                "severity": "High",
+                                "impact": f"Foreign key column '{fc}' ({from_type}) has incompatible type with referenced column '{tc}' ({to_type}). This may cause join failures or data conversion errors.",
+                                "recommendation": f"Align datatypes: change {from_key}.{fc} to {to_type} or {to_key}.{tc} to {from_type}.",
+                                "from_type": from_type,
+                                "to_type": to_type,
+                            }
+                        )
+
+                    # Check for length mismatches
+                    if from_length and to_length and from_length > to_length:
+                        issues["datatype_mismatches"].append(
+                            {
+                                "relationship": f"{from_key}.{fc} -> {to_key}.{tc}",
+                                "issue": "Length mismatch in relationship",
+                                "severity": "Medium",
+                                "impact": f"Foreign key column '{fc}' ({from_length}) is longer than referenced column '{tc}' ({to_length}). This may cause data truncation.",
+                                "recommendation": f"Increase length of {to_key}.{tc} to match or exceed {from_length}.",
+                                "from_length": from_length,
+                                "to_length": to_length,
+                            }
+                        )
+
+    # Anomaly Detection
+    # Circular Reference Detection
+    def find_circular_references():
+        # Build adjacency list
+        adj = {f"{e.get('schema')}.{e.get('name')}": [] for e in entities}
+        for rel in relationships:
+            from_key = f"{rel.get('from_schema')}.{rel.get('from_table')}"
+            to_key = f"{rel.get('referenced_schema')}.{rel.get('referenced_table')}"
+            if from_key in adj:
+                adj[from_key].append(to_key)
+
+        # DFS to find cycles
+        visited = set()
+        rec_stack = set()
+
+        def dfs(node, path):
+            visited.add(node)
+            rec_stack.add(node)
+            path.append(node)
+
+            for neighbor in adj.get(node, []):
+                if neighbor not in visited:
+                    cycle = dfs(neighbor, path)
+                    if cycle:
+                        return cycle
+                elif neighbor in rec_stack:
+                    # Found cycle
+                    cycle_start = path.index(neighbor)
+                    return path[cycle_start:] + [neighbor]
+
+            path.pop()
+            rec_stack.remove(node)
+            return None
+
+        cycles = []
+        for node in adj:
+            if node not in visited:
+                cycle = dfs(node, [])
+                if cycle:
+                    cycles.append(cycle)
+                    # Reset for next search
+                    visited = set()
+                    rec_stack = set()
+
+        return cycles
+
+    circular_refs = find_circular_references()
+    for cycle in circular_refs:
+        if cycle:
+            issues["anomalies"].append(
+                {
+                    "issue": "Circular reference detected",
+                    "severity": "High",
+                    "impact": f"Circular foreign key dependency detected: {' -> '.join(cycle)}. This can cause insertion/deletion/update anomalies and make data maintenance difficult.",
+                    "recommendation": "Break the circular dependency by removing one foreign key or using deferred constraints.",
+                    "cycle": cycle,
+                    "affected_entities": cycle[:-1] if len(cycle) > 1 else cycle,
+                }
+            )
+
+    # Insertion Anomaly Detection
+    # Entities where all columns are nullable except PK (requires all data at once)
+    for entity in entities:
+        schema_name = entity.get("schema")
+        table_name = entity.get("name")
+        full_name = f"{schema_name}.{table_name}"
+        cols = entity.get("columns", [])
+
+        non_pk_cols = [c for c in cols if not c.get("is_primary_key")]
+        nullable_non_pk = [c for c in non_pk_cols if c.get("is_nullable")]
+
+        if non_pk_cols and len(nullable_non_pk) == len(non_pk_cols) and len(non_pk_cols) > 0:
+            issues["anomalies"].append(
+                {
+                    "entity": full_name,
+                    "issue": "Insertion anomaly risk",
+                    "severity": "Medium",
+                    "impact": "All non-PK columns are nullable. This allows creating entities with no meaningful data, which may indicate a design issue.",
+                    "recommendation": "Consider making essential attributes non-nullable or splitting into a more normalized structure.",
+                }
+            )
+
+    # Deletion Anomaly Detection
+    # Entities that are referenced by many others (cascade delete risk)
+    reference_counts = {}
+    for rel in relationships:
+        to_key = f"{rel.get('referenced_schema')}.{rel.get('referenced_table')}"
+        reference_counts[to_key] = reference_counts.get(to_key, 0) + 1
+
+    for entity_key, count in reference_counts.items():
+        if count >= 5:  # Referenced by 5+ entities
+            issues["anomalies"].append(
+                {
+                    "entity": entity_key,
+                    "issue": "Deletion anomaly risk",
+                    "severity": "Medium",
+                    "impact": f"Entity is referenced by {count} other entities. Deleting this entity could orphan many related records.",
+                    "recommendation": "Ensure ON DELETE behavior is properly configured (CASCADE, SET NULL, or RESTRICT as appropriate).",
+                    "reference_count": count,
+                }
+            )
+
+    # Update Anomaly Detection
+    # Entities with multiple columns containing the same type of data (redundancy)
+    for entity in entities:
+        schema_name = entity.get("schema")
+        table_name = entity.get("name")
+        full_name = f"{schema_name}.{table_name}"
+        cols = entity.get("columns", [])
+
+        # Check for redundant date columns (potential update anomaly)
+        date_patterns = ["created", "modified", "updated", "deleted", "timestamp"]
+        date_cols = []
+        for col in cols:
+            col_name = col.get("name", "").lower()
+            for pattern in date_patterns:
+                if pattern in col_name:
+                    date_cols.append(col.get("name"))
+                    break
+
+        if len(date_cols) >= 3:
+            issues["anomalies"].append(
+                {
+                    "entity": full_name,
+                    "issue": "Update anomaly risk",
+                    "severity": "Low",
+                    "impact": f"Multiple timestamp columns detected ({', '.join(date_cols)}). If these represent the same concept, updates may become inconsistent.",
+                    "recommendation": "Consider using a single timestamp tracking mechanism or trigger-based auditing.",
+                    "columns": date_cols,
+                }
+            )
+
+    # External Reference Detection
     referenced_tables = {(r.get("referenced_schema"), r.get("referenced_table")) for r in relationships}
     all_modeled = {(e.get("schema"), e.get("name")) for e in entities}
 
@@ -2666,6 +3020,7 @@ def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict
                     "issue": f"External reference to {schema}.{table}",
                     "severity": "Low",
                     "impact": "Relationship points to a table not included in the model scope.",
+                    "recommendation": "Include the referenced table in the analysis or verify it exists in the database.",
                 }
             )
 
@@ -2713,6 +3068,20 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
     entity_cards = _render_entity_cards_html(entities)
     relationships_html = _render_relationships_html(relationships)
     issue_total = sum(len(group) for group in issues.values())
+    # Calculate issue breakdown by severity
+    high_issues = sum(1 for cat_issues in issues.values() for issue in cat_issues if issue.get("severity") == "High")
+    medium_issues = sum(1 for cat_issues in issues.values() for issue in cat_issues if issue.get("severity") == "Medium")
+    low_issues = sum(1 for cat_issues in issues.values() for issue in cat_issues if issue.get("severity") == "Low")
+
+    # Calculate issue breakdown by category
+    issue_categories = {
+        "missing_relationships": len(issues.get("missing_relationships", [])),
+        "datatype_mismatches": len(issues.get("datatype_mismatches", [])),
+        "anomalies": len(issues.get("anomalies", [])),
+        "normalization": len(issues.get("normalization", [])),
+        "identifiers": len(issues.get("identifiers", [])),
+    }
+
     html = f"""
     <html>
     <head>
@@ -2727,6 +3096,13 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
             .stat {{ background: white; border-radius: 14px; padding: 18px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
             .stat .label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
             .stat .value {{ font-size: 28px; font-weight: 700; margin-top: 8px; }}
+            .severity-stats {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 24px 0; }}
+            .severity-stat {{ background: white; border-radius: 12px; padding: 16px; text-align: center; box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06); border-left: 4px solid; }}
+            .severity-stat.high {{ border-color: #dc2626; }}
+            .severity-stat.medium {{ border-color: #ea580c; }}
+            .severity-stat.low {{ border-color: #ca8a04; }}
+            .severity-stat .count {{ font-size: 24px; font-weight: 700; }}
+            .severity-stat .label {{ font-size: 12px; color: #64748b; text-transform: uppercase; }}
             .section {{ margin-top: 28px; }}
             .section h2 {{ margin: 0 0 14px; font-size: 22px; }}
             .entity-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }}
@@ -2742,20 +3118,72 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
             .issue {{ color: #b91c1c; }}
             .muted {{ color: #64748b; }}
             .empty {{ padding: 18px; background: white; border-radius: 14px; color: #64748b; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
+            .issue-card {{ background: #fef2f2; border-radius: 10px; padding: 14px; margin: 8px 0; border-left: 4px solid #dc2626; }}
+            .issue-card.medium-severity {{ background: #fff7ed; border-left-color: #ea580c; }}
+            .issue-card.low-severity {{ background: #fefce8; border-left-color: #ca8a04; }}
+            .issue-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }}
+            .issue-impact {{ font-size: 13px; color: #7f1d1d; margin-top: 6px; }}
+            .issue-recommendation {{ font-size: 13px; color: #1e40af; margin-top: 6px; background: #dbeafe; padding: 8px; border-radius: 6px; }}
+            .issue-category {{ margin-bottom: 20px; }}
+            .issue-category h3 {{ font-size: 16px; color: #374151; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid #e5e7eb; }}
+            .category-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0; }}
+            .category-card {{ background: white; border-radius: 10px; padding: 14px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06); }}
+            .category-card .count {{ font-size: 20px; font-weight: 700; color: #1d4ed8; }}
+            .category-card .name {{ font-size: 12px; color: #64748b; margin-top: 4px; }}
         </style>
     </head>
     <body>
         <div class="page">
             <div class="hero">
-                <h1>Logical Data Model</h1>
-                <p>Database <strong>{database_name}</strong> with rendered entities, column metadata, and detected foreign-key relationships.</p>
+                <h1>Logical Data Model Analysis</h1>
+                <p>Database <strong>{database_name}</strong> - Comprehensive analysis including entity relationships, datatype validation, normalization checks, and anomaly detection.</p>
             </div>
+
             <div class="stats">
                 <div class="stat"><div class="label">Entities</div><div class="value">{len(entities)}</div></div>
                 <div class="stat"><div class="label">Relationships</div><div class="value">{len(relationships)}</div></div>
-                <div class="stat"><div class="label">Issues</div><div class="value">{issue_total}</div></div>
-                <div class="stat"><div class="label">Summary</div><div class="value">{escape(str(summary.get('total_issues', issue_total)))}</div></div>
+                <div class="stat"><div class="label">Total Issues</div><div class="value">{issue_total}</div></div>
+                <div class="stat"><div class="label">Analysis Categories</div><div class="value">{len([c for c, v in issue_categories.items() if v > 0])}/5</div></div>
             </div>
+
+            <div class="severity-stats">
+                <div class="severity-stat high">
+                    <div class="count" style="color: #dc2626;">{high_issues}</div>
+                    <div class="label">High Severity</div>
+                </div>
+                <div class="severity-stat medium">
+                    <div class="count" style="color: #ea580c;">{medium_issues}</div>
+                    <div class="label">Medium Severity</div>
+                </div>
+                <div class="severity-stat low">
+                    <div class="count" style="color: #ca8a04;">{low_issues}</div>
+                    <div class="label">Low Severity</div>
+                </div>
+            </div>
+
+            <div class="category-grid">
+                <div class="category-card">
+                    <div class="count">{issue_categories['missing_relationships']}</div>
+                    <div class="name">Missing Relationships</div>
+                </div>
+                <div class="category-card">
+                    <div class="count">{issue_categories['datatype_mismatches']}</div>
+                    <div class="name">Datatype Mismatches</div>
+                </div>
+                <div class="category-card">
+                    <div class="count">{issue_categories['anomalies']}</div>
+                    <div class="name">Data Anomalies</div>
+                </div>
+                <div class="category-card">
+                    <div class="count">{issue_categories['normalization']}</div>
+                    <div class="name">Normalization Issues</div>
+                </div>
+                <div class="category-card">
+                    <div class="count">{issue_categories['identifiers']}</div>
+                    <div class="name">Key Constraint Issues</div>
+                </div>
+            </div>
+
             <div class="section">
                 <h2>Relationships</h2>
                 {relationships_html}
@@ -2765,7 +3193,7 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
                 {entity_cards}
             </div>
             <div class="section">
-                <h2>Issues</h2>
+                <h2>Analysis Results</h2>
                 {_render_issue_list_html(issues)}
             </div>
         </div>
@@ -2997,13 +3425,54 @@ def _render_relationships_html(relationships: list[dict[str, Any]]) -> str:
 
 
 def _render_issue_list_html(issues: dict[str, list[dict[str, Any]]]) -> str:
+    category_descriptions = {
+        "entities": "Entity Structure Issues",
+        "attributes": "Column/Attribute Issues",
+        "relationships": "Relationship Issues",
+        "identifiers": "Primary Key Issues",
+        "normalization": "Normalization Issues",
+        "missing_relationships": "Missing Relationships",
+        "datatype_mismatches": "Datatype Mismatches",
+        "anomalies": "Data Anomalies",
+    }
+
+    severity_colors = {
+        "High": "#dc2626",
+        "Medium": "#ea580c",
+        "Low": "#ca8a04",
+    }
+
     items = []
     for category, list_obj in issues.items():
+        if not list_obj:
+            continue
+        cat_desc = category_descriptions.get(category, category.replace("_", " ").title())
+        items.append(f"<div class='issue-category'><h3>{escape(cat_desc)} ({len(list_obj)})</h3>")
         for issue in list_obj:
-            items.append(f"<li class='issue'><b>[{escape(category.upper())}]</b> {escape(str(issue.get('issue', 'Issue detected')))} in {escape(str(issue.get('entity', 'model')))}</li>")
+            severity = issue.get("severity", "Low")
+            color = severity_colors.get(severity, "#64748b")
+            entity = issue.get("entity", issue.get("relationship", "model"))
+            impact = issue.get("impact", "")
+            recommendation = issue.get("recommendation", "")
+            issue_text = issue.get("issue", "Issue detected")
+
+            items.append(f"""
+            <div class='issue-card'>
+                <div class='issue-header'>
+                    <span class='severity-badge' style='background: {color}; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600;'>{escape(severity)}</span>
+                    <strong>{escape(str(issue_text))}</strong>
+                    <span class='entity-tag' style='color: #64748b; font-size: 13px;'>in {escape(str(entity))}</span>
+                </div>
+                {f"<div class='issue-impact'><strong>Impact:</strong> {escape(impact)}</div>" if impact else ""}
+                {f"<div class='issue-recommendation'><strong>Recommendation:</strong> {escape(recommendation)}</div>" if recommendation else ""}
+            </div>
+            """)
+        items.append("</div>")
+
     if not items:
-        return "<p>No issues found.</p>"
-    return "<ul>" + "".join(items) + "</ul>"
+        return "<p style='color: #16a34a; font-weight: 600;'>No issues found. The data model appears well-structured.</p>"
+
+    return "".join(items)
 
 
 def _analyze_logical_data_model_internal(
@@ -4263,20 +4732,58 @@ try:
                             Text("ERD visualization will be rendered here using Mermaid.js", css_class="text-gray-500")
                             # Future: Add Mermaid ERD rendering based on entities and relationships
 
-                    # Issues Summary
+                    # Enhanced Analysis Display
                     if STATE.model_data.get("issues"):
+                        issues = STATE.model_data["issues"]
+                        
+                        # Issue Category Breakdown
                         with Card():
                             with CardContent():
-                                Heading("Schema Issues")
-                                for issue_type, issues in STATE.model_data["issues"].items():
-                                    if issues:
-                                        Text(f"{issue_type}: {len(issues)} issues", css_class="font-semibold")
-                                        for issue in issues[:3]:  # Show first 3 issues
-                                            Text(f"• {issue.get('description', 'Unknown issue')}", css_class="text-sm text-gray-600")
-                                        if len(issues) > 3:
-                                            Text(f"... and {len(issues) - 3} more", css_class="text-sm text-gray-500")
+                                Heading("Analysis Results by Category")
+                                with Row(gap=4):
+                                    cat_data = [
+                                        ("Missing Relationships", len(issues.get("missing_relationships", [])), "#dc2626"),
+                                        ("Datatype Mismatches", len(issues.get("datatype_mismatches", [])), "#ea580c"),
+                                        ("Data Anomalies", len(issues.get("anomalies", [])), "#ca8a04"),
+                                        ("Normalization", len(issues.get("normalization", [])), "#2563eb"),
+                                        ("Key Constraints", len(issues.get("identifiers", [])), "#7c3aed"),
+                                    ]
+                                    for cat_name, cat_count, cat_color in cat_data:
+                                        with Card():
+                                            with CardContent():
+                                                Text(str(cat_count), css_class="text-2xl font-bold", style=f"color: {cat_color};")
+                                                Text(cat_name, css_class="text-sm text-gray-600")
+
+                        # Detailed Issues
+                        with Card():
+                            with CardContent():
+                                Heading("Detailed Analysis")
+                                for category_name, category_key in [
+                                    ("Missing Relationships", "missing_relationships"),
+                                    ("Datatype Mismatches", "datatype_mismatches"),
+                                    ("Data Anomalies", "anomalies"),
+                                    ("Normalization Issues", "normalization"),
+                                    ("Key Constraint Issues", "identifiers"),
+                                    ("Attribute Issues", "attributes"),
+                                    ("Relationship Issues", "relationships"),
+                                ]:
+                                    cat_issues = issues.get(category_key, [])
+                                    if cat_issues:
+                                        Text(f"{category_name} ({len(cat_issues)})", css_class="font-semibold mt-4")
+                                        for issue in cat_issues[:3]:
+                                            severity = issue.get("severity", "Low")
+                                            severity_color = {"High": "#dc2626", "Medium": "#ea580c", "Low": "#ca8a04"}.get(severity, "#64748b")
+                                            with Row(gap=2, align="start"):
+                                                Text(f"[{severity}]", css_class="text-xs font-bold", style=f"color: {severity_color};")
+                                                Text(issue.get("issue", "Unknown issue"), css_class="text-sm")
+                                            if issue.get("impact"):
+                                                Text(f"Impact: {issue.get('impact')}", css_class="text-xs text-gray-500 ml-4")
+                                            if issue.get("recommendation"):
+                                                Text(f"Fix: {issue.get('recommendation')}", css_class="text-xs text-blue-600 ml-4")
+                                        if len(cat_issues) > 3:
+                                            Text(f"... and {len(cat_issues) - 3} more issues", css_class="text-xs text-gray-400 ml-4")
                     else:
-                        Text("No schema issues detected", css_class="text-green-600")
+                        Text("No schema issues detected - data model appears well-structured!", css_class="text-green-600")
             else:
                 Text("Select an instance and database to begin analysis", css_class="text-gray-500")
 
