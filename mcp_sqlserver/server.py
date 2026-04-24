@@ -3199,8 +3199,8 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
                 <div class="erd-container">
                     <div class="mermaid">
 graph TD
-{"".join([f"    {e.get('schema', 'dbo')}.{e.get('name')}[\"{e.get('name')}\"]" for e in entities])}
-{"".join([f"    {r.get('from_schema', 'dbo')}.{r.get('from_table')} -->|\"{r.get('name', 'FK')}\"| {r.get('referenced_schema', 'dbo')}.{r.get('referenced_table')}" for r in relationships])}
+{"".join([f"    {e.get('name').replace('-', '_').replace(' ', '_')}[\"{escape(e.get('name'))}\"]" for e in entities])}
+{"".join([f"    {r.get('from_table').replace('-', '_').replace(' ', '_')} -->|\"{escape(r.get('name', 'FK'))}\"| {r.get('referenced_table').replace('-', '_').replace(' ', '_')}" for r in relationships])}
                     </div>
                 </div>
             </div>
