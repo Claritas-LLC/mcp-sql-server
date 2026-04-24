@@ -2660,11 +2660,8 @@ def _sanitize_mermaid_id(name: str) -> str:
     return sanitized
 
 
-def _render_data_model_html(
-    model: dict[str, Any],
-    issues: dict[str, list[dict[str, Any]]],
-    page: int = 1,
-) -> str:
+def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Analyze entities and relationships for data model issues."""
     issues = {
         "entities": [],
         "attributes": [],
@@ -3103,6 +3100,12 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
         return "<html><body><p>Invalid model payload.</p></body></html>"
     if not isinstance(issues, dict):
         issues = {}
+    
+    # If issues not provided, analyze the model
+    if not issues:
+        entities = model.get("entities", []) if isinstance(model.get("entities"), list) else []
+        relationships = model.get("relationships", []) if isinstance(model.get("relationships"), list) else []
+        issues = _analyze_erd_issues(entities, relationships)
 
     database_name = escape(str(model.get("database", "Unknown database")))
     summary = model.get("summary", {}) if isinstance(model.get("summary"), dict) else {}
