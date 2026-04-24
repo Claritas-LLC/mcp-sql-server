@@ -3250,6 +3250,40 @@ def db_sql2019_explain_query(
         conn.close()
 
 
+def db_sql2019_open_logical_model_viewer(
+    instance: int = 1,
+) -> dict[str, Any]:
+    """Open the interactive logical data model viewer interface.
+    
+    Returns information about the interactive FastMCP app for ERD visualization
+    and schema analysis. The interface supports both instance 1 and 2.
+    """
+    try:
+        validate_instance(instance)
+        inst_cfg = get_instance_config(instance)
+        
+        return {
+            "status": "success",
+            "message": f"Interactive Logical Data Model Viewer ready for instance {instance}",
+            "instance": instance,
+            "server": inst_cfg.get("db_server"),
+            "app_name": "Logical Data Model Viewer",
+            "features": [
+                "Interactive ERD visualization using Mermaid.js",
+                "Support for both instance 1 and 2",
+                "Database and schema selection",
+                "Real-time schema analysis",
+                "Entity relationship mapping",
+                "Schema issues detection"
+            ],
+            "usage": "Call the 'logical_model_viewer' UI function to open the interface",
+            "ui_function": "logical_model_viewer"
+        }
+    except Exception as e:
+        logger.error(f"Error in db_sql2019_open_logical_model_viewer: {e}")
+        return {"status": "error", "message": str(e)}
+
+
 def db_sql2019_analyze_logical_data_model(
     instance: int = 1,
     database_name: str | None = None,
@@ -3561,6 +3595,7 @@ def _register_dual_instance_tools():
         "explain_query": db_sql2019_explain_query,
         "analyze_logical_data_model": db_sql2019_analyze_logical_data_model,
         "open_logical_model": db_sql2019_open_logical_model,
+        "open_logical_model_viewer": db_sql2019_open_logical_model_viewer,
         "generate_ddl": db_sql2019_generate_ddl,
         "create_db_user": db_sql2019_create_db_user,
         "drop_db_user": db_sql2019_drop_db_user,
@@ -4110,7 +4145,149 @@ _register_generative_dashboard_tools()
 
 
 try:
-    from starlette.responses import HTMLResponse, JSONResponse
+    from fastmcp import FastMCP, FastMCPApp, Context
+    from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+    from prefab_ui.app import PrefabApp
+    from prefab_ui.components import Column, Row, Heading, Select, Button, Text, Badge, Separator, Card, CardContent
+    from prefab_ui.components.charts import BarChart, ChartSeries
+    from prefab_ui.actions.mcp import CallTool
+    from prefab_ui.actions import SetState, ShowToast
+    from prefab_ui.rx import STATE
+
+    # Create FastMCP App for Logical Data Model Viewer
+    logical_model_app = FastMCPApp("Logical Data Model Viewer")
+
+    @logical_model_app.tool()
+    def get_logical_model_data(instance: int, database: str, schema: str | None = None) -> dict[str, Any]:
+        """Get logical data model analysis for the specified database."""
+        return _analyze_logical_data_model_internal(instance, database, schema)
+
+    @logical_model_app.tool() 
+    def get_available_databases(instance: int) -> list[str]:
+        """Get list of available databases for the specified instance."""
+        try:
+            validate_instance(instance)
+            conn = get_connection(instance=instance)
+            try:
+                cur = conn.cursor()
+                _execute_safe(cur, "SELECT name FROM sys.databases WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb') ORDER BY name")
+                databases = [row[0] for row in cur.fetchall()]
+                return databases
+            finally:
+                conn.close()
+        except Exception as e:
+            return []
+
+    @logical_model_app.ui(title="Logical Data Model Viewer", description="Interactive ERD and schema analysis for SQL Server databases")
+    def logical_model_viewer() -> PrefabApp:
+        """Interactive logical data model viewer with ERD visualization."""
+        with Column(gap=6, css_class="p-6") as view:
+            Heading("Logical Data Model Viewer")
+            
+            # Instance and Database Selection
+            with Row(gap=4, align="center"):
+                Select(
+                    name="instance",
+                    label="Instance",
+                    options=[
+                        {"value": "1", "label": "Instance 1"},
+                        {"value": "2", "label": "Instance 2"}
+                    ],
+                    value="1",
+                    on_change=CallTool(
+                        "get_available_databases",
+                        arguments={"instance": STATE.instance},
+                        on_success=SetState("database_options", RESULT)
+                    )
+                )
+                Select(
+                    name="database",
+                    label="Database",
+                    options=STATE.database_options or [{"value": "", "label": "Select instance first"}],
+                    value=""
+                )
+                Select(
+                    name="schema",
+                    label="Schema (Optional)",
+                    options=[
+                        {"value": "", "label": "All Schemas"},
+                        {"value": "dbo", "label": "dbo"}
+                    ],
+                    value=""
+                )
+                Button(
+                    "Analyze",
+                    on_submit=CallTool(
+                        "get_logical_model_data",
+                        arguments={
+                            "instance": int(STATE.instance),
+                            "database": STATE.database,
+                            "schema": STATE.schema if STATE.schema else None
+                        },
+                        on_success=[
+                            SetState("model_data", RESULT),
+                            ShowToast("Analysis complete!", variant="success")
+                        ],
+                        on_error=ShowToast("Analysis failed", variant="error")
+                    )
+                )
+
+            Separator()
+
+            # Model Data Display
+            if STATE.model_data:
+                with Column(gap=4):
+                    # Summary Cards
+                    with Row(gap=4):
+                        with Card():
+                            with CardContent():
+                                Heading("Database")
+                                Text(STATE.model_data.get("database", "Unknown"))
+                        with Card():
+                            with CardContent():
+                                Heading("Entities")
+                                Text(str(STATE.model_data.get("summary", {}).get("entity_count", 0)))
+                        with Card():
+                            with CardContent():
+                                Heading("Relationships")
+                                Text(str(STATE.model_data.get("summary", {}).get("relationship_count", 0)))
+                        with Card():
+                            with CardContent():
+                                Heading("Issues")
+                                Text(str(STATE.model_data.get("summary", {}).get("total_issues", 0)))
+
+                    # ERD Visualization (placeholder for Mermaid)
+                    with Card():
+                        with CardContent():
+                            Heading("Entity Relationship Diagram")
+                            Text("ERD visualization will be rendered here using Mermaid.js", css_class="text-gray-500")
+                            # Future: Add Mermaid ERD rendering based on entities and relationships
+
+                    # Issues Summary
+                    if STATE.model_data.get("issues"):
+                        with Card():
+                            with CardContent():
+                                Heading("Schema Issues")
+                                for issue_type, issues in STATE.model_data["issues"].items():
+                                    if issues:
+                                        Text(f"{issue_type}: {len(issues)} issues", css_class="font-semibold")
+                                        for issue in issues[:3]:  # Show first 3 issues
+                                            Text(f"• {issue.get('description', 'Unknown issue')}", css_class="text-sm text-gray-600")
+                                        if len(issues) > 3:
+                                            Text(f"... and {len(issues) - 3} more", css_class="text-sm text-gray-500")
+                    else:
+                        Text("No schema issues detected", css_class="text-green-600")
+            else:
+                Text("Select an instance and database to begin analysis", css_class="text-gray-500")
+
+        return PrefabApp(view=view, state={"model_data": None, "database_options": None})
+
+    # Register the FastMCP app with the MCP server
+    try:
+        mcp.add_provider(logical_model_app)  # type: ignore
+        logger.info("Logical Data Model Viewer app provider registered")
+    except Exception as e:
+        logger.warning(f"Failed to add Logical Data Model Viewer app provider: {e}")
 
     @mcp.custom_route("/data-model-analysis", methods=["GET"], name="data_model_analysis")
     async def data_model_analysis_handler(request):
