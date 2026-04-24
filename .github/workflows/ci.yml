@@ -42,6 +42,12 @@ jobs:
             echo "No tests detected; skipping pytest"
           fi
 
+      - name: Type checks
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy
+          mypy mcp_sqlserver || true
+
   docker-build-validation:
     runs-on: ubuntu-latest
     steps:
