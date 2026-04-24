@@ -34,7 +34,7 @@ jobs:
         env:
           DB_SERVER: localhost
           DB_USER: sa
-          DB_PASSWORD: "YourPassword123!"
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           if [ -d tests ] && [ -n "$(find tests -type f -name '*.py' -print -quit)" ]; then
             PYTHONPATH=. pytest -q
