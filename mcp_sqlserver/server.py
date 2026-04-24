@@ -3786,46 +3786,6 @@ def db_sql2019_analyze_logical_data_model(
         return {"status": "error", "message": str(e)}
 
 
-def db_sql2019_open_logical_model(
-    instance: int = 1,
-    database_name: str | None = None,
-    schema: str | None = None,
-    return_dict: bool = False,
-) -> str | dict[str, Any]:
-    """Generate a logical model report.
-
-    When return_dict is False (default), returns the rendered HTML string for backward compatibility.
-    When return_dict is True, returns metadata including erd_url, report_id, and summary.
-    """
-    result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
-    html = _render_data_model_html(result, result.get("issues", {}))
-    
-    # Generate UUID and store report
-    report_id = uuid.uuid4().hex
-    with _REPORT_STORAGE_LOCK:
-        _REPORT_STORAGE[report_id] = {
-            "html": html,
-            "database": database_name or get_instance_config(instance)["db_name"],
-            "schema": schema or "all",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "instance": instance,
-        }
-    _persist_report_html(report_id, html)
-
-    if return_dict:
-        # Return dict with URL and metadata
-        return {
-            "message": f"ERD webpage generated for database '{database_name or get_instance_config(instance)['db_name']}'.",
-            "database": database_name or get_instance_config(instance)["db_name"],
-            "erd_url": f"{_public_base_url()}/data-model-analysis?id={report_id}",
-            "report_id": report_id,
-            "summary": result.get("summary", {}),
-            "url_hint": "Set MCP_PUBLIC_BASE_URL when the server runs behind Docker port mapping or a reverse proxy.",
-        }
-
-    return html
-
-
 def db_sql2019_generate_ddl(
     instance: int = 1,
     database_name: str | None = None,
@@ -4063,7 +4023,6 @@ def _register_dual_instance_tools():
         "db_sec_perf_metrics": db_sql2019_db_sec_perf_metrics,
         "explain_query": db_sql2019_explain_query,
         "analyze_logical_data_model": db_sql2019_analyze_logical_data_model,
-        "open_logical_model": db_sql2019_open_logical_model,
         "open_logical_model_viewer": db_sql2019_open_logical_model_viewer,
         "generate_ddl": db_sql2019_generate_ddl,
         "create_db_user": db_sql2019_create_db_user,

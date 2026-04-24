@@ -271,18 +271,7 @@ Example 5: Data model analysis
 }
 ```
 
-Example 6: Open model report URL
-
-```json
-{
-  "tool": "db_01_open_logical_model",
-  "args": {
-    "database_name": "USGISPRO_800"
-  }
-}
-```
-
-Example 7: Generative sessions dashboard
+Example 6: Generative sessions dashboard
 
 ```json
 {
@@ -329,7 +318,7 @@ All suffixes below are available as both `db_01_<suffix>` and `db_02_<suffix>` w
 #### Data model and DDL
 
 - `analyze_logical_data_model`
-- `open_logical_model`
+- `open_logical_model_viewer`
 - `generate_ddl`
 
 #### Admin and write operations
@@ -359,7 +348,7 @@ These are registered separately and available as both `db_01_<suffix>` and `db_0
 | Query | `execute_query`, `run_query`, `explain_query` | Execute SQL and inspect plans |
 | Performance | `show_top_queries`, `index_fragmentation`, `index_health`, `check_fragmentation`, `table_health` | Diagnose and tune workload health |
 | Security and posture | `db_sec_perf_metrics` | Review security/performance configuration signals |
-| Data model | `analyze_logical_data_model`, `open_logical_model`, `generate_ddl` | Understand relational model and DDL |
+| Data model | `analyze_logical_data_model`, `open_logical_model_viewer`, `generate_ddl` | Understand relational model and DDL |
 | Admin/write | `create_db_user`, `drop_db_user`, `kill_session`, `create_object`, `alter_object`, `drop_object` | Controlled administrative actions |
 | Generative dashboards | `generate_sessions_dashboard`, `generate_model_diagram`, `generate_performance_dashboard` | Return context for LLM-built Prefab UI dashboards |
 
