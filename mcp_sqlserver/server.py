@@ -3086,6 +3086,10 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
     <html>
     <head>
         <title>Logical Data Model - {database_name}</title>
+        <script type="module">
+            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+            mermaid.initialize({{ startOnLoad: true, theme: 'default' }});
+        </script>
         <style>
             body {{ font-family: 'Segoe UI', sans-serif; margin: 0; background: #f4f7fb; color: #1f2937; }}
             .page {{ max-width: 1440px; margin: 0 auto; padding: 32px 24px 48px; }}
@@ -3096,7 +3100,7 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
             .stat {{ background: white; border-radius: 14px; padding: 18px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
             .stat .label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
             .stat .value {{ font-size: 28px; font-weight: 700; margin-top: 8px; }}
-            .severity-stats {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 24px 0; }}
+            .severity-stats {{ display: grid; grid-template-columns: repeat(3, 1fr)); gap: 12px; margin: 24px 0; }}
             .severity-stat {{ background: white; border-radius: 12px; padding: 16px; text-align: center; box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06); border-left: 4px solid; }}
             .severity-stat.high {{ border-color: #dc2626; }}
             .severity-stat.medium {{ border-color: #ea580c; }}
@@ -3130,6 +3134,12 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
             .category-card {{ background: white; border-radius: 10px; padding: 14px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06); }}
             .category-card .count {{ font-size: 20px; font-weight: 700; color: #1d4ed8; }}
             .category-card .name {{ font-size: 12px; color: #64748b; margin-top: 4px; }}
+            .erd-container {{ background: white; border-radius: 14px; padding: 24px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); overflow: auto; }}
+            .issues-table {{ width: 100%; border-collapse: collapse; }}
+            .issues-table th {{ background: #f8fafc; position: sticky; top: 0; }}
+            .severity-high {{ color: #dc2626; font-weight: 600; }}
+            .severity-medium {{ color: #ea580c; font-weight: 600; }}
+            .severity-low {{ color: #ca8a04; font-weight: 600; }}
         </style>
     </head>
     <body>
@@ -3181,6 +3191,17 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
                 <div class="category-card">
                     <div class="count">{issue_categories['identifiers']}</div>
                     <div class="name">Key Constraint Issues</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Entity Relationship Diagram (ERD)</h2>
+                <div class="erd-container">
+                    <div class="mermaid">
+graph TD
+{"".join([f"    {e.get('schema', 'dbo')}.{e.get('name')}[\"{e.get('name')}\"]" for e in entities])}
+{"".join([f"    {r.get('from_schema', 'dbo')}.{r.get('from_table')} -->|\"{r.get('name', 'FK')}\"| {r.get('referenced_schema', 'dbo')}.{r.get('referenced_table')}" for r in relationships])}
+                    </div>
                 </div>
             </div>
 
@@ -3442,37 +3463,63 @@ def _render_issue_list_html(issues: dict[str, list[dict[str, Any]]]) -> str:
         "Low": "#ca8a04",
     }
 
-    items = []
+    # Collect all issues into a flat list for table display
+    all_issues = []
     for category, list_obj in issues.items():
         if not list_obj:
             continue
         cat_desc = category_descriptions.get(category, category.replace("_", " ").title())
-        items.append(f"<div class='issue-category'><h3>{escape(cat_desc)} ({len(list_obj)})</h3>")
         for issue in list_obj:
-            severity = issue.get("severity", "Low")
-            color = severity_colors.get(severity, "#64748b")
-            entity = issue.get("entity", issue.get("relationship", "model"))
-            impact = issue.get("impact", "")
-            recommendation = issue.get("recommendation", "")
-            issue_text = issue.get("issue", "Issue detected")
+            all_issues.append({
+                "category": cat_desc,
+                "severity": issue.get("severity", "Low"),
+                "issue": issue.get("issue", "Issue detected"),
+                "entity": issue.get("entity", issue.get("relationship", "model")),
+                "impact": issue.get("impact", ""),
+                "recommendation": issue.get("recommendation", ""),
+            })
 
-            items.append(f"""
-            <div class='issue-card'>
-                <div class='issue-header'>
-                    <span class='severity-badge' style='background: {color}; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600;'>{escape(severity)}</span>
-                    <strong>{escape(str(issue_text))}</strong>
-                    <span class='entity-tag' style='color: #64748b; font-size: 13px;'>in {escape(str(entity))}</span>
-                </div>
-                {f"<div class='issue-impact'><strong>Impact:</strong> {escape(impact)}</div>" if impact else ""}
-                {f"<div class='issue-recommendation'><strong>Recommendation:</strong> {escape(recommendation)}</div>" if recommendation else ""}
-            </div>
-            """)
-        items.append("</div>")
-
-    if not items:
+    if not all_issues:
         return "<p style='color: #16a34a; font-weight: 600;'>No issues found. The data model appears well-structured.</p>"
 
-    return "".join(items)
+    # Sort by severity (High first)
+    severity_order = {"High": 0, "Medium": 1, "Low": 2}
+    all_issues.sort(key=lambda x: severity_order.get(x["severity"], 3))
+
+    # Build table rows
+    table_rows = []
+    for issue in all_issues:
+        severity_class = f"severity-{issue['severity'].lower()}"
+        table_rows.append(f"""
+        <tr>
+            <td class="{severity_class}">{escape(issue['severity'])}</td>
+            <td>{escape(issue['category'])}</td>
+            <td>{escape(issue['issue'])}</td>
+            <td>{escape(str(issue['entity']))}</td>
+            <td>{escape(issue['impact'])}</td>
+            <td>{escape(issue['recommendation'])}</td>
+        </tr>
+        """)
+
+    return f"""
+    <div class='panel'>
+        <table class='issues-table'>
+            <thead>
+                <tr>
+                    <th>Severity</th>
+                    <th>Category</th>
+                    <th>Issue</th>
+                    <th>Entity</th>
+                    <th>Impact</th>
+                    <th>Recommendation</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(table_rows)}
+            </tbody>
+        </table>
+    </div>
+    """
 
 
 def _analyze_logical_data_model_internal(
@@ -4953,7 +5000,7 @@ try:
 
     @mcp.custom_route("/logical-model", methods=["GET"], name="logical_model")
     async def logical_model_handler(request):
-        """Handler for /logical-model endpoint - fetches data on-demand."""
+        """Handler for /logical-model endpoint - fetches data on-demand and renders HTML with ERD."""
         try:
             instance = int(request.query_params.get("instance", "1"))
             validate_instance(instance)
@@ -4968,21 +5015,20 @@ try:
 
             # Fetch data on-demand
             result = _analyze_logical_data_model_internal(instance, db_name_str, schema)
-            shaped = _apply_logical_model_view(result, view)
-            paginated = _paginate_tool_result(shaped, page=page, page_size=page_size)
-
-            # Render as JSON for browser viewing
-            return JSONResponse(
-                content=paginated,
-                status_code=200,
-                headers={"Content-Type": "application/json"}
+            
+            # Render as HTML with ERD visualization
+            html = _render_data_model_html(result, result.get("issues", {}), page=page)
+            
+            return HTMLResponse(
+                content=html,
+                status_code=200
             )
 
         except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
+            return HTMLResponse(content=f"<html><body><h3>Error</h3><p>{escape(str(exc))}</p></body></html>", status_code=400)
         except Exception as exc:
             logger.exception("Failed to render logical model for instance=%s database=%s", instance, database)
-            return JSONResponse({"error": str(exc)}, status_code=500)
+            return HTMLResponse(content=f"<html><body><h3>Error</h3><p>{escape(str(exc))}</p></body></html>", status_code=500)
 
 except Exception as e:
     logger.exception("Failed to add web UI routes: %s", e)
