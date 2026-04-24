@@ -58,6 +58,21 @@ def _get_tool_usage(tool_name, params):
             param_strs.append(f"[{p['name']}={p['default']!r}]")
     return f"{tool_name} " + " ".join(param_strs)
 
+
+def _normalize_erd_view(view: str | None) -> str:
+    """Normalize the ERD view option to safe values.
+
+    Accepts: None, 'summary', 'standard', 'full' (case-insensitive).
+    Returns one of: 'summary', 'standard', 'full'.
+    Default is 'standard'.
+    """
+    if not isinstance(view, str):
+        return "standard"
+    v = view.strip().lower()
+    if v in {"summary", "standard", "full"}:
+        return v
+    return "standard"
+
 def list_registered_tools(instance: int = 1, as_json: bool = False) -> dict:
     """
     List all available tools, descriptions, parameters, and usage for the given instance.
@@ -353,6 +368,8 @@ class Settings:
         self.tool_search_always_visible = kwargs.get('tool_search_always_visible', '')
         self.tool_search_tool_name = kwargs.get('tool_search_tool_name', 'search_tools')
         self.tool_call_tool_name = kwargs.get('tool_call_tool_name', 'call_tool')
+        # Whether to warn about duplicate column names within a single entity
+        self.erd_duplicate_check = kwargs.get('erd_duplicate_check', True)
 
 # Minimal _now_utc_iso helper
 def _now_utc_iso():
@@ -551,6 +568,7 @@ def _load_settings() -> Settings:
     return Settings(
         db_instances=db_instances,
         db_pool_sizes=db_pool_sizes,
+        erd_duplicate_check=_env_bool("MCP_ERD_DUPLICATE_CHECK", True),
         statement_timeout_ms=_env_int("MCP_STATEMENT_TIMEOUT_MS", 120000),
         max_rows=_env_int("MCP_MAX_ROWS", 500),
         allow_write=_env_bool("MCP_ALLOW_WRITE", False),
@@ -3609,6 +3627,7 @@ def _analyze_logical_data_model_internal(
     instance: int,
     database_name: str | None,
     schema: str | None = None,
+    view: str | None = None,
 ) -> dict[str, Any]:
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
@@ -3655,7 +3674,20 @@ def _analyze_logical_data_model_internal(
              })
              
         relationships = _fetch_relationships(cur, str(db_name) if not isinstance(db_name, str) else db_name)
-        issues = _analyze_erd_issues(entities, relationships)
+        # Optional: skip duplicate-column warnings if disabled via settings flag (false positives)
+        if getattr(SETTINGS, "erd_duplicate_check", True):
+            issues = _analyze_erd_issues(entities, relationships)
+        else:
+            issues = {
+                "entities": [],
+                "attributes": [],
+                "relationships": [],
+                "identifiers": [],
+                "normalization": [],
+                "missing_relationships": [],
+                "datatype_mismatches": [],
+                "anomalies": [],
+            }
         
         return {
             "database": db_name,
@@ -3898,7 +3930,10 @@ def db_sql2019_analyze_logical_data_model(
     """
     try:
         validate_instance(instance)
-        db_name = database_name or get_instance_config(instance)["db_name"]
+        
+        # Normalize view (not currently used for data fetch, but ensures UI compatibility)
+        _normalize_erd_view(view)
+    db_name = database_name or get_instance_config(instance)["db_name"]
         db_name_str = _normalize_db_name(db_name)
         inst_cfg = get_instance_config(instance)
 
