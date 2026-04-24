@@ -24,9 +24,16 @@ Use this project when you want AI clients or MCP-compatible tools to query and i
 
 - SQL Server MCP tools exposed through FastMCP
 - Support for two configured database instances (`DB_01_*` and `DB_02_*`)
+- Enhanced logical data model analysis with comprehensive issue detection:
+  - Missing entity relationships and isolated entities
+  - Datatype mismatches between related columns
+  - Normalization issues (1NF, 2NF, 3NF violations)
+  - Missing primary keys and foreign keys
+  - Insertion, deletion, and update anomalies
 - Web UI routes:
-  - `/data-model-analysis?id=<report_id>`
+  - `/data-model-analysis?id=<report_id>` - Enhanced ERD and schema analysis report
   - `/sessions-monitor?instance=1` (or `instance=2`)
+- FastMCP interactive app for logical data model viewer with real-time analysis
 - Optional runtime controls for audit logging, rate limiting, and write safety
 
 ## Quick Start
