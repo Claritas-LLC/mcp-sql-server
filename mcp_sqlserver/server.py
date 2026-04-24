@@ -4707,7 +4707,7 @@ try:
     from prefab_ui.components.charts import BarChart, ChartSeries
     from prefab_ui.actions.mcp import CallTool
     from prefab_ui.actions import SetState, ShowToast
-    from prefab_ui.rx import STATE
+    from prefab_ui.rx import STATE, RESULT
 
     # Create FastMCP App for Logical Data Model Viewer
     logical_model_app = FastMCPApp("Logical Data Model Viewer")
@@ -4731,6 +4731,7 @@ try:
             finally:
                 conn.close()
         except Exception as e:
+            logger.exception("get_available_databases failed for instance=%s", instance)
             return []
 
     @logical_model_app.ui(title="Logical Data Model Viewer", description="Interactive ERD and schema analysis for SQL Server databases")
@@ -4775,9 +4776,9 @@ try:
                     on_submit=CallTool(
                         "get_logical_model_data",
                         arguments={
-                            "instance": int(STATE.instance),
+                            "instance": STATE.instance,
                             "database": STATE.database,
-                            "schema": STATE.schema if STATE.schema else None
+                            "schema": STATE.schema
                         },
                         on_success=[
                             SetState("model_data", RESULT),
