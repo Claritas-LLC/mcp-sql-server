@@ -2622,6 +2622,21 @@ def _fetch_relationships(cur: pyodbc.Cursor, database: str) -> list[dict[str, An
     return _rows_to_dicts(cur, cur.fetchall())
 
 
+def _mermaid_node_id(schema: str | None, name: str | None) -> str:
+    """Generate a Mermaid node ID from schema and table name.
+    
+    Preserves schema to avoid collisions (e.g., "dbo_table" vs "other_table").
+    Applies basic sanitization: replaces hyphens and spaces with underscores.
+    """
+    schema = schema or "dbo"
+    name = name or "Unknown"
+    # Apply basic sanitization
+    schema_safe = str(schema).replace("-", "_").replace(" ", "_")
+    name_safe = str(name).replace("-", "_").replace(" ", "_")
+    # Combine schema and name to avoid collisions
+    return f"{schema_safe}_{name_safe}"
+
+
 def _sanitize_mermaid_id(name: str) -> str:
     """Sanitize a table name for Mermaid node ID compatibility.
     
@@ -2691,14 +2706,15 @@ def _render_data_model_html(
                 }
             )
 
-        # Duplicate Column Names Check (within entity) - case-sensitive check
+        # Duplicate Column Names Check (within entity) - case-insensitive check for SQL Server collations
         col_names = [c.get("name", "") for c in cols]
+        col_names_normalized = [n.lower() for n in col_names]
         seen = set()
         duplicates = set()
-        for col_name in col_names:
-            if col_name in seen:
-                duplicates.add(col_name)
-            seen.add(col_name)
+        for norm_name, orig_name in zip(col_names_normalized, col_names):
+            if norm_name in seen:
+                duplicates.add(orig_name)
+            seen.add(norm_name)
         for dup in duplicates:
             issues["attributes"].append(
                 {
@@ -3094,6 +3110,43 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
     relationships = model.get("relationships", []) if isinstance(model.get("relationships"), list) else []
     entity_cards = _render_entity_cards_html(entities)
     relationships_html = _render_relationships_html(relationships)
+    
+    # Build unique Mermaid node ID mapping to avoid collisions
+    mermaid_id_map = {}
+    id_counter = {}
+    for e in entities:
+        schema = e.get('schema', 'dbo')
+        name = e.get('name', 'Unknown')
+        full_key = f"{schema}.{name}"
+        base_id = _mermaid_node_id(schema, name)
+        if base_id not in id_counter:
+            id_counter[base_id] = 0
+            mermaid_id_map[full_key] = base_id
+        else:
+            id_counter[base_id] += 1
+            mermaid_id_map[full_key] = f"{base_id}_{id_counter[base_id]}"
+    
+    # Pre-build Mermaid diagram lines to avoid complex f-string nesting
+    entity_nodes = []
+    for e in entities:
+        schema = e.get('schema', 'dbo')
+        name = e.get('name', 'Unknown')
+        full_key = f"{schema}.{name}"
+        node_id = mermaid_id_map.get(full_key, 'Unknown')
+        entity_nodes.append(f"    {node_id}[\"{escape(name)}\"]")
+    
+    relationship_edges = []
+    for r in relationships:
+        parent_schema = r.get('parent_schema', 'dbo')
+        parent_table = r.get('parent_table', 'Unknown')
+        ref_schema = r.get('referenced_schema', 'dbo')
+        ref_table = r.get('referenced_table', 'Unknown')
+        constraint_name = r.get('constraint_name', 'FK')
+        parent_key = f"{parent_schema}.{parent_table}"
+        ref_key = f"{ref_schema}.{ref_table}"
+        parent_id = mermaid_id_map.get(parent_key, 'Unknown')
+        ref_id = mermaid_id_map.get(ref_key, 'Unknown')
+        relationship_edges.append(f"    {parent_id} -->|\"{escape(constraint_name)}\"| {ref_id}")
     issue_total = sum(len(group) for group in issues.values())
     # Calculate issue breakdown by severity
     high_issues = sum(1 for cat_issues in issues.values() for issue in cat_issues if issue.get("severity") == "High")
@@ -3226,8 +3279,8 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
                 <div class="erd-container">
                     <div class="mermaid">
 graph TD
-{"".join([f"    {_sanitize_mermaid_id(e.get('name'))}[\"{escape(e.get('name'))}\"]" for e in entities])}
-{"".join([f"    {_sanitize_mermaid_id(r.get('from_table'))} -->|\"{escape(r.get('name', 'FK'))}\"| {_sanitize_mermaid_id(r.get('referenced_table'))}" for r in relationships])}
+{"".join(entity_nodes)}
+{"".join(relationship_edges)}
                     </div>
                 </div>
             </div>
