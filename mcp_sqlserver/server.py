@@ -73,35 +73,35 @@ def _normalize_erd_view(view: str | None) -> str:
         return v
     return "standard"
 
-def list_registered_tools(instance: int = 1, as_json: bool = False) -> dict:
+async def list_registered_tools(instance: int = 1, as_json: bool = False) -> dict:
     """
     List all available tools, descriptions, parameters, and usage for the given instance.
-    
+
     This introspection tool helps users discover available tools and understand how to use them.
-    
+    Async to allow direct await of mcp.list_tools() without blocking the event loop.
+
     Args:
         instance: Instance number (1 or 2) to list tools for
         as_json: If True, returns structured JSON; if False, returns human-readable text
-    
+
     Returns:
         Dictionary with 'tools' list (JSON mode) or 'text' string (human-readable mode)
     """
-    import asyncio
-    # Use FastMCP public API to enumerate all tools (async)
-    all_tool_infos = asyncio.run(mcp.list_tools())
-    
+    # Use FastMCP public API to enumerate all tools — await, never asyncio.run()
+    all_tool_infos = await mcp.list_tools()
+
     # Filter tools by instance prefix
     instance_prefix = "db_01_" if instance == 1 else "db_02_"
     filtered_tools = []
-    
+
     for tool_info in all_tool_infos:
         tool_name = tool_info.name
         # Include tools that match the instance prefix, plus generic tools (no prefix)
         if tool_name.startswith(instance_prefix) or not tool_name.startswith("db_0"):
-            func = tool_info.fn
+            func = getattr(tool_info, 'fn', None)
             # Prefer explicit description, fallback to function docstring
-            doc = tool_info.description or (func.__doc__ or "")
-            params = _get_tool_param_info(func)
+            doc = getattr(tool_info, 'description', None) or (func.__doc__ if func else "") or ""
+            params = _get_tool_param_info(func) if func else []
             usage = _get_tool_usage(tool_name, params)
             filtered_tools.append({
                 'name': tool_name,
@@ -109,10 +109,10 @@ def list_registered_tools(instance: int = 1, as_json: bool = False) -> dict:
                 'parameters': params,
                 'usage': usage,
             })
-    
+
     # Sort by tool name for consistent output
     filtered_tools.sort(key=lambda t: t['name'])
-    
+
     if as_json:
         return {
             'status': 'success',
@@ -120,11 +120,11 @@ def list_registered_tools(instance: int = 1, as_json: bool = False) -> dict:
             'tool_count': len(filtered_tools),
             'tools': filtered_tools
         }
-    
+
     # Human-readable text
     lines = [
         f"Registered Tools for Instance {instance}",
-        f"=" * 50,
+        "=" * 50,
         f"Total tools: {len(filtered_tools)}",
         ""
     ]
@@ -137,7 +137,7 @@ def list_registered_tools(instance: int = 1, as_json: bool = False) -> dict:
             lines.append(f"  - {p['name']} ({p['type']}): {req}")
         lines.append(f"Usage: {t['usage']}")
         lines.append("")
-    
+
     return {'text': '\n'.join(lines)}
 
 
@@ -155,22 +155,8 @@ except ImportError:
     GENERATIVE_UI_AVAILABLE = False
     logger.debug("GenerativeUI not available; fastmcp[apps] not installed")
 
-# --- MCP Server Initialization and Tool Registration ---
-# (This must be after all function definitions and after mcp is defined)
-
-# FastMCP app initialization
-MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server")
-mcp = FastMCP(name=MCP_SERVER_NAME)
-
-# Add Generative UI provider for dynamic dashboard generation
-if GENERATIVE_UI_AVAILABLE and GenerativeUI is not None:
-    try:
-        mcp.add_provider(GenerativeUI())  # type: ignore
-        logger.info("GenerativeUI provider registered for dynamic dashboard generation")
-    except Exception as e:
-        logger.warning(f"Failed to add GenerativeUI provider: {e}")
-
-print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: {fastmcp.__version__}\n========================\n")
+# NOTE: FastMCP app is initialized once below (after all helpers), not here.
+# The canonical mcp = FastMCP(...) is at the bottom of the setup section.
 
 def _validate_single_statement(sql: str) -> bool:
     """Detects if SQL contains multiple statements to prevent chaining."""
@@ -616,7 +602,12 @@ def _load_settings() -> Settings:
 
 SETTINGS = _load_settings()
 
-_PYODBC_CONNECT_LOCK = Lock() if sys.platform == "win32" else None
+# Per-instance pyodbc connect locks — prevents Instance 1 direct connections from
+# blocking Instance 2 (and vice-versa) when pools are exhausted or unavailable.
+_PYODBC_CONNECT_LOCKS: dict[int, Lock | None] = {
+    1: Lock() if sys.platform == "win32" else None,
+    2: Lock() if sys.platform == "win32" else None,
+}
 _AUDIT_LOG_LOCK = Lock()
 _RATE_LIMIT_LOCK = Lock()
 _DEFAULT_API_CALLER = "system:local"
@@ -1136,18 +1127,35 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
         logger.debug("[get_connection] Returning pooled connection")
         return PooledConnection(conn, pool)
     else:
-        # No pool, fallback to direct connect
-        print(f"[TRACE 21] No pool configured, using direct connect")
-        logger.debug("[get_connection] No pool configured, using direct connect")
-        if _PYODBC_CONNECT_LOCK is not None:
-            with _PYODBC_CONNECT_LOCK:
-                conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+        # No pool, fallback to direct connect — use a per-instance lock so
+        # Instance 1 connections do not block Instance 2 (and vice-versa).
+        inst_lock = _PYODBC_CONNECT_LOCKS.get(instance)
+        logger.debug(
+            "[get_connection] instance=%d no pool configured, using direct connect (lock=%s)",
+            instance, "acquired" if inst_lock else "none",
+        )
+        print(f"[TRACE 21] No pool configured, using direct connect for instance={instance}")
+        _t_connect_start = time.perf_counter()
+        if inst_lock is not None:
+            with inst_lock:
+                conn = pyodbc.connect(
+                    _connection_string(database, instance),
+                    timeout=max(1, SETTINGS.statement_timeout_ms // 1000),
+                )
         else:
-            conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
+            conn = pyodbc.connect(
+                _connection_string(database, instance),
+                timeout=max(1, SETTINGS.statement_timeout_ms // 1000),
+            )
+        _t_connect_ms = int((time.perf_counter() - _t_connect_start) * 1000)
+        logger.debug(
+            "[get_connection] instance=%d direct connect completed in %dms",
+            instance, _t_connect_ms,
+        )
         conn.autocommit = True
         _ensure_connection_database_scope(conn, database, instance)
-        print(f"[TRACE 22] Returning direct connection")
-        logger.debug("[get_connection] Returning direct connection")
+        print(f"[TRACE 22] Returning direct connection for instance={instance}")
+        logger.debug("[get_connection] Returning direct connection for instance=%d", instance)
         return conn
 
 
@@ -4525,16 +4533,22 @@ def _register_dual_instance_tools():
         for name, func in tool_map.items():
             tool_name = f"{prefix}{name}"
             
-            # Use a closure to capture function and instance correctly
+            # Use a closure to capture function and instance correctly.
+            # make_wrapper is defined inside the loop but accepts (f, inst, registered_tool_name)
+            # as explicit parameters so the closure captures correctly on every iteration.
             def make_wrapper(f, inst, registered_tool_name: str):
+                import asyncio as _asyncio
                 @wraps(f)
-                async def wrapper(*args, **kwargs):
-                    # Capture original args keys before modification
+                async def wrapper(**kwargs):
+                    # FastMCP always invokes tools with keyword arguments only.
+                    # We NEVER accept *args here to prevent accidental positional injection.
                     original_args_keys = sorted(list(kwargs.keys()))
-                    original_kwargs = dict(kwargs)  # Copy for debug logging
-                    # Remove instance from kwargs if it was passed by MCP (it shouldn't be, but just in case)
+                    original_kwargs = dict(kwargs)  # snapshot for debug logging
+
+                    # Inject the pinned instance; strip any caller-supplied value.
                     kwargs.pop("instance", None)
                     kwargs["instance"] = inst
+
                     invocation_id = uuid.uuid4().hex
                     start = time.perf_counter()
                     context = {
@@ -4545,38 +4559,54 @@ def _register_dual_instance_tools():
                         "args_keys": original_args_keys,
                     }
                     function_name = f.__name__
-                    logger.debug("[tool_wrapper] %s called with original_kwargs=%s", registered_tool_name, original_kwargs)
-                    logger.debug("[tool_wrapper] Injected instance=%d, updated_kwargs=%s", inst, kwargs)
+                    logger.debug(
+                        "[tool_wrapper] %s called with original_kwargs=%s",
+                        registered_tool_name, original_kwargs,
+                    )
+                    logger.debug(
+                        "[tool_wrapper] Injected instance=%d, updated_kwargs=%s",
+                        inst, {k: v for k, v in kwargs.items() if k != "instance"},
+                    )
                     _log_tool_start(registered_tool_name, function_name, invocation_id, context)
                     try:
-                        # Handle both sync and async functions
-                        import asyncio
-                        if inspect.iscoroutinefunction(f):
-                            result = await f(*args, **kwargs)
+                        if _asyncio.iscoroutinefunction(f):
+                            # Async tool — await directly (covers analyze_logical_data_model)
+                            result = await f(**kwargs)
                         else:
-                            # Run sync functions in thread pool to avoid blocking
-                            result = await asyncio.to_thread(f, *args, **kwargs)
+                            # Sync tool — run in thread pool so the event loop stays free.
+                            # Use kwargs-only to avoid any accidental positional duplication.
+                            result = await _asyncio.to_thread(f, **kwargs)
                         elapsed_ms = int((time.perf_counter() - start) * 1000)
-                        logger.debug("[tool_wrapper] %s completed in %dms", registered_tool_name, elapsed_ms)
+                        logger.info(
+                            "[tool_wrapper] instance=%d tool=%s elapsed_ms=%d status=success",
+                            inst, registered_tool_name, elapsed_ms,
+                        )
+                        logger.debug(
+                            "[tool_wrapper] %s completed in %dms", registered_tool_name, elapsed_ms,
+                        )
                         _log_tool_success(registered_tool_name, function_name, invocation_id, elapsed_ms, result)
                         return result
                     except Exception as exc:
                         elapsed_ms = int((time.perf_counter() - start) * 1000)
+                        logger.info(
+                            "[tool_wrapper] instance=%d tool=%s elapsed_ms=%d status=error error=%s",
+                            inst, registered_tool_name, elapsed_ms, str(exc),
+                        )
                         _log_tool_error(registered_tool_name, function_name, invocation_id, elapsed_ms, exc)
                         raise
-                
+
                 # Remove 'instance' and 'progress' parameters from the exposed signature
-                # This prevents MCP clients from seeing/passing them
+                # so MCP clients cannot accidentally override the injected values.
                 try:
                     orig_sig = inspect.signature(f)
                     new_params = [
-                        p for name, p in orig_sig.parameters.items() 
-                        if name not in ('instance', 'progress')
+                        p for pname, p in orig_sig.parameters.items()
+                        if pname not in ('instance', 'progress')
                     ]
                     wrapper.__signature__ = inspect.Signature(parameters=new_params)
                 except (ValueError, TypeError):
-                    pass  # If signature inspection fails, continue anyway
-                
+                    pass  # If signature inspection fails, proceed anyway
+
                 return wrapper
             
             wrapped = make_wrapper(func, instance, tool_name)
