@@ -252,7 +252,7 @@ except ImportError:
 logger = logging.getLogger("mcp_sqlserver")
 
 _TOOL_EXEC_LOG_ENABLED = os.getenv("MCP_TOOL_EXECUTION_LOG_ENABLED", "true").lower() in {"1", "true", "yes", "on", "y"}
-_SENSITIVE_LOG_KEYS = {"password", "token", "secret", "api_key", "prompt_context", "headers", "authorization"}
+_SENSITIVE_LOG_KEYS = {"password", "token", "secret", "api_key", "prompt_context", "headers", "authorization", "email"}
 
 # Report storage for web UI (UUID -> HTML content)
 _REPORT_STORAGE: dict[str, dict[str, Any]] = {}
@@ -370,6 +370,12 @@ class Settings:
         self.tool_call_tool_name = kwargs.get('tool_call_tool_name', 'call_tool')
         # Whether to warn about duplicate column names within a single entity
         self.erd_duplicate_check = kwargs.get('erd_duplicate_check', True)
+        # Office 365 email configuration
+        self.o365_email_enabled = kwargs.get('o365_email_enabled', False)
+        self.o365_client_id = kwargs.get('o365_client_id', '')
+        self.o365_client_secret = kwargs.get('o365_client_secret', '')
+        self.o365_tenant_id = kwargs.get('o365_tenant_id', '')
+        self.o365_sender_email = kwargs.get('o365_sender_email', 'notification@example.com')
 
 # Minimal _now_utc_iso helper
 def _now_utc_iso():
@@ -600,6 +606,11 @@ def _load_settings() -> Settings:
         tool_search_always_visible=_env("MCP_TOOL_SEARCH_ALWAYS_VISIBLE", "").strip(),
         tool_search_tool_name=_env("MCP_TOOL_SEARCH_TOOL_NAME", "search_tools").strip(),
         tool_call_tool_name=_env("MCP_TOOL_CALL_TOOL_NAME", "call_tool").strip(),
+        o365_email_enabled=_env_bool("MCP_O365_EMAIL_ENABLED", False),
+        o365_client_id=_env("MCP_O365_CLIENT_ID", "").strip(),
+        o365_client_secret=_env("MCP_O365_CLIENT_SECRET", "").strip(),
+        o365_tenant_id=_env("MCP_O365_TENANT_ID", "").strip(),
+        o365_sender_email=_env("MCP_O365_SENDER_EMAIL", "notification@example.com").strip(),
     )
 
 
@@ -1063,13 +1074,19 @@ def _ensure_connection_database_scope(conn: pyodbc.Connection, database: str | N
         cur.close()
 
 def get_connection(database: str | None = None, instance: int = 1) -> Union[pyodbc.Connection, 'PooledConnection']:
+    print(f"[TRACE 15] get_connection called with database={database}, instance={instance}")
+    logger.debug("[get_connection] Called with database=%s, instance=%d", database, instance)
     validate_instance(instance)
     pool = _CONN_POOLS.get(instance)
     pool_lock = _CONN_POOL_LOCKS.get(instance)
     if pool and pool_lock:
+        print(f"[TRACE 16] Using connection pool for instance={instance}")
+        logger.debug("[get_connection] Using connection pool for instance=%d", instance)
         # Try to get a pooled connection, else create new if pool is empty
         try:
             conn = pool.get(timeout=5)
+            print(f"[TRACE 17] Pool hit: got connection from pool")
+            logger.debug("[get_connection] Pool hit: got connection from pool")
             # Validate connection is alive
             try:
                 cur = conn.cursor()
@@ -1079,11 +1096,15 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
                     cur.close()
             except Exception:
                 # Connection is dead, replace
+                print(f"[TRACE 18] Pooled connection dead, replacing")
+                logger.debug("[get_connection] Pooled connection dead, replacing")
                 conn.close()
                 conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
                 conn.autocommit = True
         except queue.Empty:
             # Pool exhausted, create new connection (not pooled)
+            print(f"[TRACE 19] Pool exhausted, creating new connection")
+            logger.debug("[get_connection] Pool exhausted, creating new connection")
             conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
             conn.autocommit = True
 
@@ -1111,9 +1132,13 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
                 raise
 
         # Return a wrapped connection with pooled close
+        print(f"[TRACE 20] Returning pooled connection")
+        logger.debug("[get_connection] Returning pooled connection")
         return PooledConnection(conn, pool)
     else:
         # No pool, fallback to direct connect
+        print(f"[TRACE 21] No pool configured, using direct connect")
+        logger.debug("[get_connection] No pool configured, using direct connect")
         if _PYODBC_CONNECT_LOCK is not None:
             with _PYODBC_CONNECT_LOCK:
                 conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
@@ -1121,6 +1146,8 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
             conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
         conn.autocommit = True
         _ensure_connection_database_scope(conn, database, instance)
+        print(f"[TRACE 22] Returning direct connection")
+        logger.debug("[get_connection] Returning direct connection")
         return conn
 
 
@@ -1424,40 +1451,24 @@ def _apply_logical_model_view(result: dict[str, Any], view: str) -> dict[str, An
         return result
 
     summary = result.get("summary", {})
-    logical_model = result.get("logical_model", {}) if isinstance(result.get("logical_model"), dict) else {}
-    recommendations = result.get("recommendations", {}) if isinstance(result.get("recommendations"), dict) else {}
     issues = result.get("issues", {}) if isinstance(result.get("issues"), dict) else {}
 
     if view == "summary":
         return {
             "summary": summary,
-            "sample_relationships": logical_model.get("relationships", [])[:10] if isinstance(logical_model.get("relationships"), list) else [],
-            "recommendations": {
-                "entities": recommendations.get("entities", [])[:5],
-                "attributes": recommendations.get("attributes", [])[:5],
-                "relationships": recommendations.get("relationships", [])[:5],
-                "identifiers": recommendations.get("identifiers", [])[:5],
-                "normalization": recommendations.get("normalization", [])[:5],
+            "issues": {
+                "missing_relationships": issues.get("missing_relationships", [])[:5],
+                "datatype_mismatches": issues.get("datatype_mismatches", [])[:5],
+                "anomalies": issues.get("anomalies", [])[:5],
+                "normalization": issues.get("normalization", [])[:5],
+                "identifiers": issues.get("identifiers", [])[:5],
             },
         }
 
+    # Standard view: trim issues only (entities/relationships no longer displayed)
     transformed = dict(result)
-    model_copy = dict(logical_model)
-    if isinstance(model_copy.get("entities"), list):
-        trimmed_entities: list[dict[str, Any]] = []
-        for entity in model_copy["entities"]:
-            if not isinstance(entity, dict):
-                continue
-            entity_copy = dict(entity)
-            attrs = entity_copy.get("attributes")
-            if isinstance(attrs, list):
-                entity_copy["attributes"] = attrs[:12]
-            trimmed_entities.append(entity_copy)
-        model_copy["entities"] = trimmed_entities
-    transformed["logical_model"] = model_copy
-
     issues_copy = dict(issues)
-    for key in ("entities", "attributes", "relationships", "identifiers", "normalization"):
+    for key in ("entities", "attributes", "relationships", "identifiers", "normalization", "missing_relationships", "datatype_mismatches", "anomalies"):
         values = issues_copy.get(key)
         if isinstance(values, list):
             issues_copy[key] = values[:12]
@@ -2182,9 +2193,18 @@ def _get_index_fragmentation_data(
     min_page_count: int = 100,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
+    print(f"[TRACE 8] _get_index_fragmentation_data called with instance={instance}, database_name={database_name}, schema={schema}, min_fragmentation={min_fragmentation}, min_page_count={min_page_count}, limit={limit}")
+    logger.debug("[get_index_fragmentation] Called with instance=%d, database_name=%s, schema=%s, min_fragmentation=%s, min_page_count=%d, limit=%d",
+                 instance, database_name, schema, min_fragmentation, min_page_count, limit)
     validate_instance(instance)
+    print(f"[TRACE 9] Instance {instance} validated")
+    logger.debug("[get_index_fragmentation] Instance %d validated", instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
+    print(f"[TRACE 10] Resolved database_name={db_name}")
+    logger.debug("[get_index_fragmentation] Resolved database_name=%s", db_name)
     db_name_str = _normalize_db_name(db_name)
+    print(f"[TRACE 11] Connecting to database={db_name_str} on instance={instance}")
+    logger.debug("[get_index_fragmentation] Connecting to database=%s on instance=%d", db_name_str, instance)
     conn = get_connection(db_name_str, instance=instance)
     try:
         # Set a shorter statement timeout for fragmentation queries (30 seconds)
@@ -2212,14 +2232,21 @@ def _get_index_fragmentation_data(
             sql += " AND s.name = ?"
             params.append(schema)
         sql += " ORDER BY ips.avg_fragmentation_in_percent DESC"
+        print(f"[TRACE 12] Executing query with params={params}")
+        logger.debug("[get_index_fragmentation] Executing query with params=%s", params)
 
         _execute_safe(cur, sql, params)
-        return _rows_to_dicts(cur, cur.fetchall())
+        result = _rows_to_dicts(cur, cur.fetchall())
+        print(f"[TRACE 13] Query returned {len(result)} fragmentation items")
+        logger.debug("[get_index_fragmentation] Query returned %d fragmentation items", len(result))
+        return result
     except Exception as exc:
         logger.warning("Fragmentation query failed for %s: %s", db_name_str, exc)
         return []
     finally:
         conn.close()
+        print(f"[TRACE 14] Connection closed")
+        logger.debug("[get_index_fragmentation] Connection closed")
 
 
 def db_sql2019_get_index_fragmentation(
@@ -3090,27 +3117,16 @@ def _sanitize_relationship_label(value: Any) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "", raw)
 
 
-def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus_entity: str | None = None) -> str:
+def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus_entity: str | None = None, for_email: bool = False) -> str:
     # Backward compatibility path used by tests: _render_data_model_html(report_id, model, page=..., focus_entity=...)
     if isinstance(model, str) and isinstance(issues, dict):
         report_id = model
         legacy_model = issues
-        logical_model = legacy_model.get("logical_model", {}) if isinstance(legacy_model, dict) else {}
-        relationships = logical_model.get("relationships", []) if isinstance(logical_model, dict) else []
-        mermaid_lines = ["graph TD"]
-        for rel in relationships:
-            if not isinstance(rel, dict):
-                continue
-            from_entity = str(rel.get("from_entity", "")).replace(".", "_")
-            to_entity = str(rel.get("to_entity", "")).replace(".", "_")
-            safe_label = _sanitize_relationship_label(rel.get("name", ""))
-            if from_entity and to_entity:
-                mermaid_lines.append(f"{from_entity} -->|\"{safe_label}\"| {to_entity}")
-        mermaid_markup = escape("\n".join(mermaid_lines))
+        # Simplified legacy path - no diagram, just report metadata
         return (
             "<html><head><title>Logical Data Model</title></head><body>"
             f"<div id=\"reportMeta\">{escape(report_id)}</div>"
-            f"<div id=\"diagramLayer\" class=\"mermaid\">{mermaid_markup}</div>"
+            "<p>Legacy report format - use the new analyze_logical_data_model tool for full analysis.</p>"
             "</body></html>"
         )
 
@@ -3127,47 +3143,9 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
 
     database_name = escape(str(model.get("database", "Unknown database")))
     summary = model.get("summary", {}) if isinstance(model.get("summary"), dict) else {}
+    # entities and relationships are still fetched internally for analysis but not displayed
     entities = model.get("entities", []) if isinstance(model.get("entities"), list) else []
     relationships = model.get("relationships", []) if isinstance(model.get("relationships"), list) else []
-    entity_cards = _render_entity_cards_html(entities)
-    relationships_html = _render_relationships_html(relationships)
-    
-    # Build unique Mermaid node ID mapping to avoid collisions
-    mermaid_id_map = {}
-    id_counter = {}
-    for e in entities:
-        schema = e.get('schema', 'dbo')
-        name = e.get('name', 'Unknown')
-        full_key = f"{schema}.{name}"
-        base_id = _mermaid_node_id(schema, name)
-        if base_id not in id_counter:
-            id_counter[base_id] = 0
-            mermaid_id_map[full_key] = base_id
-        else:
-            id_counter[base_id] += 1
-            mermaid_id_map[full_key] = f"{base_id}_{id_counter[base_id]}"
-    
-    # Pre-build Mermaid diagram lines to avoid complex f-string nesting
-    entity_nodes = []
-    for e in entities:
-        schema = e.get('schema', 'dbo')
-        name = e.get('name', 'Unknown')
-        full_key = f"{schema}.{name}"
-        node_id = mermaid_id_map.get(full_key, 'Unknown')
-        entity_nodes.append(f"    {node_id}[\"{escape(name)}\"]")
-    
-    relationship_edges = []
-    for r in relationships:
-        parent_schema = r.get('parent_schema', 'dbo')
-        parent_table = r.get('parent_table', 'Unknown')
-        ref_schema = r.get('referenced_schema', 'dbo')
-        ref_table = r.get('referenced_table', 'Unknown')
-        constraint_name = r.get('constraint_name', 'FK')
-        parent_key = f"{parent_schema}.{parent_table}"
-        ref_key = f"{ref_schema}.{ref_table}"
-        parent_id = mermaid_id_map.get(parent_key, 'Unknown')
-        ref_id = mermaid_id_map.get(ref_key, 'Unknown')
-        relationship_edges.append(f"    {parent_id} -->|\"{escape(constraint_name)}\"| {ref_id}")
     issue_total = sum(len(group) for group in issues.values())
     # Calculate issue breakdown by severity
     high_issues = sum(1 for cat_issues in issues.values() for issue in cat_issues if issue.get("severity") == "High")
@@ -3183,14 +3161,83 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
         "identifiers": len(issues.get("identifiers", [])),
     }
 
-    html = f"""
+    if for_email:
+        # Email version: use inline styles for email client compatibility
+        html = f"""
     <html>
     <head>
         <title>Logical Data Model - {database_name}</title>
-        <script type="module">
-            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-            mermaid.initialize({{ startOnLoad: true, theme: 'default' }});
-        </script>
+    </head>
+    <body style="font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: #f4f7fb; color: #1f2937;">
+        <div style="max-width: 1200px; margin: 0 auto; background: white; border-radius: 12px; padding: 32px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <div style="background: linear-gradient(135deg, #0f172a, #1d4ed8); color: white; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+                <h1 style="margin: 0 0 8px; font-size: 28px;">Logical Data Model Analysis</h1>
+                <p style="margin: 0; color: rgba(255,255,255,0.9);">Database <strong>{database_name}</strong> - Comprehensive analysis including datatype validation, normalization checks, and anomaly detection.</p>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                <div style="background: #f8fafc; border-radius: 8px; padding: 16px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 4px;">Total Issues</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #1f2937;">{issue_total}</div>
+                </div>
+                <div style="background: #f8fafc; border-radius: 8px; padding: 16px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; margin-bottom: 4px;">Analysis Categories</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #1f2937;">{len([c for c, v in issue_categories.items() if v > 0])}/5</div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px;">
+                <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; border: 1px solid #e5e7eb; border-left: 4px solid #dc2626;">
+                    <div style="font-size: 24px; font-weight: 700; color: #dc2626;">{high_issues}</div>
+                    <div style="font-size: 12px; color: #64748b; text-transform: uppercase; margin-top: 4px;">High Severity</div>
+                </div>
+                <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; border: 1px solid #e5e7eb; border-left: 4px solid #ea580c;">
+                    <div style="font-size: 24px; font-weight: 700; color: #ea580c;">{medium_issues}</div>
+                    <div style="font-size: 12px; color: #64748b; text-transform: uppercase; margin-top: 4px;">Medium Severity</div>
+                </div>
+                <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; border: 1px solid #e5e7eb; border-left: 4px solid #ca8a04;">
+                    <div style="font-size: 24px; font-weight: 700; color: #ca8a04;">{low_issues}</div>
+                    <div style="font-size: 12px; color: #64748b; text-transform: uppercase; margin-top: 4px;">Low Severity</div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px;">
+                <div style="background: white; border-radius: 8px; padding: 14px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 20px; font-weight: 700; color: #1d4ed8;">{issue_categories['missing_relationships']}</div>
+                    <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Missing Relationships</div>
+                </div>
+                <div style="background: white; border-radius: 8px; padding: 14px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 20px; font-weight: 700; color: #1d4ed8;">{issue_categories['datatype_mismatches']}</div>
+                    <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Datatype Mismatches</div>
+                </div>
+                <div style="background: white; border-radius: 8px; padding: 14px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 20px; font-weight: 700; color: #1d4ed8;">{issue_categories['anomalies']}</div>
+                    <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Data Anomalies</div>
+                </div>
+                <div style="background: white; border-radius: 8px; padding: 14px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 20px; font-weight: 700; color: #1d4ed8;">{issue_categories['normalization']}</div>
+                    <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Normalization Issues</div>
+                </div>
+                <div style="background: white; border-radius: 8px; padding: 14px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 20px; font-weight: 700; color: #1d4ed8;">{issue_categories['identifiers']}</div>
+                    <div style="font-size: 12px; color: #64748b; margin-top: 4px;">Key Constraint Issues</div>
+                </div>
+            </div>
+
+            <div style="margin-top: 28px;">
+                <h2 style="margin: 0 0 14px; font-size: 20px; color: #1f2937;">Analysis Results</h2>
+                {_render_issue_tables_html(issues, for_email=for_email)}
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    else:
+        # Web version: use CSS classes
+        html = f"""
+    <html>
+    <head>
+        <title>Logical Data Model - {database_name}</title>
         <style>
             body {{ font-family: 'Segoe UI', sans-serif; margin: 0; background: #f4f7fb; color: #1f2937; }}
             .page {{ max-width: 1440px; margin: 0 auto; padding: 32px 24px 48px; }}
@@ -3210,49 +3257,37 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
             .severity-stat .label {{ font-size: 12px; color: #64748b; text-transform: uppercase; }}
             .section {{ margin-top: 28px; }}
             .section h2 {{ margin: 0 0 14px; font-size: 22px; }}
-            .entity-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }}
-            .entity-card, .panel {{ background: white; border-radius: 14px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); overflow: hidden; }}
-            .entity-head {{ padding: 16px 18px; border-bottom: 1px solid #e5e7eb; background: #eff6ff; }}
-            .entity-title {{ font-size: 18px; font-weight: 700; margin: 0; }}
-            .entity-subtitle {{ color: #475569; font-size: 12px; margin-top: 4px; }}
-            .entity-body {{ max-height: 320px; overflow: auto; }}
+            .panel {{ background: white; border-radius: 14px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); overflow: hidden; }}
             table {{ width: 100%; border-collapse: collapse; }}
             th, td {{ padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; }}
             th {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; background: #f8fafc; }}
-            .pill {{ display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #dbeafe; color: #1d4ed8; }}
-            .issue {{ color: #b91c1c; }}
             .muted {{ color: #64748b; }}
             .empty {{ padding: 18px; background: white; border-radius: 14px; color: #64748b; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
-            .issue-card {{ background: #fef2f2; border-radius: 10px; padding: 14px; margin: 8px 0; border-left: 4px solid #dc2626; }}
-            .issue-card.medium-severity {{ background: #fff7ed; border-left-color: #ea580c; }}
-            .issue-card.low-severity {{ background: #fefce8; border-left-color: #ca8a04; }}
-            .issue-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }}
-            .issue-impact {{ font-size: 13px; color: #7f1d1d; margin-top: 6px; }}
-            .issue-recommendation {{ font-size: 13px; color: #1e40af; margin-top: 6px; background: #dbeafe; padding: 8px; border-radius: 6px; }}
             .issue-category {{ margin-bottom: 20px; }}
             .issue-category h3 {{ font-size: 16px; color: #374151; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid #e5e7eb; }}
             .category-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0; }}
             .category-card {{ background: white; border-radius: 10px; padding: 14px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06); }}
             .category-card .count {{ font-size: 20px; font-weight: 700; color: #1d4ed8; }}
             .category-card .name {{ font-size: 12px; color: #64748b; margin-top: 4px; }}
-            .erd-container {{ background: white; border-radius: 14px; padding: 24px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); overflow: auto; }}
             .issues-table {{ width: 100%; border-collapse: collapse; }}
             .issues-table th {{ background: #f8fafc; position: sticky; top: 0; }}
             .severity-high {{ color: #dc2626; font-weight: 600; }}
             .severity-medium {{ color: #ea580c; font-weight: 600; }}
             .severity-low {{ color: #ca8a04; font-weight: 600; }}
+            .pagination-controls {{ display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f8fafc; border-top: 1px solid #e5e7eb; }}
+            .pagination-btn {{ padding: 6px 12px; background: #1d4ed8; color: white; border: none; border-radius: 4px; cursor: pointer; }}
+            .pagination-btn:disabled {{ background: #cbd5e1; cursor: not-allowed; }}
+            .pagination-info {{ font-size: 14px; color: #64748b; }}
         </style>
     </head>
     <body>
         <div class="page">
             <div class="hero">
                 <h1>Logical Data Model Analysis</h1>
-                <p>Database <strong>{database_name}</strong> - Comprehensive analysis including entity relationships, datatype validation, normalization checks, and anomaly detection.</p>
+                <p>Database <strong>{database_name}</strong> - Comprehensive analysis including datatype validation, normalization checks, and anomaly detection.</p>
             </div>
 
             <div class="stats">
-                <div class="stat"><div class="label">Entities</div><div class="value">{len(entities)}</div></div>
-                <div class="stat"><div class="label">Relationships</div><div class="value">{len(relationships)}</div></div>
                 <div class="stat"><div class="label">Total Issues</div><div class="value">{issue_total}</div></div>
                 <div class="stat"><div class="label">Analysis Categories</div><div class="value">{len([c for c, v in issue_categories.items() if v > 0])}/5</div></div>
             </div>
@@ -3296,27 +3331,8 @@ def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus
             </div>
 
             <div class="section">
-                <h2>Entity Relationship Diagram (ERD)</h2>
-                <div class="erd-container">
-                    <div class="mermaid">
-graph TD
-{"".join(entity_nodes)}
-{"".join(relationship_edges)}
-                    </div>
-                </div>
-            </div>
-
-            <div class="section">
-                <h2>Relationships</h2>
-                {relationships_html}
-            </div>
-            <div class="section">
-                <h2>Entities</h2>
-                {entity_cards}
-            </div>
-            <div class="section">
                 <h2>Analysis Results</h2>
-                {_render_issue_list_html(issues)}
+                {_render_issue_tables_html(issues, for_email=for_email)}
             </div>
         </div>
     </body>
@@ -3546,7 +3562,7 @@ def _render_relationships_html(relationships: list[dict[str, Any]]) -> str:
     )
 
 
-def _render_issue_list_html(issues: dict[str, list[dict[str, Any]]]) -> str:
+def _render_issue_tables_html(issues: dict[str, list[dict[str, Any]]], for_email: bool = False) -> str:
     category_descriptions = {
         "entities": "Entity Structure Issues",
         "attributes": "Column/Attribute Issues",
@@ -3558,150 +3574,318 @@ def _render_issue_list_html(issues: dict[str, list[dict[str, Any]]]) -> str:
         "anomalies": "Data Anomalies",
     }
 
-    severity_colors = {
-        "High": "#dc2626",
-        "Medium": "#ea580c",
-        "Low": "#ca8a04",
-    }
-
-    # Collect all issues into a flat list for table display
-    all_issues = []
-    for category, list_obj in issues.items():
-        if not list_obj:
-            continue
-        cat_desc = category_descriptions.get(category, category.replace("_", " ").title())
-        for issue in list_obj:
-            all_issues.append({
-                "category": cat_desc,
-                "severity": issue.get("severity", "Low"),
-                "issue": issue.get("issue", "Issue detected"),
-                "entity": issue.get("entity", issue.get("relationship", "model")),
-                "impact": issue.get("impact", ""),
-                "recommendation": issue.get("recommendation", ""),
-            })
-
-    if not all_issues:
+    # Check if there are any issues at all
+    total_issues = sum(len(v) for v in issues.values())
+    if total_issues == 0:
         return "<p style='color: #16a34a; font-weight: 600;'>No issues found. The data model appears well-structured.</p>"
 
-    # Sort by severity (High first)
-    severity_order = {"High": 0, "Medium": 1, "Low": 2}
-    all_issues.sort(key=lambda x: severity_order.get(x["severity"], 3))
+    # For email, show all issues without JavaScript pagination
+    # For web, use JavaScript pagination
+    max_issues_per_category = 50 if for_email else None
 
-    # Build table rows
-    table_rows = []
-    for issue in all_issues:
-        severity_class = f"severity-{issue['severity'].lower()}"
-        table_rows.append(f"""
-        <tr>
-            <td class="{severity_class}">{escape(issue['severity'])}</td>
-            <td>{escape(issue['category'])}</td>
-            <td>{escape(issue['issue'])}</td>
-            <td>{escape(str(issue['entity']))}</td>
-            <td>{escape(issue['impact'])}</td>
-            <td>{escape(issue['recommendation'])}</td>
-        </tr>
-        """)
-
-    return f"""
-    <div class='panel'>
-        <table class='issues-table'>
-            <thead>
+    # Build per-category tables
+    category_sections = []
+    for category_key, category_issues in issues.items():
+        if not category_issues:
+            continue
+        
+        cat_desc = category_descriptions.get(category_key, category_key.replace("_", " ").title())
+        
+        # Sort by severity within category
+        severity_order = {"High": 0, "Medium": 1, "Low": 2}
+        sorted_issues = sorted(category_issues, key=lambda x: severity_order.get(x.get("severity", "Low"), 3))
+        
+        # Limit issues for email
+        if max_issues_per_category and len(sorted_issues) > max_issues_per_category:
+            sorted_issues = sorted_issues[:max_issues_per_category]
+            truncated = True
+        else:
+            truncated = False
+        
+        if for_email:
+            # Email version: render all rows directly without JavaScript
+            rows_html = []
+            for issue in sorted_issues:
+                severity = issue.get("severity", "Low")
+                severity_color = {"High": "#dc2626", "Medium": "#ea580c", "Low": "#ca8a04"}.get(severity, "#64748b")
+                rows_html.append(f"""
                 <tr>
-                    <th>Severity</th>
-                    <th>Category</th>
-                    <th>Issue</th>
-                    <th>Entity</th>
-                    <th>Impact</th>
-                    <th>Recommendation</th>
+                    <td style='color: {severity_color}; font-weight: 600;'>{escape(severity)}</td>
+                    <td>{escape(issue.get("issue", "Issue detected"))}</td>
+                    <td>{escape(str(issue.get("entity", issue.get("relationship", "model"))))}</td>
+                    <td>{escape(issue.get("impact", ""))}</td>
+                    <td>{escape(issue.get("recommendation", ""))}</td>
                 </tr>
-            </thead>
-            <tbody>
-                {''.join(table_rows)}
-            </tbody>
-        </table>
-    </div>
-    """
+                """)
+            
+            category_sections.append(f"""
+            <div style="margin-bottom: 24px;">
+                <h3 style="font-size: 16px; color: #374151; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid #e5e7eb;">{escape(cat_desc)} ({len(sorted_issues)} issues)</h3>
+                <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <thead>
+                        <tr style="background: #f8fafc;">
+                            <th style="padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b;">Severity</th>
+                            <th style="padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b;">Issue</th>
+                            <th style="padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b;">Entity</th>
+                            <th style="padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b;">Impact</th>
+                            <th style="padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b;">Recommendation</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {''.join(rows_html)}
+                    </tbody>
+                </table>
+                {f"<p style='color: #64748b; font-size: 12px; margin-top: 8px;'>... and {len(category_issues) - max_issues_per_category} more issues not shown (email limit)</p>" if truncated else ""}
+            </div>
+            """)
+        else:
+            # Web version: use JavaScript pagination
+            rows_json = []
+            for issue in sorted_issues:
+                rows_json.append({
+                    "severity": issue.get("severity", "Low"),
+                    "issue": issue.get("issue", "Issue detected"),
+                    "entity": issue.get("entity", issue.get("relationship", "model")),
+                    "impact": issue.get("impact", ""),
+                    "recommendation": issue.get("recommendation", ""),
+                })
+            
+            rows_json_str = json.dumps(rows_json).replace('</', '<\\/').replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
+            table_id = f"table-{category_key}"
+            
+            category_sections.append(f"""
+            <div class="issue-category">
+                <h3>{escape(cat_desc)} ({len(category_issues)})</h3>
+                <div class='panel'>
+                    <table class='issues-table' id='{table_id}'>
+                        <thead>
+                            <tr>
+                                <th>Severity</th>
+                                <th>Issue</th>
+                                <th>Entity</th>
+                                <th>Impact</th>
+                                <th>Recommendation</th>
+                            </tr>
+                        </thead>
+                        <tbody id='{table_id}-tbody'>
+                        </tbody>
+                    </table>
+                    <div class='pagination-controls' id='{table_id}-pagination'>
+                        <button class='pagination-btn' onclick='window.changePage("{table_id}", -1)' id='{table_id}-prev'>Previous</button>
+                        <span class='pagination-info' id='{table_id}-info'>Page 1</span>
+                        <button class='pagination-btn' onclick='window.changePage("{table_id}", 1)' id='{table_id}-next'>Next</button>
+                    </div>
+                </div>
+            </div>
+            <script>
+                (function() {{
+                    const tableId = '{table_id}';
+                    const rows = {rows_json_str};
+                    const pageSize = 20;
+                    let currentPage = 1;
+                    
+                    function renderTable() {{
+                        const tbody = document.getElementById(tableId + '-tbody');
+                        const start = (currentPage - 1) * pageSize;
+                        const end = Math.min(start + pageSize, rows.length);
+                        
+                        tbody.innerHTML = '';
+                        for (let i = start; i < end; i++) {{
+                            const row = rows[i];
+                            const severityClass = 'severity-' + row.severity.toLowerCase();
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = `
+                                <td class="${{severityClass}}">${{escapeHtml(row.severity)}}</td>
+                                <td>${{escapeHtml(row.issue)}}</td>
+                                <td>${{escapeHtml(String(row.entity))}}</td>
+                                <td>${{escapeHtml(row.impact)}}</td>
+                                <td>${{escapeHtml(row.recommendation)}}</td>
+                            `;
+                            tbody.appendChild(tr);
+                        }}
+                        
+                        // Update pagination info
+                        const totalPages = Math.ceil(rows.length / pageSize);
+                        document.getElementById(tableId + '-info').textContent = `Page ${{currentPage}} of ${{totalPages}}`;
+                        document.getElementById(tableId + '-prev').disabled = currentPage === 1;
+                        document.getElementById(tableId + '-next').disabled = currentPage === totalPages;
+                    }}
+                    
+                    function renderTableForId(tid) {{
+                        const rows = window[tid + '_rows'];
+                        const currentPage = window[tid + '_page'];
+                        const pageSize = 20;
+                        const tbody = document.getElementById(tid + '-tbody');
+                        const start = (currentPage - 1) * pageSize;
+                        const end = Math.min(start + pageSize, rows.length);
+                        
+                        tbody.innerHTML = '';
+                        for (let i = start; i < end; i++) {{
+                            const row = rows[i];
+                            const severityClass = 'severity-' + row.severity.toLowerCase();
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = `
+                                <td class="${{severityClass}}">${{escapeHtml(row.severity)}}</td>
+                                <td>${{escapeHtml(row.issue)}}</td>
+                                <td>${{escapeHtml(String(row.entity))}}</td>
+                                <td>${{escapeHtml(row.impact)}}</td>
+                                <td>${{escapeHtml(row.recommendation)}}</td>
+                            `;
+                            tbody.appendChild(tr);
+                        }}
+                        
+                        const totalPages = Math.ceil(rows.length / pageSize);
+                        document.getElementById(tid + '-info').textContent = `Page ${{currentPage}} of ${{totalPages}}`;
+                        document.getElementById(tid + '-prev').disabled = currentPage === 1;
+                        document.getElementById(tid + '-next').disabled = currentPage === totalPages;
+                    }}
+                    
+                    function escapeHtml(text) {{
+                        const div = document.createElement('div');
+                        div.textContent = text;
+                        return div.innerHTML;
+                    }}
+                    
+                    // Store data globally for pagination
+                    window[tableId + '_rows'] = rows;
+                    window[tableId + '_page'] = 1;
+                    
+                    // Define global changePage function if not already defined
+                    if (!window.changePage) {{
+                        window.changePage = function(tableId, delta) {{
+                            const rows = window[tableId + '_rows'];
+                            const currentPage = window[tableId + '_page'];
+                            const pageSize = 20;
+                            const totalPages = Math.ceil(rows.length / pageSize);
+                            const newPage = currentPage + delta;
+                            if (newPage >= 1 && newPage <= totalPages) {{
+                                window[tableId + '_page'] = newPage;
+                                const tbody = document.getElementById(tableId + '-tbody');
+                                const start = (newPage - 1) * pageSize;
+                                const end = Math.min(start + pageSize, rows.length);
+                                
+                                tbody.innerHTML = '';
+                                for (let i = start; i < end; i++) {{
+                                    const row = rows[i];
+                                    const severityClass = 'severity-' + row.severity.toLowerCase();
+                                    const tr = document.createElement('tr');
+                                    tr.innerHTML = `
+                                        <td class="${{severityClass}}">${{escapeHtml(row.severity)}}</td>
+                                        <td>${{escapeHtml(row.issue)}}</td>
+                                        <td>${{escapeHtml(String(row.entity))}}</td>
+                                        <td>${{escapeHtml(row.impact)}}</td>
+                                        <td>${{escapeHtml(row.recommendation)}}</td>
+                                    `;
+                                    tbody.appendChild(tr);
+                                }}
+                                
+                                document.getElementById(tableId + '-info').textContent = `Page ${{newPage}} of ${{totalPages}}`;
+                                document.getElementById(tableId + '-prev').disabled = newPage === 1;
+                                document.getElementById(tableId + '-next').disabled = newPage === totalPages;
+                            }}
+                        }};
+                    }}
+                    
+                    renderTable();
+                }})();
+            </script>
+            """)
+    
+    return "".join(category_sections)
 
 
-def _analyze_logical_data_model_internal(
+async def _analyze_logical_data_model_internal(
     instance: int,
     database_name: str | None,
     schema: str | None = None,
     view: str | None = None,
+    progress: Any = None,
 ) -> dict[str, Any]:
+    """Async wrapper for logical data model analysis with progress reporting."""
+    import asyncio
+    
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
-    conn = get_connection(db_name_str, instance=instance)
-    try:
-        cur = conn.cursor()
-        
-        # Fetch entities (tables)
-        where_sql = ""
-        params = []
-        if schema:
-            where_sql = "WHERE s.name = ?"
-            params.append(schema)
+    
+    if progress:
+        await progress.set_message(f"Connecting to database {db_name}...")
+    
+    # Run synchronous database operations in thread pool
+    def _sync_analysis():
+        conn = get_connection(db_name_str, instance=instance)
+        try:
+            cur = conn.cursor()
             
-        _execute_safe(
-            cur,
-            f"""
-            SELECT s.name AS schema_name, t.name AS table_name
-            FROM sys.tables t
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
-            {where_sql}
-            """,
-            params,
-        )
-        tables = cur.fetchall()
-        
-        entities = []
-        for t_schema, t_name in tables:
-             _execute_safe(
-                 cur,
-                 """
-                 SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-                 FROM INFORMATION_SCHEMA.COLUMNS
-                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-                 """,
-                 [t_schema, t_name],
-             )
-             cols = _rows_to_dicts(cur, cur.fetchall())
-             entities.append({
-                 "schema": t_schema,
-                 "name": t_name,
-                 "columns": cols
-             })
-             
-        relationships = _fetch_relationships(cur, str(db_name) if not isinstance(db_name, str) else db_name)
-        # Optional: skip duplicate-column warnings if disabled via settings flag (false positives)
-        if getattr(SETTINGS, "erd_duplicate_check", True):
-            issues = _analyze_erd_issues(entities, relationships)
-        else:
-            issues = {
-                "entities": [],
-                "attributes": [],
-                "relationships": [],
-                "identifiers": [],
-                "normalization": [],
-                "missing_relationships": [],
-                "datatype_mismatches": [],
-                "anomalies": [],
+            # Fetch entities (tables)
+            where_sql = ""
+            params = []
+            if schema:
+                where_sql = "WHERE s.name = ?"
+                params.append(schema)
+                
+            _execute_safe(
+                cur,
+                f"""
+                SELECT s.name AS schema_name, t.name AS table_name
+                FROM sys.tables t
+                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                {where_sql}
+                """,
+                params,
+            )
+            tables = cur.fetchall()
+            
+            entities = []
+            for t_schema, t_name in tables:
+                 _execute_safe(
+                     cur,
+                     """
+                     SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+                     FROM INFORMATION_SCHEMA.COLUMNS
+                     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                     """,
+                     [t_schema, t_name],
+                 )
+                 cols = _rows_to_dicts(cur, cur.fetchall())
+                 entities.append({
+                     "schema": t_schema,
+                     "name": t_name,
+                     "columns": cols
+                 })
+                 
+            relationships = _fetch_relationships(cur, str(db_name) if not isinstance(db_name, str) else db_name)
+            # Optional: skip duplicate-column warnings if disabled via settings flag (false positives)
+            if getattr(SETTINGS, "erd_duplicate_check", True):
+                issues = _analyze_erd_issues(entities, relationships)
+            else:
+                issues = {
+                    "entities": [],
+                    "attributes": [],
+                    "relationships": [],
+                    "identifiers": [],
+                    "normalization": [],
+                    "missing_relationships": [],
+                    "datatype_mismatches": [],
+                    "anomalies": [],
+                }
+            
+            return {
+                "database": db_name,
+                "entities": entities,
+                "relationships": relationships,
+                "issues": issues,
+                "summary": {
+                    "entity_count": len(entities),
+                    "relationship_count": len(relationships),
+                    "total_issues": sum(len(v) for v in issues.values())
+                }
             }
-        
-        return {
-            "database": db_name,
-            "entities": entities,
-            "relationships": relationships,
-            "issues": issues,
-            "summary": {
-                "entity_count": len(entities),
-                "relationship_count": len(relationships),
-                "total_issues": sum(len(v) for v in issues.values())
-            }
-        }
-    finally:
-        conn.close()
+        finally:
+            conn.close()
+    
+    result = await asyncio.to_thread(_sync_analysis)
+    return result
 
 
 def db_sql2019_show_top_queries(
@@ -3805,14 +3989,29 @@ def db_sql2019_check_fragmentation(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Check fragmentation for a specific table or all tables in a schema."""
+    print(f"[TRACE 1] db_sql2019_check_fragmentation called with instance={instance}, database_name={database_name}, database={database}, schema_name={schema_name}, table_name={table_name}, min_fragmentation={min_fragmentation}, min_page_count={min_page_count}, page={page}, page_size={page_size}")
+    logger.debug("[check_fragmentation] db_sql2019_check_fragmentation called with instance=%d, database_name=%s, database=%s, schema_name=%s, table_name=%s, min_fragmentation=%s, min_page_count=%s, page=%d, page_size=%d",
+                 instance, database_name, database, schema_name, table_name, min_fragmentation, min_page_count, page, page_size)
+    print(f"[TRACE 2] Calling _get_index_fragmentation_data with instance={instance}, database_name={database_name or database}, schema={schema_name}")
     items = _get_index_fragmentation_data(
         instance=instance,
         database_name=database_name or database,
         schema=schema_name,
     )
+    print(f"[TRACE 3] _get_index_fragmentation_data returned {len(items)} items")
+    logger.debug("[check_fragmentation] _get_index_fragmentation_data returned %d items", len(items))
     if table_name:
+        print(f"[TRACE 4] Filtering for table_name={table_name}")
+        logger.debug("[check_fragmentation] Filtering for table_name=%s", table_name)
         items = [i for i in items if i.get("table_name", "").lower() == table_name.lower()]
-    return _paginate_tool_result(items, page=page, page_size=page_size)
+        print(f"[TRACE 5] After filtering: {len(items)} items")
+        logger.debug("[check_fragmentation] After filtering: %d items", len(items))
+    print(f"[TRACE 6] Paginating with page={page}, page_size={page_size}")
+    logger.debug("[check_fragmentation] Paginating with page=%d, page_size=%d", page, page_size)
+    result = _paginate_tool_result(items, page=page, page_size=page_size)
+    print(f"[TRACE 7] Returning paginated result with {len(result.get('items', []))} items")
+    logger.debug("[check_fragmentation] Returning paginated result with %d items", len(result.get("items", [])))
+    return result
 
 
 def db_sql2019_db_sec_perf_metrics(
@@ -3915,37 +4114,160 @@ def db_sql2019_open_logical_model_viewer(
         return {"status": "error", "message": str(e)}
 
 
-def db_sql2019_analyze_logical_data_model(
+def _send_o365_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+) -> dict[str, Any]:
+    """Send HTML email via Office 365 using OAuth2 client credentials."""
+    if not SETTINGS.o365_email_enabled:
+        return {"status": "error", "message": "Office 365 email is not enabled"}
+    
+    if not all([SETTINGS.o365_client_id, SETTINGS.o365_client_secret, SETTINGS.o365_tenant_id]):
+        return {"status": "error", "message": "Office 365 credentials not configured"}
+    
+    # Validate recipient email
+    import re
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, to_email):
+        return {"status": "error", "message": "Invalid recipient email address"}
+    
+    try:
+        from O365 import Account
+        from O365.protocol import MSGraphProtocol
+        
+        # Authenticate with client credentials
+        credentials = (SETTINGS.o365_client_id, SETTINGS.o365_client_secret)
+        protocol = MSGraphProtocol(api_version='v2.0')
+        account = Account(credentials, protocol=protocol, tenant_id=SETTINGS.o365_tenant_id)
+        
+        if not account.authenticate(scopes=['https://graph.microsoft.com/.default']):
+            return {"status": "error", "message": "Failed to authenticate with Office 365"}
+        
+        mailbox = account.mailbox()
+        message = mailbox.new_message()
+        message.subject = subject
+        message.body = html_body
+        message.content_type = 'HTML'
+        message.to.add(to_email)
+        
+        # Set sender if configured
+        sender_email = SETTINGS.o365_sender_email or credentials[0]
+        try:
+            message.sender = sender_email
+        except AttributeError:
+            # Fallback for different O365 library versions
+            try:
+                message.from_email = sender_email
+            except AttributeError:
+                logger.warning(f"Could not set sender email to {sender_email}")
+        
+        message.send()
+        
+        # Redact email in logs with safer splitting
+        email_parts = to_email.split('@')
+        redacted_email = email_parts[0] + '@***' if len(email_parts) == 2 else '***@***'
+        logger.info(f"Email sent successfully to {redacted_email} with subject: {subject}")
+        return {"status": "success", "message": f"Email sent to {redacted_email}"}
+    except ImportError:
+        return {"status": "error", "message": "O365 library not installed"}
+    except Exception as e:
+        # Log full error for debugging but return generic message to user
+        logger.error(f"Error sending Office 365 email: {e}")
+        error_msg = "Failed to send email"
+        # Include specific error for authentication failures
+        if "authenticate" in str(e).lower():
+            error_msg = "Failed to authenticate with Office 365"
+        return {"status": "error", "message": error_msg}
+
+
+async def db_sql2019_analyze_logical_data_model(
     instance: int = 1,
     database_name: str | None = None,
     schema: str | None = None,
     view: Literal["summary", "standard", "full"] = "standard",
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
+    email_recipient: str | None = None,
+    progress: Any = None,
 ) -> dict[str, Any]:
     """Analyze database schema for logical data modeling issues.
     
-    Returns a URL to the logical data model viewer. The data is fetched
-    on-demand when the URL is visited, avoiding MCP timeouts.
+    If email_recipient is provided, sends HTML email via Office 365.
+    Otherwise, returns analysis data in JSON format.
+    
+    Note: When email_recipient is provided, the page and page_size parameters
+    are ignored. Email reports include all issues up to the report truncation limit
+    (50 issues per category).
+    
+    This tool supports background task execution for long-running analyses.
     """
     try:
         validate_instance(instance)
+        db_name = database_name or get_instance_config(instance)["db_name"]
         
-        # Normalize view (not currently used for data fetch, but ensures UI compatibility)
-        _normalize_erd_view(view)
-    db_name = database_name or get_instance_config(instance)["db_name"]
-        db_name_str = _normalize_db_name(db_name)
-        inst_cfg = get_instance_config(instance)
-
-        # Return URL immediately - data is fetched on-demand by the web endpoint
-        return {
-            "status": "success",
-            "message": f"Logical data model analysis ready for database '{db_name}'.",
-            "database": db_name,
-            "instance": instance,
-            "logical_model_url": f"{_public_base_url()}/logical-model?instance={instance}&database={db_name_str}&view={view}&page={page}&page_size={page_size}",
-            "url_hint": "The model viewer fetches data on-demand when visited. Use schema or table_name parameters to limit scope for faster results.",
-        }
+        if progress:
+            await progress.set_message(f"Analyzing database {db_name}...")
+            await progress.set_total(3)  # Analysis, HTML generation, Email (if applicable)
+        
+        # Fetch analysis data
+        analysis_data = await _analyze_logical_data_model_internal(instance, db_name, schema, view, progress)
+        
+        if progress:
+            await progress.increment()
+            await progress.set_message("Generating report...")
+        
+        # If email recipient provided, send email
+        if email_recipient:
+            # Note: page and page_size parameters are ignored for email reports
+            # Email reports include all issues up to the report truncation limit (50 per category)
+            # Generate HTML report with email-compatible rendering
+            html_report = _render_data_model_html(analysis_data, analysis_data.get("issues"), for_email=True)
+            
+            if progress:
+                await progress.increment()
+                await progress.set_message("Sending email...")
+            
+            # Send email
+            subject = f"ERD Analysis for {db_name}"
+            email_result = _send_o365_email(email_recipient, subject, html_report)
+            
+            if progress:
+                await progress.increment()
+            
+            if email_result.get("status") == "success":
+                # Redact email in return message
+                redacted_email = email_recipient.split('@')[0] + '@***' if '@' in email_recipient else '***@***'
+                return {
+                    "status": "success",
+                    "message": f"Analysis report sent to {redacted_email}",
+                    "database": db_name,
+                    "instance": instance,
+                    "email_sent": True,
+                    "email_recipient": redacted_email,
+                }
+            else:
+                # Email failed, return JSON analysis with error
+                return {
+                    "status": "partial_success",
+                    "message": f"Email failed: {email_result.get('message')}. Returning analysis in JSON format.",
+                    "database": db_name,
+                    "instance": instance,
+                    "email_sent": False,
+                    "email_error": email_result.get("message"),
+                    "analysis": analysis_data,
+                }
+        else:
+            if progress:
+                await progress.increment()
+            # No email recipient, return JSON analysis
+            return {
+                "status": "success",
+                "message": f"Logical data model analysis for database '{db_name}'.",
+                "database": db_name,
+                "instance": instance,
+                "analysis": analysis_data,
+            }
     except Exception as e:
         logger.error(f"Error in db_sql2019_analyze_logical_data_model: {e}")
         return {"status": "error", "message": str(e)}
@@ -4206,9 +4528,10 @@ def _register_dual_instance_tools():
             # Use a closure to capture function and instance correctly
             def make_wrapper(f, inst, registered_tool_name: str):
                 @wraps(f)
-                def wrapper(*args, **kwargs):
+                async def wrapper(*args, **kwargs):
                     # Capture original args keys before modification
                     original_args_keys = sorted(list(kwargs.keys()))
+                    original_kwargs = dict(kwargs)  # Copy for debug logging
                     # Remove instance from kwargs if it was passed by MCP (it shouldn't be, but just in case)
                     kwargs.pop("instance", None)
                     kwargs["instance"] = inst
@@ -4222,10 +4545,19 @@ def _register_dual_instance_tools():
                         "args_keys": original_args_keys,
                     }
                     function_name = f.__name__
+                    logger.debug("[tool_wrapper] %s called with original_kwargs=%s", registered_tool_name, original_kwargs)
+                    logger.debug("[tool_wrapper] Injected instance=%d, updated_kwargs=%s", inst, kwargs)
                     _log_tool_start(registered_tool_name, function_name, invocation_id, context)
                     try:
-                        result = f(*args, **kwargs)
+                        # Handle both sync and async functions
+                        import asyncio
+                        if inspect.iscoroutinefunction(f):
+                            result = await f(*args, **kwargs)
+                        else:
+                            # Run sync functions in thread pool to avoid blocking
+                            result = await asyncio.to_thread(f, *args, **kwargs)
                         elapsed_ms = int((time.perf_counter() - start) * 1000)
+                        logger.debug("[tool_wrapper] %s completed in %dms", registered_tool_name, elapsed_ms)
                         _log_tool_success(registered_tool_name, function_name, invocation_id, elapsed_ms, result)
                         return result
                     except Exception as exc:
@@ -4233,13 +4565,13 @@ def _register_dual_instance_tools():
                         _log_tool_error(registered_tool_name, function_name, invocation_id, elapsed_ms, exc)
                         raise
                 
-                # Remove 'instance' parameter from the exposed signature
-                # This prevents MCP clients from seeing/passing it
+                # Remove 'instance' and 'progress' parameters from the exposed signature
+                # This prevents MCP clients from seeing/passing them
                 try:
                     orig_sig = inspect.signature(f)
                     new_params = [
                         p for name, p in orig_sig.parameters.items() 
-                        if name != 'instance'
+                        if name not in ('instance', 'progress')
                     ]
                     wrapper.__signature__ = inspect.Signature(parameters=new_params)
                 except (ValueError, TypeError):
@@ -4248,7 +4580,12 @@ def _register_dual_instance_tools():
                 return wrapper
             
             wrapped = make_wrapper(func, instance, tool_name)
-            mcp.tool(name=tool_name)(wrapped)
+            # Add task support for long-running analyze_logical_data_model tool
+            if name == "analyze_logical_data_model":
+                from fastmcp.server.tasks import TaskConfig
+                mcp.tool(name=tool_name, task=TaskConfig(mode="optional"))(wrapped)
+            else:
+                mcp.tool(name=tool_name)(wrapped)
 
             # Backward-compatible aliases for clients that call by function-style names.
             # Example: db_sql2019_analyze_table_health / db_01_sql2019_analyze_table_health
@@ -4446,84 +4783,22 @@ def _generate_sessions_monitor_html_for_instance(instance: int) -> str:
 
 def db_sql2019_generate_sessions_dashboard(instance: int = 1) -> dict[str, Any]:
     """
-    Generate a dynamic Prefab UI dashboard for real-time session monitoring.
+    Generate a sessions monitoring dashboard URL.
     
-    The LLM writes Python code using Prefab components (charts, cards, tables)
-    to visualize active sessions, their status, and query performance metrics.
-    The dashboard updates dynamically as the user's analysis progresses.
-    
-    Returns a Prefab app definition that the browser renders in real-time as tokens are generated.
+    Returns a URL to the sessions monitor webpage. The data is fetched
+    on-demand when the URL is visited, avoiding MCP timeouts.
     """
     try:
-        if not GENERATIVE_UI_AVAILABLE:
-            return {"status": "error", "message": "GenerativeUI not available. Install with: pip install fastmcp[apps]"}
-        
-        # Fetch current sessions metadata for context
+        validate_instance(instance)
         inst_cfg = get_instance_config(instance)
-        conn = get_connection(instance=instance)
-        try:
-            cur = conn.cursor()
-            # Lightweight query for session counts
-            _execute_safe(cur, """
-                SELECT COUNT(*) as active_sessions
-                FROM sys.dm_exec_sessions 
-                WHERE session_id > 50
-            """)
-            row = cur.fetchone()
-            active_sessions = row[0] if row else 0
-        finally:
-            conn.close()
-        
-        # Return context for the LLM to build the dashboard
+
+        # Return URL immediately - data is fetched on-demand by the web endpoint
         return {
-            "status": "ready",
-            "tool_name": "generate_prefab_ui",
-            "instructions": """
-Generate a Prefab Python UI dashboard for SQL Server session monitoring.
-
-ABSOLUTE REQUIREMENTS - YOUR RESPONSE MUST FOLLOW THESE EXACTLY:
-1. Output ONLY valid Python code - no markdown, no backticks, no explanations
-2. NO ```python blocks, NO conversational text before or after code
-3. Start immediately with the import statements
-4. End with the last closing parenthesis - nothing after
-5. Use ONLY "with" syntax for containers (Column, Row, Card, CardContent)
-
-Available data variables (use these exact names):
-- database_name (string)
-- server (string)  
-- active_sessions (integer)
-- instance (integer)
-- timestamp (string)
-
-Required imports at the very top:
-from prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, Badge
-from prefab_ui.components.charts import BarChart, ChartSeries
-
-Complete working template - replace values with actual data:
-
-from prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, Badge
-from prefab_ui.components.charts import BarChart, ChartSeries
-
-with Column(gap=6, css_class="p-6"):
-    Heading(content="Session Monitor - " + database_name)
-    Text("Server: " + server + " | Instance: " + str(instance))
-    with Row(gap=4):
-        with Card():
-            with CardContent():
-                Heading(content="Active Sessions")
-                Text(str(active_sessions))
-    BarChart(
-        title="Session Overview",
-        series=[ChartSeries(name="Active", data=[active_sessions])]
-    )
-""",
-            "data": {
-                "database_name": str(inst_cfg.get("db_name", "master")),
-                "server": str(inst_cfg.get("db_server", "localhost")),
-                "active_sessions": active_sessions,
-                "instance": instance,
-                "timestamp": _now_utc_iso()
-            }
+            "status": "success",
+            "message": "Sessions monitor dashboard ready.",
+            "instance": instance,
+            "sessions_monitor_url": f"{_public_base_url()}/sessions-monitor?instance={instance}",
+            "url_hint": "The dashboard fetches data on-demand when visited. Use dedicated tools (list_sessions, kill_session) for detailed session management.",
         }
     except Exception as e:
         logger.error(f"Error in db_sql2019_generate_sessions_dashboard: {e}")
@@ -4671,7 +4946,7 @@ def _register_generative_dashboard_tools() -> None:
 
             def make_wrapper(f, inst, registered_tool_name: str):
                 @wraps(f)
-                def wrapper(*args, **kwargs):
+                async def wrapper(*args, **kwargs):
                     # Capture original args keys before modification
                     original_args_keys = sorted(list(kwargs.keys()))
                     kwargs.pop("instance", None)
@@ -4688,7 +4963,11 @@ def _register_generative_dashboard_tools() -> None:
                     function_name = f.__name__
                     _log_tool_start(registered_tool_name, function_name, invocation_id, context)
                     try:
-                        result = f(*args, **kwargs)
+                        import asyncio
+                        if inspect.iscoroutinefunction(f):
+                            result = await f(*args, **kwargs)
+                        else:
+                            result = await asyncio.to_thread(f, *args, **kwargs)
                         elapsed_ms = int((time.perf_counter() - start) * 1000)
                         _log_tool_success(registered_tool_name, function_name, invocation_id, elapsed_ms, result)
                         return result
@@ -4697,13 +4976,13 @@ def _register_generative_dashboard_tools() -> None:
                         _log_tool_error(registered_tool_name, function_name, invocation_id, elapsed_ms, exc)
                         raise
                 
-                # Remove 'instance' parameter from the exposed signature
-                # This prevents MCP clients from seeing/passing it
+                # Remove 'instance' and 'progress' parameters from the exposed signature
+                # This prevents MCP clients from seeing/passing them
                 try:
                     orig_sig = inspect.signature(f)
                     new_params = [
                         p for name, p in orig_sig.parameters.items() 
-                        if name != 'instance'
+                        if name not in ('instance', 'progress')
                     ]
                     wrapper.__signature__ = inspect.Signature(parameters=new_params)
                 except (ValueError, TypeError):
@@ -4751,9 +5030,12 @@ try:
     logical_model_app = FastMCPApp("Logical Data Model Viewer")
 
     @logical_model_app.tool()
-    def get_logical_model_data(instance: int, database: str, schema: str | None = None) -> dict[str, Any]:
+    def get_logical_model_data(instance: str, database: str, schema: str | None = None) -> dict[str, Any]:
         """Get logical data model analysis for the specified database."""
-        return _analyze_logical_data_model_internal(instance, database, schema)
+        # Type coercion for reactive proxy values
+        instance_int = int(instance) if instance else 1
+        schema_value = schema if schema else None
+        return _analyze_logical_data_model_internal(instance_int, database, schema_value)
 
     @logical_model_app.tool() 
     def get_available_databases(instance: int) -> list[str]:
@@ -4772,9 +5054,9 @@ try:
             logger.exception("get_available_databases failed for instance=%s", instance)
             return []
 
-    @logical_model_app.ui(title="Logical Data Model Viewer", description="Interactive ERD and schema analysis for SQL Server databases")
+    @logical_model_app.ui(title="Logical Data Model Viewer", description="Interactive schema analysis for SQL Server databases")
     def logical_model_viewer() -> PrefabApp:
-        """Interactive logical data model viewer with ERD visualization."""
+        """Interactive logical data model viewer focused on issues analysis."""
         with Column(gap=6, css_class="p-6") as view:
             Heading("Logical Data Model Viewer")
             
@@ -4831,7 +5113,7 @@ try:
             # Model Data Display
             if STATE.model_data:
                 with Column(gap=4):
-                    # Summary Cards
+                    # Summary Cards - Total Issues only
                     with Row(gap=4):
                         with Card():
                             with CardContent():
@@ -4839,29 +5121,13 @@ try:
                                 Text(STATE.model_data.get("database", "Unknown"))
                         with Card():
                             with CardContent():
-                                Heading("Entities")
-                                Text(str(STATE.model_data.get("summary", {}).get("entity_count", 0)))
-                        with Card():
-                            with CardContent():
-                                Heading("Relationships")
-                                Text(str(STATE.model_data.get("summary", {}).get("relationship_count", 0)))
-                        with Card():
-                            with CardContent():
-                                Heading("Issues")
+                                Heading("Total Issues")
                                 Text(str(STATE.model_data.get("summary", {}).get("total_issues", 0)))
 
-                    # ERD Visualization (placeholder for Mermaid)
-                    with Card():
-                        with CardContent():
-                            Heading("Entity Relationship Diagram")
-                            Text("ERD visualization will be rendered here using Mermaid.js", css_class="text-gray-500")
-                            # Future: Add Mermaid ERD rendering based on entities and relationships
-
-                    # Enhanced Analysis Display
+                    # Issue Category Breakdown
                     if STATE.model_data.get("issues"):
                         issues = STATE.model_data["issues"]
                         
-                        # Issue Category Breakdown
                         with Card():
                             with CardContent():
                                 Heading("Analysis Results by Category")
@@ -4879,10 +5145,10 @@ try:
                                                 Text(str(cat_count), css_class="text-2xl font-bold", style=f"color: {cat_color};")
                                                 Text(cat_name, css_class="text-sm text-gray-600")
 
-                        # Detailed Issues
+                        # Detailed Issues by Category (with pagination hint)
                         with Card():
                             with CardContent():
-                                Heading("Detailed Analysis")
+                                Heading("Detailed Analysis by Category")
                                 for category_name, category_key in [
                                     ("Missing Relationships", "missing_relationships"),
                                     ("Datatype Mismatches", "datatype_mismatches"),
@@ -4894,8 +5160,9 @@ try:
                                 ]:
                                     cat_issues = issues.get(category_key, [])
                                     if cat_issues:
-                                        Text(f"{category_name} ({len(cat_issues)})", css_class="font-semibold mt-4")
-                                        for issue in cat_issues[:3]:
+                                        Text(f"{category_name} ({len(cat_issues)} issues)", css_class="font-semibold mt-4 mb-2")
+                                        # Show first 5 issues as preview
+                                        for issue in cat_issues[:5]:
                                             severity = issue.get("severity", "Low")
                                             severity_color = {"High": "#dc2626", "Medium": "#ea580c", "Low": "#ca8a04"}.get(severity, "#64748b")
                                             with Row(gap=2, align="start"):
@@ -4905,8 +5172,8 @@ try:
                                                 Text(f"Impact: {issue.get('impact')}", css_class="text-xs text-gray-500 ml-4")
                                             if issue.get("recommendation"):
                                                 Text(f"Fix: {issue.get('recommendation')}", css_class="text-xs text-blue-600 ml-4")
-                                        if len(cat_issues) > 3:
-                                            Text(f"... and {len(cat_issues) - 3} more issues", css_class="text-xs text-gray-400 ml-4")
+                                        if len(cat_issues) > 5:
+                                            Text(f"... and {len(cat_issues) - 5} more issues (view full report for pagination)", css_class="text-xs text-gray-400 ml-4 mt-2")
                     else:
                         Text("No schema issues detected - data model appears well-structured!", css_class="text-green-600")
             else:

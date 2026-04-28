@@ -1,0 +1,1 @@
+This image contains a test artifact for Docker Hub push.

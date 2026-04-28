@@ -271,12 +271,60 @@ Example 5: Data model analysis
 }
 ```
 
-Example 6: Generative sessions dashboard
+Example 5b: Data model analysis with email delivery
+
+```json
+{
+  "tool": "db_01_analyze_logical_data_model",
+  "args": {
+    "database_name": "USGISPRO_800",
+    "schema": "dbo",
+    "view": "summary",
+    "email_recipient": "recipient@example.com"
+  }
+}
+```
+
+When `email_recipient` is provided, the analysis report is sent as an HTML email via Office 365. If email sending fails, the analysis is returned in JSON format. Without `email_recipient`, the tool returns the analysis in JSON format directly.
+
+**Background Task Support**: The `analyze_logical_data_model` tool supports background task execution for long-running analyses on large databases. When run as a background task, the tool returns a task ID immediately and provides progress updates. To use background mode, the MCP client must request task execution. The tool will run asynchronously and report progress through stages: database connection, analysis, report generation, and email sending (if applicable).
+
+Example 5c: Data model analysis with background task (if supported by MCP client)
+
+```json
+{
+  "tool": "db_01_analyze_logical_data_model",
+  "args": {
+    "database_name": "USGISPRO_800",
+    "schema": "dbo",
+    "view": "full"
+  },
+  "options": {
+    "task": true
+  }
+}
+```
+
+When run as a background task, the client receives a task ID and can poll for results. Progress is reported at key stages of the analysis process.
+
+Example 6: Sessions monitor dashboard (returns URL)
 
 ```json
 {
   "tool": "db_01_generate_sessions_dashboard",
   "args": {}
+}
+```
+
+Returns a URL to the sessions monitor webpage. The data is fetched on-demand when the URL is visited, avoiding MCP timeouts. Example response:
+
+```json
+{
+  "status": "success",
+  "message": "Sessions monitor dashboard ready.",
+  "instance": 1,
+  "sessions_monitor_url": "http://localhost:8000/sessions-monitor?instance=1",
+  "url_hint": "The dashboard fetches data on-demand when visited. Use dedicated tools (list_sessions, kill_session) for detailed session management."
 }
 ```
 
@@ -330,13 +378,13 @@ All suffixes below are available as both `db_01_<suffix>` and `db_02_<suffix>` w
 - `alter_object`
 - `drop_object`
 
-### 7.2 Generative dashboard tool suffixes
+### 7.2 Dashboard tool suffixes
 
 These are registered separately and available as both `db_01_<suffix>` and `db_02_<suffix>`:
 
-- `generate_sessions_dashboard`
-- `generate_model_diagram`
-- `generate_performance_dashboard`
+- `generate_sessions_dashboard` - Returns a URL to the sessions monitor webpage (data fetched on-demand)
+- `generate_model_diagram` - Generates a Prefab UI diagram for the logical data model (requires GenerativeUI)
+- `generate_performance_dashboard` - Returns a URL to the performance dashboard webpage (data fetched on-demand)
 
 ## 8. Tool Family Intent Map
 
@@ -392,6 +440,26 @@ Write safeguards enforced at startup:
 - `MCP_LOG_LEVEL`
 - `MCP_LOG_FILE`
 - `MCP_TOOL_EXECUTION_LOG_ENABLED`
+
+### 9.5 Office 365 email configuration
+
+The `analyze_logical_data_model` tool can optionally send analysis reports as HTML emails via Office 365.
+
+- `MCP_O365_EMAIL_ENABLED` (default `false`) - Enable/disable email sending
+- `MCP_O365_CLIENT_ID` - Azure AD app client ID for OAuth2 authentication
+- `MCP_O365_CLIENT_SECRET` - Azure AD app client secret for OAuth2 authentication
+- `MCP_O365_TENANT_ID` - Azure AD tenant ID
+- `MCP_O365_SENDER_EMAIL` (default `notification@example.com`) - Sender email address
+
+**Setup instructions:**
+
+1. Register an Azure AD application with `Mail.Send` permission
+2. Set `MCP_O365_EMAIL_ENABLED=true` in your `.env` file
+3. Configure `MCP_O365_CLIENT_ID` with your Azure AD app client ID
+4. Configure `MCP_O365_CLIENT_SECRET` with your Azure AD app client secret
+5. Configure `MCP_O365_TENANT_ID` with your Azure AD tenant ID
+6. Optionally customize `MCP_O365_SENDER_EMAIL` if different from the app's default sender
+7. Use the `email_recipient` parameter when calling `analyze_logical_data_model` to send the report via email
 
 ## 10. Scope and Limitations
 
