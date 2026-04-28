@@ -604,7 +604,7 @@ SETTINGS = _load_settings()
 
 # Per-instance pyodbc connect locks — prevents Instance 1 direct connections from
 # blocking Instance 2 (and vice-versa) when pools are exhausted or unavailable.
-_PYODBC_CONNECT_LOCKS: dict[int, Lock | None] = {
+_PYODBC_CONNECT_LOCKS: dict[int, Union[Lock, None]] = {
     1: Lock() if sys.platform == "win32" else None,
     2: Lock() if sys.platform == "win32" else None,
 }
