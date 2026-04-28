@@ -32,9 +32,12 @@ jobs:
       - name: Tests
         shell: bash
         env:
-          DB_SERVER: localhost
-          DB_USER: sa
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_01_SERVER: localhost
+          DB_01_USER: sa
+          DB_01_PASSWORD: ${{ secrets.DB_PASSWORD || 'Placeholder1!' }}
+          DB_02_SERVER: localhost
+          DB_02_USER: sa
+          DB_02_PASSWORD: ${{ secrets.DB_02_PASSWORD || 'Placeholder2!' }}
         run: |
           if [ -d tests ] && [ -n "$(find tests -type f -name '*.py' -print -quit)" ]; then
             PYTHONPATH=. pytest -q
