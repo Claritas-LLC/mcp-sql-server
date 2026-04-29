@@ -2197,13 +2197,14 @@ def _get_index_fragmentation_data(
     instance: int,
     database_name: str | None,
     schema: str | None = None,
+    table_name: str | None = None,
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    print(f"[TRACE 8] _get_index_fragmentation_data called with instance={instance}, database_name={database_name}, schema={schema}, min_fragmentation={min_fragmentation}, min_page_count={min_page_count}, limit={limit}")
-    logger.debug("[get_index_fragmentation] Called with instance=%d, database_name=%s, schema=%s, min_fragmentation=%s, min_page_count=%d, limit=%d",
-                 instance, database_name, schema, min_fragmentation, min_page_count, limit)
+    print(f"[TRACE 8] _get_index_fragmentation_data called with instance={instance}, database_name={database_name}, schema={schema}, table={table_name}, min_frag={min_fragmentation}, min_pages={min_page_count}, limit={limit}")
+    logger.debug("[get_index_fragmentation] Called with instance=%d, database_name=%s, schema=%s, table=%s, min_fragmentation=%s, min_page_count=%d, limit=%d",
+                 instance, database_name, schema, table_name, min_fragmentation, min_page_count, limit)
     validate_instance(instance)
     print(f"[TRACE 9] Instance {instance} validated")
     logger.debug("[get_index_fragmentation] Instance %d validated", instance)
@@ -2218,7 +2219,15 @@ def _get_index_fragmentation_data(
         # Set a shorter statement timeout for fragmentation queries (30 seconds)
         _set_statement_timeout(conn, 30000)
         cur = conn.cursor()
-        sql = """
+        # If table_name is provided, use OBJECT_ID to limit the DMV scan scope.
+        # Format: dm_db_index_physical_stats(DB_ID(), object_id, index_id, partition_number, mode)
+        object_id_val = "NULL"
+        if table_name:
+            # We must be careful with schema qualification for OBJECT_ID
+            full_table_name = f"{schema}.{table_name}" if schema else table_name
+            object_id_val = f"OBJECT_ID('{full_table_name}')"
+
+        sql = f"""
         SELECT TOP (?)
             s.name AS schema_name,
             t.name AS table_name,
@@ -2226,7 +2235,7 @@ def _get_index_fragmentation_data(
             ips.avg_fragmentation_in_percent,
             ips.page_count,
             i.type_desc AS index_type
-        FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ips
+        FROM sys.dm_db_index_physical_stats(DB_ID(), {object_id_val}, NULL, NULL, 'LIMITED') ips
         JOIN sys.indexes i
             ON ips.object_id = i.object_id AND ips.index_id = i.index_id
         JOIN sys.tables t ON i.object_id = t.object_id
@@ -2262,6 +2271,7 @@ def db_sql2019_get_index_fragmentation(
     database_name: str | None = None,
     database: str | None = None,
     schema: str | None = None,
+    table_name: str | None = None,
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
     limit: int = 50,
@@ -2273,6 +2283,7 @@ def db_sql2019_get_index_fragmentation(
         instance=instance,
         database_name=database_name or database,
         schema=schema,
+        table_name=table_name,
         min_fragmentation=min_fragmentation,
         min_page_count=min_page_count,
         limit=limit,
@@ -4000,14 +4011,20 @@ def db_sql2019_check_fragmentation(
     print(f"[TRACE 1] db_sql2019_check_fragmentation called with instance={instance}, database_name={database_name}, database={database}, schema_name={schema_name}, table_name={table_name}, min_fragmentation={min_fragmentation}, min_page_count={min_page_count}, page={page}, page_size={page_size}")
     logger.debug("[check_fragmentation] db_sql2019_check_fragmentation called with instance=%d, database_name=%s, database=%s, schema_name=%s, table_name=%s, min_fragmentation=%s, min_page_count=%s, page=%d, page_size=%d",
                  instance, database_name, database, schema_name, table_name, min_fragmentation, min_page_count, page, page_size)
-    print(f"[TRACE 2] Calling _get_index_fragmentation_data with instance={instance}, database_name={database_name or database}, schema={schema_name}")
+    print(f"[TRACE 2] Calling _get_index_fragmentation_data with instance={instance}, database_name={database_name or database}, schema={schema_name}, table={table_name}, min_frag={min_fragmentation}, min_pages={min_page_count}")
     items = _get_index_fragmentation_data(
         instance=instance,
         database_name=database_name or database,
         schema=schema_name,
+        table_name=table_name,
+        min_fragmentation=min_fragmentation,
+        min_page_count=min_page_count,
     )
     print(f"[TRACE 3] _get_index_fragmentation_data returned {len(items)} items")
     logger.debug("[check_fragmentation] _get_index_fragmentation_data returned %d items", len(items))
+    
+    # Filtering by table_name is now handled by _get_index_fragmentation_data's OBJECT_ID logic,
+    # but we keep this for extra safety if items contains multiple table matches (unlikely but possible).
     if table_name:
         print(f"[TRACE 4] Filtering for table_name={table_name}")
         logger.debug("[check_fragmentation] Filtering for table_name=%s", table_name)
