@@ -25,17 +25,7 @@ The `list_registered_tools` tool provides a dynamic, up-to-date list of all avai
 **Invoke via MCP (Text output):**
 ```json
 {
-  "tool": "db_02_list_registered_tools",
-  "args": { "as_json": false }
-}
-```
 
-**Parameters:**
-- `as_json` (bool, optional): If true, returns structured JSON; if false or omitted, returns human-readable text
-
-**Note:** The tool is automatically registered for both instances:
-- `db_01_list_registered_tools` - Lists tools for instance 1
-- `db_02_list_registered_tools` - Lists tools for instance 2
 
 ### 7.3 Example Output
 
@@ -117,20 +107,17 @@ The server supports up to two configured SQL Server instances:
 - Instance 1: configured with `DB_01_*`
 - Instance 2: configured with `DB_02_*`
 
-If only one instance is configured, only `db_01_*` tools are available.
 
 ### 2.2 Canonical tool names
 
 Use canonical names:
 
-- `db_01_<tool_suffix>` for instance 1
-- `db_02_<tool_suffix>` for instance 2
+- `db_sql2019_<tool_suffix>` for the single instance
 
 Examples:
 
-- `db_01_ping`
-- `db_01_list_tables`
-- `db_02_show_top_queries`
+- `db_sql2019_ping`
+- `db_sql2019_list_tables`
 
 ## 3. Prerequisites
 
@@ -328,11 +315,12 @@ Returns a URL to the sessions monitor webpage. The data is fetched on-demand whe
 }
 ```
 
+
 ## 7. Tool Catalog
 
-### 7.1 Canonical tool suffixes from dual-instance registration
+### 7.1 Canonical tool suffixes
 
-All suffixes below are available as both `db_01_<suffix>` and `db_02_<suffix>` when both instances are configured.
+All suffixes below are available as `db_sql2019_<suffix>` for the single instance.
 
 #### Introspection and discovery
 
@@ -379,8 +367,6 @@ All suffixes below are available as both `db_01_<suffix>` and `db_02_<suffix>` w
 - `drop_object`
 
 ### 7.2 Dashboard tool suffixes
-
-These are registered separately and available as both `db_01_<suffix>` and `db_02_<suffix>`:
 
 - `generate_sessions_dashboard` - Returns a URL to the sessions monitor webpage (data fetched on-demand)
 - `generate_model_diagram` - Generates a Prefab UI diagram for the logical data model (requires GenerativeUI)

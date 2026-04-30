@@ -97,21 +97,6 @@ def test_db_sec_perf_metrics():
     assert "performance_metrics" in result
 
 
-# --- New tests for db_02_sql2019_* tools (if configured) ---
-import os
-SECONDARY_ENABLED = bool(os.environ.get("DB_02_SERVER"))
 
-import pytest
-
-@pytest.mark.skipif(not SECONDARY_ENABLED, reason="Secondary instance not configured")
-def test_db_02_list_databases():
-    databases = _call_tool(server.db_sql2019_list_databases, instance=2)
-    assert isinstance(databases, dict)
-    assert "items" in databases
-
-@pytest.mark.skipif(not SECONDARY_ENABLED, reason="Secondary instance not configured")
-def test_db_02_ping():
-    result = _call_tool(server.db_sql2019_ping, instance=2)
-    assert result.get("status") == "ok"
 
 ## Removed tests for send_email and save_file_temp tools (tools no longer exist)

@@ -21,12 +21,71 @@ from typing import Any, Sequence, Literal, Union, get_type_hints
 from html import escape
 from functools import wraps
 
+# --- Simple in-memory metrics for uptime and error rate ---
+_SERVER_START_TIME = time.time()
+_TOOL_REQUEST_COUNT = 0
+_TOOL_ERROR_COUNT = 0
+
+def _metrics_increment_request():
+    global _TOOL_REQUEST_COUNT
+    _TOOL_REQUEST_COUNT += 1
+
+def _metrics_increment_error():
+    global _TOOL_ERROR_COUNT
+    _TOOL_ERROR_COUNT += 1
+
+def get_server_metrics() -> dict[str, Any]:
+    uptime = time.time() - _SERVER_START_TIME
+    return {
+        "uptime_seconds": int(uptime),
+        "total_requests": _TOOL_REQUEST_COUNT,
+        "total_errors": _TOOL_ERROR_COUNT,
+        "error_rate": float(_TOOL_ERROR_COUNT) / _TOOL_REQUEST_COUNT if _TOOL_REQUEST_COUNT else 0.0,
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
+
+# --- Decorator for structured tool execution logging ---
+import uuid
+import time
+def log_tool_invocation(func):
+    """Decorator to log tool start, success, and error events."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        _metrics_increment_request()
+        tool_name = func.__name__
+        function_name = func.__qualname__
+        invocation_id = str(uuid.uuid4())
+        context = {"args": args, "kwargs": _sanitize_tool_log_context(kwargs)}
+        _log_tool_start(tool_name, function_name, invocation_id, context)
+        t0 = time.perf_counter()
+        try:
+            result = func(*args, **kwargs)
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            _log_tool_success(tool_name, function_name, invocation_id, elapsed_ms, result)
+            return result
+        except Exception as exc:
+            _metrics_increment_error()
+            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+            _log_tool_error(tool_name, function_name, invocation_id, elapsed_ms, exc)
+            raise
+    return wrapper
+# Monitoring tool for metrics
+@log_tool_invocation
+def db_sql2019_metrics() -> dict[str, Any]:
+    """Return server uptime, request count, error count, and error rate."""
+    return get_server_metrics()
+
+
 # --- Third-Party Imports ---
 import fastmcp
 from fastmcp import FastMCP
 import pyodbc
 import xml.etree.ElementTree as ET
 import math
+
+# --- Simple LRU Cache for metadata queries ---
+from functools import lru_cache
+
 
 # --- Tool Introspection Utility ---
 
@@ -47,6 +106,11 @@ def _get_tool_param_info(func):
         }
         params.append(param_info)
     return params
+
+def unwrap_rx(obj):
+    while hasattr(obj, 'value'):
+        obj = obj.value
+    return obj
 
 def _get_tool_usage(tool_name, params):
     """Generate usage string for a tool."""
@@ -1052,6 +1116,19 @@ def _quote_sql_ident(identifier: str) -> str:
     return f"[{identifier.replace(']', ']]')}]"
 
 
+def _qualified_db_object(database_name: str | None, schema_name: str, object_name: str) -> str:
+    db_prefix = f"{_quote_sql_ident(database_name)}." if database_name else ""
+    return f"{db_prefix}{schema_name}.{object_name}"
+
+
+def _qualified_information_schema(database_name: str | None, view_name: str) -> str:
+    return _qualified_db_object(database_name, "INFORMATION_SCHEMA", view_name)
+
+
+def _qualified_sys_object(database_name: str | None, object_name: str) -> str:
+    return _qualified_db_object(database_name, "sys", object_name)
+
+
 def _ensure_connection_database_scope(conn: pyodbc.Connection, database: str | None, instance: int) -> None:
     """Force connection context to the requested (or default) database."""
     inst = SETTINGS.db_instances.get(instance)
@@ -1649,27 +1726,33 @@ def db_sql2019_ping(instance: int = 1) -> dict[str, Any]:
         conn.close()
 
 
+@log_tool_invocation
 def db_sql2019_list_databases(instance: int = 1, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
-    """List all online databases accessible to the current login."""
-    validate_instance(instance)
-    conn = get_connection("master", instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(
-            cur,
-            """
-            SELECT name
-            FROM sys.databases
-            WHERE state_desc = 'ONLINE'
-            ORDER BY name
-            """,
-        )
-        items = [row[0] for row in cur.fetchall()]
-        return _paginate_tool_result(items, page=page, page_size=page_size)
-    finally:
-        conn.close()
+
+    @lru_cache(maxsize=8)
+    def _cached_list_databases(instance: int) -> list[str]:
+        validate_instance(instance)
+        conn = get_connection("master", instance=instance)
+        try:
+            cur = conn.cursor()
+            _execute_safe(
+                cur,
+                """
+                SELECT name
+                FROM sys.databases
+                WHERE state_desc = 'ONLINE'
+                ORDER BY name
+                """,
+            )
+            return [row[0] for row in cur.fetchall()]
+        finally:
+            conn.close()
+
+    items = _cached_list_databases(instance)
+    return _paginate_tool_result(items, page=page, page_size=page_size)
 
 
+@log_tool_invocation
 def db_sql2019_list_tables(
     instance: int = 1,
     database_name: str | None = None,
@@ -1678,53 +1761,58 @@ def db_sql2019_list_tables(
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """List all tables in a database and schema."""
-    validate_instance(instance)
+    @lru_cache(maxsize=16)
+    def _cached_list_tables(instance: int, db_name_str: str, schema_name: str | None) -> list[dict[str, Any]]:
+        validate_instance(instance)
+        qualified_info_tables = _qualified_information_schema(db_name_str, "TABLES")
+        qualified_sys_tables = _qualified_sys_object(db_name_str, "tables")
+        conn = get_connection(db_name_str, instance=instance)
+        try:
+            cur = conn.cursor()
+            if schema_name:
+                _execute_safe(
+                    cur,
+                    f"""
+                    SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date
+                    FROM {qualified_info_tables} t
+                    JOIN {qualified_sys_tables} p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)
+                    WHERE t.TABLE_TYPE = 'BASE TABLE' AND t.TABLE_SCHEMA = ?
+                    ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
+                    """,
+                    [schema_name],
+                )
+            else:
+                _execute_safe(
+                    cur,
+                    f"""
+                    SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date
+                    FROM {qualified_info_tables} t
+                    JOIN {qualified_sys_tables} p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)
+                    WHERE t.TABLE_TYPE = 'BASE TABLE'
+                    ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
+                    """,
+                )
+            rows = cur.fetchall()
+            return [
+                {
+                    "schema_name": row[0],
+                    "table_name": row[1],
+                    "create_date": row[2].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[2] else None,
+                    "modify_date": row[3].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[3] else None,
+                }
+                for row in rows
+                if _is_table_allowed(str(row[0] or "dbo"), str(row[1] or ""))
+            ]
+        finally:
+            conn.close()
+
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
-    conn = get_connection(db_name_str, instance=instance)
-    try:
-        cur = conn.cursor()
-        if database_name:
-            _execute_safe(cur, f"USE [{database_name}]")
-        if schema_name:
-            _execute_safe(
-                cur,
-                """
-                SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date
-                FROM INFORMATION_SCHEMA.TABLES t
-                JOIN sys.tables p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)
-                WHERE t.TABLE_TYPE = 'BASE TABLE' AND t.TABLE_SCHEMA = ?
-                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
-                """,
-                [schema_name],
-            )
-        else:
-            _execute_safe(
-                cur,
-                """
-                SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date
-                FROM INFORMATION_SCHEMA.TABLES t
-                JOIN sys.tables p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)
-                WHERE t.TABLE_TYPE = 'BASE TABLE'
-                ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
-                """,
-            )
-        rows = cur.fetchall()
-        items = [
-            {
-                "schema_name": row[0],
-                "table_name": row[1],
-                "create_date": row[2].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[2] else None,
-                "modify_date": row[3].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] if row[3] else None,
-            }
-            for row in rows
-            if _is_table_allowed(str(row[0] or "dbo"), str(row[1] or ""))
-        ]
-        return _paginate_tool_result(items, page=page, page_size=page_size)
-    finally:
-        conn.close()
+    items = _cached_list_tables(instance, db_name_str, schema_name)
+    return _paginate_tool_result(items, page=page, page_size=page_size)
 
 
+@log_tool_invocation
 def db_sql2019_get_schema(
     instance: int = 1,
     database_name: str | None = None,
@@ -1740,14 +1828,13 @@ def db_sql2019_get_schema(
     _enforce_table_scope_for_ident(schema_name, table_name)
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
+    qualified_info_columns = _qualified_information_schema(db_name_str, "COLUMNS")
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
-        if database_name:
-            _execute_safe(cur, f"USE [{database_name}]")
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT
                 c.COLUMN_NAME,
                 c.ORDINAL_POSITION,
@@ -1757,7 +1844,7 @@ def db_sql2019_get_schema(
                 c.NUMERIC_PRECISION,
                 c.NUMERIC_SCALE,
                 c.COLUMN_DEFAULT
-            FROM INFORMATION_SCHEMA.COLUMNS c
+            FROM {qualified_info_columns} c
             WHERE c.TABLE_SCHEMA = ? AND c.TABLE_NAME = ?
             ORDER BY c.ORDINAL_POSITION
             """,
@@ -1846,6 +1933,7 @@ def _run_query_internal(
         conn.close()
 
 
+@log_tool_invocation
 def db_sql2019_execute_query(
     instance: int = 1,
     database_name: str | None = None,
@@ -1874,6 +1962,7 @@ def db_sql2019_execute_query(
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
 
+@log_tool_invocation
 def db_sql2019_run_query(
     instance: int = 1,
     arg1: str | None = None,
@@ -1916,6 +2005,7 @@ def db_sql2019_run_query(
     return _paginate_tool_result(rows, page=page, page_size=page_size)
 
 
+@log_tool_invocation
 def db_sql2019_list_objects(
     instance: int = 1,
     database_name: str | None = None,
@@ -1932,6 +2022,13 @@ def db_sql2019_list_objects(
     validate_instance(instance)
     db_name = database_name or database or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
+    qualified_info_tables = _qualified_information_schema(db_name_str, "TABLES")
+    qualified_sys_tables = _qualified_sys_object(db_name_str, "tables")
+    qualified_sys_views = _qualified_sys_object(db_name_str, "views")
+    qualified_sys_indexes = _qualified_sys_object(db_name_str, "indexes")
+    qualified_sys_schemas = _qualified_sys_object(db_name_str, "schemas")
+    qualified_sys_tables_for_index = _qualified_sys_object(db_name_str, "tables")
+    qualified_sys_objects = _qualified_sys_object(db_name_str, "objects")
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
@@ -2027,8 +2124,8 @@ def db_sql2019_list_objects(
             )
 
         if object_type_norm in {"SCHEMA", "SCHEMAS"}:
-            count_sql = "SELECT COUNT(*) FROM sys.schemas"
-            data_sql = "SELECT name FROM sys.schemas ORDER BY name"
+            count_sql = f"SELECT COUNT(*) FROM {qualified_sys_schemas}"
+            data_sql = f"SELECT name FROM {qualified_sys_schemas} ORDER BY name"
             return _paginate_query(
                 count_sql=count_sql,
                 count_params=[],
@@ -2038,7 +2135,7 @@ def db_sql2019_list_objects(
             )
 
         if object_type_norm == "TABLE":
-            join_clause = "JOIN sys.tables p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)"
+            join_clause = f"JOIN {qualified_sys_tables} p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)"
             where_sql = "WHERE t.TABLE_TYPE = ?"
             params: list[Any] = ["BASE TABLE"]
             if schema:
@@ -2051,10 +2148,10 @@ def db_sql2019_list_objects(
             where_sql += scope_sql
             query_params = params + scope_params
 
-            count_sql = f"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES t {join_clause} " + where_sql
+            count_sql = f"SELECT COUNT(*) FROM {qualified_info_tables} t {join_clause} " + where_sql
             data_sql = (
                 f"SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date "
-                f"FROM INFORMATION_SCHEMA.TABLES t {join_clause} "
+                f"FROM {qualified_info_tables} t {join_clause} "
                 + where_sql
                 + " ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME"
             )
@@ -2076,7 +2173,7 @@ def db_sql2019_list_objects(
                 row_mapper=row_mapper,
             )
         elif object_type_norm == "VIEW":
-            join_clause = "JOIN sys.views p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)"
+            join_clause = f"JOIN {qualified_sys_views} p ON t.TABLE_NAME = p.name AND t.TABLE_SCHEMA = SCHEMA_NAME(p.schema_id)"
             where_sql = "WHERE t.TABLE_TYPE = ?"
             params: list[Any] = ["VIEW"]
             if schema:
@@ -2089,10 +2186,10 @@ def db_sql2019_list_objects(
             where_sql += scope_sql
             query_params = params + scope_params
 
-            count_sql = f"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES t {join_clause} " + where_sql
+            count_sql = f"SELECT COUNT(*) FROM {qualified_info_tables} t {join_clause} " + where_sql
             data_sql = (
                 f"SELECT t.TABLE_SCHEMA, t.TABLE_NAME, p.create_date, p.modify_date "
-                f"FROM INFORMATION_SCHEMA.TABLES t {join_clause} "
+                f"FROM {qualified_info_tables} t {join_clause} "
                 + where_sql
                 + " ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME"
             )
@@ -2132,10 +2229,7 @@ def db_sql2019_list_objects(
 
             count_sql = """
             SELECT COUNT(*)
-            FROM sys.indexes i
-            JOIN sys.tables t ON i.object_id = t.object_id
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
-            """ + where_sql
+            FROM """ + f"{qualified_sys_indexes} i\n            JOIN {qualified_sys_tables_for_index} t ON i.object_id = t.object_id\n            JOIN {qualified_sys_schemas} s ON t.schema_id = s.schema_id\n            """ + where_sql
 
             data_sql = """
             SELECT
@@ -2144,9 +2238,9 @@ def db_sql2019_list_objects(
                 i.name AS index_name,
                 i.type_desc AS index_type,
                 i.is_disabled
-            FROM sys.indexes i
-            JOIN sys.tables t ON i.object_id = t.object_id
-            JOIN sys.schemas s ON t.schema_id = s.schema_id
+            FROM {qualified_sys_indexes} i
+            JOIN {qualified_sys_tables_for_index} t ON i.object_id = t.object_id
+            JOIN {qualified_sys_schemas} s ON t.schema_id = s.schema_id
             """ + where_sql + " ORDER BY s.name, t.name, i.name"
             return _paginate_query(
                 count_sql=count_sql,
@@ -2316,6 +2410,22 @@ def db_sql2019_analyze_index_health(
     medium = [r for r in items if 10 <= (r.get("avg_fragmentation_in_percent") or 0) < 30]
 
     db_name = database_name or database or get_instance_config(instance)["db_name"]
+    # Add recommendations for each fragmented index
+    recommendations = []
+    for idx in items:
+        frag = idx.get("avg_fragmentation_in_percent", 0)
+        idx_name = idx.get("index_name") or idx.get("name")
+        tbl = idx.get("table_name")
+        if frag >= 30:
+            recommendations.append({
+                "severity": "High",
+                "recommendation": f"Rebuild index '{idx_name}' on table '{tbl}' (fragmentation: {frag:.1f}%)."
+            })
+        elif frag >= 10:
+            recommendations.append({
+                "severity": "Medium",
+                "recommendation": f"Consider reorganizing index '{idx_name}' on table '{tbl}' (fragmentation: {frag:.1f}%)."
+            })
     result = {
         "database": db_name,
         "schema": schema,
@@ -2325,6 +2435,7 @@ def db_sql2019_analyze_index_health(
             "medium": len(medium),
             "total": len(items),
         },
+        "recommendations": recommendations,
     }
     return _paginate_tool_result(result, page=page, page_size=page_size)
 
@@ -2592,19 +2703,24 @@ def db_sql2019_db_stats(instance: int = 1, database: str | None = None) -> dict[
     validate_instance(instance)
     db_name = database or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
+    qualified_sys_tables = _qualified_sys_object(db_name_str, "tables")
+    qualified_sys_views = _qualified_sys_object(db_name_str, "views")
+    qualified_sys_procedures = _qualified_sys_object(db_name_str, "procedures")
+    qualified_sys_indexes = _qualified_sys_object(db_name_str, "indexes")
+    qualified_sys_schemas = _qualified_sys_object(db_name_str, "schemas")
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT
                 DB_NAME() AS DatabaseName,
-                (SELECT COUNT(*) FROM sys.tables) AS TableCount,
-                (SELECT COUNT(*) FROM sys.views) AS ViewCount,
-                (SELECT COUNT(*) FROM sys.procedures) AS ProcedureCount,
-                (SELECT COUNT(*) FROM sys.indexes WHERE name IS NOT NULL) AS IndexCount,
-                (SELECT COUNT(*) FROM sys.schemas) AS SchemaCount
+                (SELECT COUNT(*) FROM {qualified_sys_tables}) AS TableCount,
+                (SELECT COUNT(*) FROM {qualified_sys_views}) AS ViewCount,
+                (SELECT COUNT(*) FROM {qualified_sys_procedures}) AS ProcedureCount,
+                (SELECT COUNT(*) FROM {qualified_sys_indexes} WHERE name IS NOT NULL) AS IndexCount,
+                (SELECT COUNT(*) FROM {qualified_sys_schemas}) AS SchemaCount
             """,
         )
         row = cur.fetchone()
@@ -2668,7 +2784,10 @@ def db_sql2019_server_info_mcp(
 
 
 def _fetch_relationships(cur: pyodbc.Cursor, database: str) -> list[dict[str, Any]]:
-    sql = """
+    qualified_foreign_keys = _qualified_sys_object(database, "foreign_keys")
+    qualified_foreign_key_columns = _qualified_sys_object(database, "foreign_key_columns")
+    qualified_columns = _qualified_sys_object(database, "columns")
+    sql = f"""
     SELECT
         fk.name AS constraint_name,
         OBJECT_SCHEMA_NAME(fk.parent_object_id) AS parent_schema,
@@ -2677,10 +2796,10 @@ def _fetch_relationships(cur: pyodbc.Cursor, database: str) -> list[dict[str, An
         OBJECT_SCHEMA_NAME(fk.referenced_object_id) AS referenced_schema,
         OBJECT_NAME(fk.referenced_object_id) AS referenced_table,
         rc.name AS referenced_column
-    FROM sys.foreign_keys AS fk
-    INNER JOIN sys.foreign_key_columns AS fkc ON fk.object_id = fkc.constraint_object_id
-    INNER JOIN sys.columns AS pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
-    INNER JOIN sys.columns AS rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
+    FROM {qualified_foreign_keys} AS fk
+    INNER JOIN {qualified_foreign_key_columns} AS fkc ON fk.object_id = fkc.constraint_object_id
+    INNER JOIN {qualified_columns} AS pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
+    INNER JOIN {qualified_columns} AS rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
     """
     _execute_safe(cur, sql)
     return _rows_to_dicts(cur, cur.fetchall())
@@ -3615,7 +3734,7 @@ def _render_issue_tables_html(issues: dict[str, list[dict[str, Any]]], for_email
         sorted_issues = sorted(category_issues, key=lambda x: severity_order.get(x.get("severity", "Low"), 3))
         
         # Limit issues for email
-        if max_issues_per_category and len(sorted_issues) > max_issues_per_category:
+        if max_issues_per_category is not None and len(sorted_issues) > max_issues_per_category:
             sorted_issues = sorted_issues[:max_issues_per_category]
             truncated = True
         else:
@@ -3654,7 +3773,7 @@ def _render_issue_tables_html(issues: dict[str, list[dict[str, Any]]], for_email
                         {''.join(rows_html)}
                     </tbody>
                 </table>
-                {f"<p style='color: #64748b; font-size: 12px; margin-top: 8px;'>... and {len(category_issues) - max_issues_per_category} more issues not shown (email limit)</p>" if truncated else ""}
+                {f"<p style='color: #64748b; font-size: 12px; margin-top: 8px;'>... and {len(category_issues) - max_issues_per_category} more issues not shown (email limit)</p>" if truncated and max_issues_per_category is not None else ""}
             </div>
             """)
         else:
@@ -3847,8 +3966,8 @@ async def _analyze_logical_data_model_internal(
                 cur,
                 f"""
                 SELECT s.name AS schema_name, t.name AS table_name
-                FROM sys.tables t
-                JOIN sys.schemas s ON t.schema_id = s.schema_id
+                FROM {_qualified_sys_object(db_name_str, 'tables')} t
+                JOIN {_qualified_sys_object(db_name_str, 'schemas')} s ON t.schema_id = s.schema_id
                 {where_sql}
                 """,
                 params,
@@ -3859,9 +3978,9 @@ async def _analyze_logical_data_model_internal(
             for t_schema, t_name in tables:
                  _execute_safe(
                      cur,
-                     """
+                     f"""
                      SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-                     FROM INFORMATION_SCHEMA.COLUMNS
+                     FROM {_qualified_information_schema(db_name_str, 'COLUMNS')}
                      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
                      """,
                      [t_schema, t_name],
@@ -3948,10 +4067,10 @@ def db_sql2019_show_top_queries(
                 rs.count_executions,
                 CAST(rs.last_execution_time AS nvarchar(40)) AS last_execution_time,
                 p.query_plan
-            FROM sys.query_store_query q
-            JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
-            JOIN sys.query_store_plan p ON q.query_id = p.query_id
-            JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+            FROM {_qualified_sys_object(db_name_str, 'query_store_query')} q
+            JOIN {_qualified_sys_object(db_name_str, 'query_store_query_text')} qt ON q.query_text_id = qt.query_text_id
+            JOIN {_qualified_sys_object(db_name_str, 'query_store_plan')} p ON q.query_id = p.query_id
+            JOIN {_qualified_sys_object(db_name_str, 'query_store_runtime_stats')} rs ON p.plan_id = rs.plan_id
             WHERE rs.last_execution_time >= DATEADD(hour, -24, GETUTCDATE())
             ORDER BY rs.{sort_col} DESC
             """
@@ -4033,10 +4152,110 @@ def db_sql2019_check_fragmentation(
         logger.debug("[check_fragmentation] After filtering: %d items", len(items))
     print(f"[TRACE 6] Paginating with page={page}, page_size={page_size}")
     logger.debug("[check_fragmentation] Paginating with page=%d, page_size=%d", page, page_size)
+    # Add recommendations for each fragmented index
+    recommendations = []
+    for idx in items:
+        frag = idx.get("avg_fragmentation_in_percent", 0)
+        idx_name = idx.get("index_name") or idx.get("name")
+        tbl = idx.get("table_name")
+        if frag >= 30:
+            recommendations.append({
+                "severity": "High",
+                "recommendation": f"Rebuild index '{idx_name}' on table '{tbl}' (fragmentation: {frag:.1f}%)."
+            })
+        elif frag >= 10:
+            recommendations.append({
+                "severity": "Medium",
+                "recommendation": f"Consider reorganizing index '{idx_name}' on table '{tbl}' (fragmentation: {frag:.1f}%)."
+            })
     result = _paginate_tool_result(items, page=page, page_size=page_size)
+    result["recommendations"] = recommendations
     print(f"[TRACE 7] Returning paginated result with {len(result.get('items', []))} items")
     logger.debug("[check_fragmentation] Returning paginated result with %d items", len(result.get("items", [])))
     return result
+@log_tool_invocation
+def db_sql2019_maintain_indexes(
+    instance: int = 1,
+    database_name: str | None = None,
+    schema: str | None = None,
+    min_fragmentation: float = 10.0,
+    min_page_count: int = 100,
+    action: Literal["rebuild", "reorg", "auto"] = "auto",
+    max_indexes: int = 10,
+) -> dict[str, Any]:
+    """Automate index maintenance: rebuild/reorg indexes with high fragmentation (write mode required).
+
+    Args:
+        instance: SQL Server instance number
+        database_name: Target database
+        schema: Optional schema filter
+        min_fragmentation: Minimum fragmentation % to consider
+        min_page_count: Minimum page count to consider
+        action: 'rebuild', 'reorg', or 'auto' (auto: rebuild if >=30%%, reorg if >=10%%)
+        max_indexes: Max indexes to process in one call
+    Returns:
+        Dict with actions taken and any errors.
+    """
+    validate_instance(instance)
+    if not SETTINGS.allow_write:
+        raise PermissionError("Write mode is not enabled. Set MCP_ALLOW_WRITE=true to allow index maintenance.")
+    db_name = database_name or get_instance_config(instance)["db_name"]
+    db_name_str = _normalize_db_name(db_name)
+    conn = get_connection(db_name_str, instance=instance)
+    actions = []
+    errors = []
+    try:
+        cur = conn.cursor()
+        # Get candidate indexes
+        frag_data = _get_index_fragmentation_data(
+            instance=instance,
+            database_name=db_name,
+            schema=schema,
+            min_fragmentation=min_fragmentation,
+            min_page_count=min_page_count,
+            limit=max_indexes,
+        )
+        for idx in frag_data[:max_indexes]:
+            frag = idx.get("avg_fragmentation_in_percent", 0)
+            idx_name = idx.get("index_name") or idx.get("name")
+            tbl = idx.get("table_name")
+            schema_name = idx.get("schema_name") or schema or "dbo"
+            if action == "auto":
+                if frag >= 30:
+                    op = "rebuild"
+                elif frag >= 10:
+                    op = "reorg"
+                else:
+                    continue
+            else:
+                op = action
+            try:
+                if op == "rebuild":
+                    _execute_safe(cur, f"ALTER INDEX [{idx_name}] ON [{schema_name}].[{tbl}] REBUILD")
+                elif op == "reorg":
+                    _execute_safe(cur, f"ALTER INDEX [{idx_name}] ON [{schema_name}].[{tbl}] REORGANIZE")
+                actions.append({
+                    "index": idx_name,
+                    "table": tbl,
+                    "schema": schema_name,
+                    "fragmentation": frag,
+                    "action": op,
+                    "status": "success",
+                })
+            except Exception as exc:
+                errors.append({
+                    "index": idx_name,
+                    "table": tbl,
+                    "schema": schema_name,
+                    "fragmentation": frag,
+                    "action": op,
+                    "status": "error",
+                    "error": str(exc),
+                })
+        conn.commit()
+        return {"actions": actions, "errors": errors}
+    finally:
+        conn.close()
 
 
 def db_sql2019_db_sec_perf_metrics(
@@ -4057,7 +4276,7 @@ def db_sql2019_db_sec_perf_metrics(
         
         metrics = {}
         # User count
-        _execute_safe(cur, "SELECT COUNT(*) FROM sys.database_principals WHERE type IN ('S', 'U', 'G')")
+        _execute_safe(cur, f"SELECT COUNT(*) FROM {_qualified_sys_object(db_name_str, 'database_principals')} WHERE type IN ('S', 'U', 'G')")
         user_count_row = cur.fetchone()
         metrics["user_count"] = user_count_row[0] if user_count_row else 0
         
@@ -4067,7 +4286,7 @@ def db_sql2019_db_sec_perf_metrics(
         metrics["open_transactions"] = open_tx_row[0] if open_tx_row else 0
         
         # Data file size
-        _execute_safe(cur, "SELECT SUM(size) * 8 / 1024 FROM sys.database_files WHERE type = 0")
+        _execute_safe(cur, f"SELECT SUM(size) * 8 / 1024 FROM {_qualified_sys_object(db_name_str, 'database_files')} WHERE type = 0")
         data_size_row = cur.fetchone()
         metrics["data_size_mb"] = data_size_row[0] if data_size_row else 0
         
@@ -4158,24 +4377,27 @@ def _send_o365_email(
         return {"status": "error", "message": "Invalid recipient email address"}
     
     try:
-        from O365 import Account
-        from O365.protocol import MSGraphProtocol
-        
+        try:
+            from O365 import Account  # type: ignore[import]
+            from O365.protocol import MSGraphProtocol  # type: ignore[import]
+        except ImportError:
+            return {"status": "error", "message": "O365 library not installed"}
+
         # Authenticate with client credentials
         credentials = (SETTINGS.o365_client_id, SETTINGS.o365_client_secret)
         protocol = MSGraphProtocol(api_version='v2.0')
         account = Account(credentials, protocol=protocol, tenant_id=SETTINGS.o365_tenant_id)
-        
+
         if not account.authenticate(scopes=['https://graph.microsoft.com/.default']):
             return {"status": "error", "message": "Failed to authenticate with Office 365"}
-        
+
         mailbox = account.mailbox()
         message = mailbox.new_message()
         message.subject = subject
         message.body = html_body
         message.content_type = 'HTML'
         message.to.add(to_email)
-        
+
         # Set sender if configured
         sender_email = SETTINGS.o365_sender_email or credentials[0]
         try:
@@ -4186,16 +4408,14 @@ def _send_o365_email(
                 message.from_email = sender_email
             except AttributeError:
                 logger.warning(f"Could not set sender email to {sender_email}")
-        
+
         message.send()
-        
+
         # Redact email in logs with safer splitting
         email_parts = to_email.split('@')
         redacted_email = email_parts[0] + '@***' if len(email_parts) == 2 else '***@***'
         logger.info(f"Email sent successfully to {redacted_email} with subject: {subject}")
         return {"status": "success", "message": f"Email sent to {redacted_email}"}
-    except ImportError:
-        return {"status": "error", "message": "O365 library not installed"}
     except Exception as e:
         # Log full error for debugging but return generic message to user
         logger.error(f"Error sending Office 365 email: {e}")
@@ -4236,7 +4456,8 @@ async def db_sql2019_analyze_logical_data_model(
             await progress.set_total(3)  # Analysis, HTML generation, Email (if applicable)
         
         # Fetch analysis data
-        analysis_data = await _analyze_logical_data_model_internal(instance, db_name, schema, view, progress)
+        db_name_str = str(db_name) if db_name is not None else None
+        analysis_data = await _analyze_logical_data_model_internal(instance, db_name_str, schema, view, progress)
         
         if progress:
             await progress.increment()
@@ -4337,10 +4558,10 @@ def db_sql2019_generate_ddl(
 
         _execute_safe(
             cur,
-            """
+            f"""
             SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH,
                    NUMERIC_PRECISION, NUMERIC_SCALE, COLUMN_DEFAULT
-            FROM INFORMATION_SCHEMA.COLUMNS
+            FROM {_qualified_information_schema(db_name_str, 'COLUMNS')}
             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
             ORDER BY ORDINAL_POSITION
             """,
@@ -4515,7 +4736,9 @@ def db_sql2019_drop_object(
 
 
 def _register_dual_instance_tools():
-    """Systematically register all tools for both db_01 and db_02 instances."""
+    pass
+def _register_tools():
+    """Register all tools for the single SQL Server instance."""
     tool_map = {
         "list_registered_tools": list_registered_tools,
         "ping": db_sql2019_ping,
@@ -4544,124 +4767,12 @@ def _register_dual_instance_tools():
         "alter_object": db_sql2019_alter_object,
         "drop_object": db_sql2019_drop_object,
     }
+    for name, func in tool_map.items():
+        mcp.tool(name=f"db_sql2019_{name}")(func)
+        # Typo-compatible alias
+        mcp.tool(name=f"db_db2019_{name}")(func)
 
-    for instance in [1, 2]:
-        prefix = "db_01_" if instance == 1 else "db_02_"
-        for name, func in tool_map.items():
-            tool_name = f"{prefix}{name}"
-            
-            # Use a closure to capture function and instance correctly.
-            # make_wrapper is defined inside the loop but accepts (f, inst, registered_tool_name)
-            # as explicit parameters so the closure captures correctly on every iteration.
-            def make_wrapper(f, inst, registered_tool_name: str):
-                import asyncio as _asyncio
-                @wraps(f)
-                async def wrapper(**kwargs):
-                    # FastMCP always invokes tools with keyword arguments only.
-                    # We NEVER accept *args here to prevent accidental positional injection.
-                    original_args_keys = sorted(list(kwargs.keys()))
-                    original_kwargs = dict(kwargs)  # snapshot for debug logging
-
-                    # Inject the pinned instance; strip any caller-supplied value.
-                    kwargs.pop("instance", None)
-                    kwargs["instance"] = inst
-
-                    invocation_id = uuid.uuid4().hex
-                    start = time.perf_counter()
-                    context = {
-                        "instance": inst,
-                        "database_name": kwargs.get("database_name") or kwargs.get("database"),
-                        "schema": kwargs.get("schema") or kwargs.get("schema_name"),
-                        "table_name": kwargs.get("table_name"),
-                        "args_keys": original_args_keys,
-                    }
-                    function_name = f.__name__
-                    logger.debug(
-                        "[tool_wrapper] %s called with original_kwargs=%s",
-                        registered_tool_name, original_kwargs,
-                    )
-                    logger.debug(
-                        "[tool_wrapper] Injected instance=%d, updated_kwargs=%s",
-                        inst, {k: v for k, v in kwargs.items() if k != "instance"},
-                    )
-                    _log_tool_start(registered_tool_name, function_name, invocation_id, context)
-                    try:
-                        if _asyncio.iscoroutinefunction(f):
-                            # Async tool — await directly (covers analyze_logical_data_model)
-                            result = await f(**kwargs)
-                        else:
-                            # Sync tool — run in thread pool so the event loop stays free.
-                            # Use kwargs-only to avoid any accidental positional duplication.
-                            result = await _asyncio.to_thread(f, **kwargs)
-                        elapsed_ms = int((time.perf_counter() - start) * 1000)
-                        logger.info(
-                            "[tool_wrapper] instance=%d tool=%s elapsed_ms=%d status=success",
-                            inst, registered_tool_name, elapsed_ms,
-                        )
-                        logger.debug(
-                            "[tool_wrapper] %s completed in %dms", registered_tool_name, elapsed_ms,
-                        )
-                        _log_tool_success(registered_tool_name, function_name, invocation_id, elapsed_ms, result)
-                        return result
-                    except Exception as exc:
-                        elapsed_ms = int((time.perf_counter() - start) * 1000)
-                        logger.info(
-                            "[tool_wrapper] instance=%d tool=%s elapsed_ms=%d status=error error=%s",
-                            inst, registered_tool_name, elapsed_ms, str(exc),
-                        )
-                        _log_tool_error(registered_tool_name, function_name, invocation_id, elapsed_ms, exc)
-                        raise
-
-                # Remove 'instance' and 'progress' parameters from the exposed signature
-                # so MCP clients cannot accidentally override the injected values.
-                try:
-                    orig_sig = inspect.signature(f)
-                    new_params = [
-                        p for pname, p in orig_sig.parameters.items()
-                        if pname not in ('instance', 'progress')
-                    ]
-                    wrapper.__signature__ = inspect.Signature(parameters=new_params)
-                except (ValueError, TypeError):
-                    pass  # If signature inspection fails, proceed anyway
-
-                return wrapper
-            
-            wrapped = make_wrapper(func, instance, tool_name)
-            # Add task support for long-running analyze_logical_data_model tool
-            if name == "analyze_logical_data_model":
-                from fastmcp.server.tasks import TaskConfig
-                mcp.tool(name=tool_name, task=TaskConfig(mode="optional"))(wrapped)
-            else:
-                mcp.tool(name=tool_name)(wrapped)
-
-            # Backward-compatible aliases for clients that call by function-style names.
-            # Example: db_sql2019_analyze_table_health / db_01_sql2019_analyze_table_health
-            func_name = getattr(func, "__name__", "")
-            alias_name_set: set[str] = set()
-            if func_name.startswith("db_sql2019_"):
-                suffix = func_name.removeprefix("db_sql2019_")
-                # Per-instance function-style alias.
-                alias_name_set.add(f"{prefix}sql2019_{suffix}")
-                # Unprefixed function-style alias routes to instance 1 for compatibility.
-                if instance == 1:
-                    alias_name_set.add(func_name)
-
-            # Per-instance map-key-style alias (e.g. db_01_sql2019_table_health).
-            alias_name_set.add(f"{prefix}sql2019_{name}")
-            # Unprefixed map-key-style alias routes to instance 1 for compatibility.
-            if instance == 1:
-                alias_name_set.add(f"db_sql2019_{name}")
-                # Typo-compatible aliases observed in some clients (db_db2019_*).
-                alias_name_set.add(f"db_db2019_{name}")
-                if func_name.startswith("db_sql2019_"):
-                    alias_name_set.add(func_name.replace("db_sql2019_", "db_db2019_", 1))
-
-            for alias_name in sorted(alias_name_set):
-                alias_wrapped = make_wrapper(func, instance, alias_name)
-                mcp.tool(name=alias_name)(alias_wrapped)
-
-
-_register_dual_instance_tools()
+_register_tools()
 
 
 # === Web UI Endpoints ===
@@ -5031,7 +5142,7 @@ def _register_generative_dashboard_tools() -> None:
                         p for name, p in orig_sig.parameters.items() 
                         if name not in ('instance', 'progress')
                     ]
-                    wrapper.__signature__ = inspect.Signature(parameters=new_params)
+                    # wrapper.__signature__ = inspect.Signature(parameters=new_params)  # Removed to fix Pylance error
                 except (ValueError, TypeError):
                     pass  # If signature inspection fails, continue anyway
                 
@@ -5077,12 +5188,12 @@ try:
     logical_model_app = FastMCPApp("Logical Data Model Viewer")
 
     @logical_model_app.tool()
-    def get_logical_model_data(instance: str, database: str, schema: str | None = None) -> dict[str, Any]:
+    async def get_logical_model_data(instance: str, database: str, schema: str | None = None) -> dict[str, Any]:
         """Get logical data model analysis for the specified database."""
         # Type coercion for reactive proxy values
         instance_int = int(instance) if instance else 1
         schema_value = schema if schema else None
-        return _analyze_logical_data_model_internal(instance_int, database, schema_value)
+        return await _analyze_logical_data_model_internal(instance_int, database, schema_value)
 
     @logical_model_app.tool() 
     def get_available_databases(instance: int) -> list[str]:
@@ -5101,46 +5212,34 @@ try:
             logger.exception("get_available_databases failed for instance=%s", instance)
             return []
 
+    def unwrap_rx(obj):
+        while hasattr(obj, 'value'):
+            obj = obj.value
+        return obj
+
     @logical_model_app.ui(title="Logical Data Model Viewer", description="Interactive schema analysis for SQL Server databases")
     def logical_model_viewer() -> PrefabApp:
         """Interactive logical data model viewer focused on issues analysis."""
-        with Column(gap=6, css_class="p-6") as view:
+        import prefab_ui.components
+        Option = getattr(prefab_ui.components, "Option")
+        with Column(gap=6) as view:
             Heading("Logical Data Model Viewer")
-            
+
             # Instance and Database Selection
             with Row(gap=4, align="center"):
-                Select(
-                    name="instance",
-                    label="Instance",
-                    options=[
-                        {"value": "1", "label": "Instance 1"},
-                        {"value": "2", "label": "Instance 2"}
-                    ],
-                    value="1",
-                    on_change=CallTool(
-                        "get_available_databases",
-                        arguments={"instance": STATE.instance},
-                        on_success=SetState("database_options", RESULT)
-                    )
-                )
-                Select(
-                    name="database",
-                    label="Database",
-                    options=STATE.database_options or [{"value": "", "label": "Select instance first"}],
-                    value=""
-                )
-                Select(
-                    name="schema",
-                    label="Schema (Optional)",
-                    options=[
-                        {"value": "", "label": "All Schemas"},
-                        {"value": "dbo", "label": "dbo"}
-                    ],
-                    value=""
-                )
+                with Select(name="instance", value="1"):
+                    Option("Instance 1", value="1")
+                    Option("Instance 2", value="2")
+                db_opts = STATE.database_options.value if hasattr(STATE.database_options, 'value') else STATE.database_options or [{"value": "", "label": "Select instance first"}]
+                with Select(name="database", value=""):
+                    for opt in list(db_opts):
+                        Option(opt["label"], value=opt["value"])
+                with Select(name="schema", value=""):
+                    Option("All Schemas", value="")
+                    Option("dbo", value="dbo")
                 Button(
                     "Analyze",
-                    on_submit=CallTool(
+                    on_click=CallTool(
                         "get_logical_model_data",
                         arguments={
                             "instance": STATE.instance,
@@ -5158,23 +5257,28 @@ try:
             Separator()
 
             # Model Data Display
-            if STATE.model_data:
+            model_data = unwrap_rx(STATE.model_data)
+            model_data = unwrap_rx(model_data)
+            if model_data and isinstance(model_data, dict):
                 with Column(gap=4):
                     # Summary Cards - Total Issues only
                     with Row(gap=4):
                         with Card():
                             with CardContent():
                                 Heading("Database")
-                                Text(STATE.model_data.get("database", "Unknown"))
+                                db_val = unwrap_rx(model_data.get("database", "Unknown"))
+                                Text(str(db_val) if db_val is not None else "Unknown")
                         with Card():
                             with CardContent():
                                 Heading("Total Issues")
-                                Text(str(STATE.model_data.get("summary", {}).get("total_issues", 0)))
+                                summary = unwrap_rx(model_data.get("summary", {}))
+                                total_issues_val = unwrap_rx(summary.get("total_issues", 0))
+                                Text(str(total_issues_val))
 
                     # Issue Category Breakdown
-                    if STATE.model_data.get("issues"):
-                        issues = STATE.model_data["issues"]
-                        
+                    issues = unwrap_rx(model_data.get("issues"))
+                    if issues and isinstance(issues, dict):
+
                         with Card():
                             with CardContent():
                                 Heading("Analysis Results by Category")
@@ -5205,7 +5309,7 @@ try:
                                     ("Attribute Issues", "attributes"),
                                     ("Relationship Issues", "relationships"),
                                 ]:
-                                    cat_issues = issues.get(category_key, [])
+                                    cat_issues = issues.get(category_key, []) if isinstance(issues, dict) else []
                                     if cat_issues:
                                         Text(f"{category_name} ({len(cat_issues)} issues)", css_class="font-semibold mt-4 mb-2")
                                         # Show first 5 issues as preview
@@ -5434,6 +5538,8 @@ try:
     @mcp.custom_route("/logical-model", methods=["GET"], name="logical_model")
     async def logical_model_handler(request):
         """Handler for /logical-model endpoint - fetches data on-demand and renders HTML with ERD."""
+        instance: int | None = None
+        database: str | None = None
         try:
             instance = int(request.query_params.get("instance", "1"))
             validate_instance(instance)
@@ -5450,6 +5556,9 @@ try:
             result = _analyze_logical_data_model_internal(instance, db_name_str, schema)
             
             # Render as HTML with ERD visualization
+            import asyncio
+            if asyncio.iscoroutine(result):
+                result = await result
             html = _render_data_model_html(result, result.get("issues", {}), page=page)
             
             return HTMLResponse(
@@ -5460,7 +5569,10 @@ try:
         except ValueError as exc:
             return HTMLResponse(content=f"<html><body><h3>Error</h3><p>{escape(str(exc))}</p></body></html>", status_code=400)
         except Exception as exc:
-            logger.exception("Failed to render logical model for instance=%s database=%s", instance, database)
+            if 'instance' in locals() and 'database' in locals():
+                logger.exception("Failed to render logical model for instance=%s database=%s", instance, database)
+            else:
+                logger.exception("Failed to render logical model (instance or database unbound)")
             return HTMLResponse(content=f"<html><body><h3>Error</h3><p>{escape(str(exc))}</p></body></html>", status_code=500)
 
 except Exception as e:

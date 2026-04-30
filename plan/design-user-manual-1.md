@@ -27,7 +27,7 @@ This plan defines deterministic steps to produce a complete user manual that doc
 - **OPS-001**: Tool inventory source of truth must be `tool_map` in `_register_dual_instance_tools` and `_register_generative_dashboard_tools` in `mcp_sqlserver/server.py`.
 - **CON-001**: Do not alter server runtime behavior; documentation-only changes for this work item.
 - **CON-002**: Avoid documenting aliases as primary usage; aliases can be listed in an appendix as compatibility-only names.
-- **GUD-001**: Use canonical tool names (`db_01_*`, `db_02_*`) in all main examples.
+-- **GUD-001**: Use canonical tool names (`db_sql2019_*`) in all main examples.
 - **PAT-001**: Structure examples as copy/paste-ready blocks with deterministic input and expected output fields.
 
 ## 2. Implementation Steps
@@ -50,10 +50,10 @@ This plan defines deterministic steps to produce a complete user manual that doc
 | Task | Description | Completed | Date |
 | -------- | --------------------- | --------- | ---- |
 | TASK-005 | Create `docs/users-manual.md` with sections: Overview, Architecture, Prerequisites, Setup, Running Modes, MCP Tool Invocation, Tool Catalog, Scope & Limitations, Troubleshooting, FAQ. | ✅ | 2026-04-15 |
-| TASK-006 | Add “How to issue tools” with canonical naming rules: `db_01_<tool>` for instance 1 and `db_02_<tool>` for instance 2; include at least 6 concrete examples. | ✅ | 2026-04-15 |
+| TASK-006 | Add “How to issue tools” with canonical naming rules: `db_sql2019_<tool>` for the single instance; include at least 6 concrete examples. | ✅ | 2026-04-15 |
 | TASK-007 | Add transport usage guidance for `MCP_TRANSPORT=http|sse|stdio` and include endpoint examples for HTTP/SSE clients where applicable. | ✅ | 2026-04-15 |
 | TASK-008 | Add a table mapping each tool family to intent: discovery, query, performance, security, data model, admin/write, generative dashboards. | ✅ | 2026-04-15 |
-| TASK-009 | Add compatibility appendix listing alias patterns (`db_sql2019_*`, `db_db2019_*`, `db_01_sql2019_*`, `db_02_sql2019_*`) with warning that canonical names should be preferred. | ✅ | 2026-04-15 |
+| TASK-009 | Add compatibility appendix listing alias patterns (`db_sql2019_*`, `db_db2019_*`) with warning that canonical names should be preferred. | ✅ | 2026-04-15 |
 
 ### Implementation Phase 3
 

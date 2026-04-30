@@ -23,7 +23,7 @@ Use this project when you want AI clients or MCP-compatible tools to query and i
 ## Features
 
 - SQL Server MCP tools exposed through FastMCP
-- Support for two configured database instances (`DB_01_*` and `DB_02_*`)
+- Support for a single configured database instance (`DB_SQL2019_*`)
 - Enhanced logical data model analysis with comprehensive issue detection:
   - Missing entity relationships and isolated entities
   - Datatype mismatches between related columns
@@ -97,8 +97,8 @@ docker build --build-arg ODBC_DRIVER_MAJOR=17 -t mcp-sql-server:local .
 
 ## Key Environment Variables
 
-- `DB_01_*`, `DB_02_*`: SQL Server instance settings
-- `DB_01_POOL_SIZE`, `DB_02_POOL_SIZE`: connection pool sizes
+- `DB_SQL2019_*`: SQL Server instance settings
+- `DB_SQL2019_POOL_SIZE`: connection pool size
 - `MCP_TRANSPORT`, `MCP_HOST`, `MCP_PORT`: server transport and binding
 - `MCP_ALLOW_WRITE`, `MCP_CONFIRM_WRITE`: write protection controls
 - `MCP_MAX_ROWS`, `MCP_STATEMENT_TIMEOUT_MS`: query guardrails

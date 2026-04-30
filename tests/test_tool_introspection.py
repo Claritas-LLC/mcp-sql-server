@@ -32,10 +32,4 @@ def test_list_registered_tools_instance_filtering():
     assert len(result_1['tools']) > 0
     assert len(result_2['tools']) > 0
     
-    # Instance 1 should have db_01_ tools, not db_02_
-    assert any(t['name'].startswith('db_01_') for t in result_1['tools'])
-    assert not any(t['name'].startswith('db_02_') for t in result_1['tools'])
-    
-    # Instance 2 should have db_02_ tools, not db_01_
-    assert any(t['name'].startswith('db_02_') for t in result_2['tools'])
-    assert not any(t['name'].startswith('db_01_') for t in result_2['tools'])
+
