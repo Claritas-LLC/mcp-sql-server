@@ -4200,7 +4200,7 @@ def db_sql2019_maintain_indexes(
     if not SETTINGS.allow_write:
         raise PermissionError("Write mode is not enabled. Set MCP_ALLOW_WRITE=true to allow index maintenance.")
     db_name = database_name or get_instance_config(instance)["db_name"]
-    db_name_str = _normalize_db_name(db_name)
+    db_name_str = _normalize_db_name(str(db_name))
     conn = get_connection(db_name_str, instance=instance)
     actions = []
     errors = []
@@ -4209,7 +4209,7 @@ def db_sql2019_maintain_indexes(
         # Get candidate indexes
         frag_data = _get_index_fragmentation_data(
             instance=instance,
-            database_name=db_name,
+            database_name=str(db_name),
             schema=schema,
             min_fragmentation=min_fragmentation,
             min_page_count=min_page_count,
