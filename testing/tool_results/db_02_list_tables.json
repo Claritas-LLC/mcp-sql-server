@@ -1,0 +1,44 @@
+{
+  "tool_name": "db_02_list_tables",
+  "args": {
+    "database_name": "TEST_DB",
+    "schema_name": "sales"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 52.91,
+  "captured_at_utc": "2026-04-14T05:14:45.142885+00:00",
+  "result": {
+    "items": [
+      {
+        "schema_name": "sales",
+        "table_name": "Customers",
+        "create_date": "2026-04-14 04:55:46.843",
+        "modify_date": "2026-04-14 04:55:46.877"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "OrderDetails",
+        "create_date": "2026-04-14 04:55:46.860",
+        "modify_date": "2026-04-14 04:55:46.890"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "Orders",
+        "create_date": "2026-04-14 04:55:46.853",
+        "modify_date": "2026-04-14 04:55:46.883"
+      },
+      {
+        "schema_name": "sales",
+        "table_name": "Products",
+        "create_date": "2026-04-14 04:55:46.850",
+        "modify_date": "2026-04-14 04:55:46.873"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_items": 4,
+      "total_pages": 1
+    }
+  }
+}

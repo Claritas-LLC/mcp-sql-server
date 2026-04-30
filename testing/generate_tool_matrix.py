@@ -3,8 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-repo_root = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(repo_root))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mcp_sqlserver import server
 
@@ -49,7 +48,7 @@ ARG_TEMPLATES = {
     "analyze_logical_data_model": {"database_name": "TEST_DB", "schema": "sales", "view": "summary"},
     "open_logical_model": {"database_name": "TEST_DB", "schema": "sales"},
     "generate_ddl": {"database_name": "TEST_DB", "schema_name": "sales", "table_name": "Customers"},
-    "create_db_user": {"database_name": "TEST_DB", "username": "mcp_tmp_user", "password": "[REDACTED_EXAMPLE_PASSWORD]"},
+    "create_db_user": {"database_name": "TEST_DB", "username": "mcp_tmp_user", "password": "McpTempPwd123!"},
     "drop_db_user": {"database_name": "TEST_DB", "username": "mcp_tmp_user"},
     "kill_session": {"session_id": 0},
     "create_object": {"database_name": "TEST_DB", "sql": "CREATE TABLE sales.MCP_TMP_TABLE (Id INT PRIMARY KEY, Name NVARCHAR(50) NULL)"},
@@ -59,15 +58,13 @@ ARG_TEMPLATES = {
 
 
 async def main() -> None:
-
     tools = await server.mcp.list_tools()
-    # Only include db_01_ and db_02_ tools (ignore aliases)
-    filtered_tools = [t for t in tools if t.name.startswith("db_01_") or t.name.startswith("db_02_")]
+    names = sorted(t.name for t in tools)
+
     items = []
-    for tool in sorted(filtered_tools, key=lambda t: t.name):
+    for tool in sorted(tools, key=lambda t: t.name):
         name = tool.name
-        parts = name.split("_", 2)
-        suffix = parts[2] if len(parts) > 2 else ""
+        suffix = name.split("_", 2)[2]
         classification = "read" if suffix in READ_ONLY_SUFFIXES else "write"
         params_schema = tool.parameters if isinstance(tool.parameters, dict) else {}
         param_props = params_schema.get("properties", {})
@@ -103,7 +100,7 @@ async def main() -> None:
     if out["total_tools"] != out["expected_total"]:
         raise SystemExit("Total tool count mismatch")
 
-    target = repo_root / "testing" / "tool_matrix.json"
+    target = Path("testing/tool_matrix.json")
     target.write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(f"Wrote {target} with {out['total_tools']} tools")
 

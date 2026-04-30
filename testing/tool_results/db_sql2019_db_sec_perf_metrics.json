@@ -1,0 +1,10 @@
+{
+  "status": "success",
+  "profile": "oltp",
+  "metrics": {
+    "sql_logins": 5,
+    "db_users": 0,
+    "active_sessions": 43,
+    "total_memory_gb": 12.37
+  }
+}

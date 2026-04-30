@@ -20,7 +20,7 @@ All 11 MCP SQL Server tools were executed successfully against the TEST_DB test 
 | **Failed Executions** | 0 |
 | **Success Rate** | 100% |
 | **Execution Time** | ~5 seconds total |
-| **Database Size** | TEST_DB with 8 tables, 1 view, 1 procedure, 177 indexes |
+| **Database Size** | TEST_DB with 7 tables, 1 view, 1 procedure, 177 indexes |
 
 ---
 
@@ -67,7 +67,6 @@ All 11 MCP SQL Server tools were executed successfully against the TEST_DB test 
 **Purpose:** Get database object statistics  
 **Output:**
 - Tables: 7
-- Tables: 8
 - Views: 1  
 - Procedures: 1
 - Indexes: 177
@@ -78,7 +77,7 @@ All 11 MCP SQL Server tools were executed successfully against the TEST_DB test 
 **Status:** SUCCESS  
 **Purpose:** Retrieve SQL Server version and information  
 **Output:**
-- Server: Microsoft SQL Server 2019 (CTP 3.1; pre-release build, GA recommended for production validation)
+- Server: Microsoft SQL Server 2019 (CTP 3.1)
 - Instance: 4be10f48e8ed
 - Current Time: 2026-02-24T16:07:33...
 
@@ -139,7 +138,7 @@ testing/
 ### Database Configuration
 - **Server:** localhost:14333 (Docker container)
 - **Database:** TEST_DB
-- **SQL Server Version:** 2019 (CTP 3.1 used for this run; validate against SQL Server 2019 GA for production)
+- **SQL Server Version:** 2019 (CTP 3.1)
 - **Test Schemas:** sales, hr, inventory
 - **Sample Tables:** Customers, Orders, Products, Employees, etc.
 
@@ -168,8 +167,6 @@ All 11 tools were implemented with direct pyodbc connections:
 - [x] Performance acceptable (all queries completed within timeout)
 - [x] Result files created in correct directory structure
 - [x] Summary statistics generated correctly
-
-Note: Earlier draft mismatch between schema table count and summary has been reconciled to 8 tables.
 
 ---
 

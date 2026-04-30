@@ -1,0 +1,13 @@
+{
+  "tool_name": "db_02_alter_object",
+  "args": {
+    "database_name": "TEST_DB",
+    "sql": "ALTER TABLE sales.MCP_TMP_TABLE ADD CreatedAt DATETIME2 NULL"
+  },
+  "status": "FAILED",
+  "duration_ms": 495.09,
+  "captured_at_utc": "2026-04-14T05:14:43.159307+00:00",
+  "result": {
+    "error": "Error calling tool 'db_02_alter_object': ('42S02', '[42S02] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]Cannot find the object \"sales.MCP_TMP_TABLE\" because it does not exist or you do not have permissions. (4902) (SQLExecDirectW)')"
+  }
+}

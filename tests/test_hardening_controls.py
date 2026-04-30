@@ -25,13 +25,7 @@ def test_table_scope_denies_out_of_allowlist(monkeypatch):
 
 
 def test_extract_referenced_tables_includes_dml_targets():
-    # Obscured to avoid scanner false positives
-    semi = ";"
-    sql = ("INSERT INTO sales.Orders (OrderID) VALUES (1)" + semi + 
-           " UPDATE dbo.Customers SET Name = 'A'" + semi + 
-           " DELETE FROM [archive].[Orders] WHERE OrderID = 1" + semi + 
-           " MERGE INTO dbo.Inventory AS t USING dbo.SourceInventory AS s ON t.Id = s.Id " + 
-           "WHEN MATCHED THEN UPDATE SET t.Qty = s.Qty" + semi)
+    sql = "INSERT INTO sales.Orders (OrderID) VALUES (1); UPDATE dbo.Customers SET Name = 'A'; DELETE FROM [archive].[Orders] WHERE OrderID = 1; MERGE INTO dbo.Inventory AS t USING dbo.SourceInventory AS s ON t.Id = s.Id WHEN MATCHED THEN UPDATE SET t.Qty = s.Qty;"
 
     refs = server._extract_referenced_tables(sql)
 
@@ -240,7 +234,7 @@ def test_audit_log_includes_api_caller_identity(tmp_path, monkeypatch):
     monkeypatch.setattr(server.SETTINGS, "audit_log_queries", True)
     monkeypatch.setattr(server.SETTINGS, "audit_log_file", str(audit_file))
     monkeypatch.setattr(server.SETTINGS, "audit_log_include_params", False)
-    monkeypatch.setattr(server, "_current_api_caller", lambda: "token:test-caller-id")
+    monkeypatch.setattr(server, "_current_api_caller", lambda: "token:abc123def456")
 
     server._write_query_audit_record(
         tool_name="db_sql2019_run_query",
@@ -251,7 +245,7 @@ def test_audit_log_includes_api_caller_identity(tmp_path, monkeypatch):
     )
 
     payload = json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])
-    assert payload.get("api_caller") == "token:test-caller-id"
+    assert payload.get("api_caller") == "token:abc123def456"
     # Use db_user from db_instances[1] if present
     db_user = server.SETTINGS.db_instances.get(1, {}).get("db_user", "")
     assert payload.get("db_user") == db_user
@@ -306,7 +300,7 @@ def test_api_key_middleware_uses_jwt_subject_for_authenticated_caller(monkeypatc
             "type": "http",
             "method": "GET",
             "path": "/mcp",
-            "headers": [(b"authorization", b"Bearer test-token-value")],
+            "headers": [(b"authorization", b"Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiJzdmMtbWNwLXVzZXIifQ.")],
             "client": ("127.0.0.1", 9999),
         }
     )

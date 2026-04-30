@@ -1,0 +1,51 @@
+{
+  "status": "success",
+  "database": "TEST_DB",
+  "schema": "sales",
+  "table": "Customers",
+  "columns": [
+    {
+      "name": "CustomerID",
+      "type": "int",
+      "nullable": "NO",
+      "default": null
+    },
+    {
+      "name": "FirstName",
+      "type": "nvarchar",
+      "nullable": "NO",
+      "default": null
+    },
+    {
+      "name": "LastName",
+      "type": "nvarchar",
+      "nullable": "NO",
+      "default": null
+    },
+    {
+      "name": "Email",
+      "type": "nvarchar",
+      "nullable": "YES",
+      "default": null
+    },
+    {
+      "name": "City",
+      "type": "nvarchar",
+      "nullable": "YES",
+      "default": null
+    },
+    {
+      "name": "State",
+      "type": "nvarchar",
+      "nullable": "YES",
+      "default": null
+    },
+    {
+      "name": "CreatedDate",
+      "type": "datetime2",
+      "nullable": "YES",
+      "default": "(getdate())"
+    }
+  ],
+  "column_count": 7
+}

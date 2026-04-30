@@ -1,0 +1,45 @@
+{
+  "tool_name": "db_01_execute_query",
+  "args": {
+    "database_name": "TEST_DB",
+    "sql": "SELECT TOP 5 CustomerID, FirstName, LastName FROM sales.Customers ORDER BY CustomerID"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 12.77,
+  "captured_at_utc": "2026-04-14T05:14:41.692939+00:00",
+  "result": {
+    "items": [
+      {
+        "CustomerID": 1,
+        "FirstName": "John",
+        "LastName": "Doe"
+      },
+      {
+        "CustomerID": 2,
+        "FirstName": "Jane",
+        "LastName": "Smith"
+      },
+      {
+        "CustomerID": 3,
+        "FirstName": "Bob",
+        "LastName": "Johnson"
+      },
+      {
+        "CustomerID": 4,
+        "FirstName": "Alice",
+        "LastName": "Williams"
+      },
+      {
+        "CustomerID": 5,
+        "FirstName": "Charlie",
+        "LastName": "Brown"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_items": 5,
+      "total_pages": 1
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "tool_name": "db_01_analyze_logical_data_model",
+  "args": {
+    "database_name": "TEST_DB",
+    "schema": "sales",
+    "view": "summary"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 67.76,
+  "captured_at_utc": "2026-04-14T05:14:40.633230+00:00",
+  "result": {
+    "summary": {
+      "entity_count": 4,
+      "relationship_count": 6,
+      "total_issues": 6
+    },
+    "sample_relationships": [],
+    "recommendations": {
+      "entities": [],
+      "attributes": [],
+      "relationships": [],
+      "identifiers": [],
+      "normalization": []
+    },
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.sample_relationships": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        },
+        "root.recommendations.entities": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        },
+        "root.recommendations.attributes": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        },
+        "root.recommendations.relationships": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        },
+        "root.recommendations.identifiers": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        },
+        "root.recommendations.normalization": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        }
+      }
+    }
+  }
+}

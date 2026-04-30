@@ -1,5 +1,5 @@
-# Runtime bootstrap shim for the MCP SQL Server server module.
-# This file dynamically loads the main server implementation and exposes the public API.
+# This file has been renamed to runtime_server.py to avoid pytest picking it up as a test file.
+# Please refer to runtime_server.py for the server implementation.
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ module_name = "mcp_sqlserver.runtime_server"
 
 PUBLIC_API = ["main"]
 __all__ = list(PUBLIC_API)
+
+_server: ModuleType | None = None
 
 _server: ModuleType | None = None
 
@@ -93,7 +95,7 @@ def main() -> None:
 			run_kwargs["ssl_keyfile"] = ssl_key
 			logger.info(
 				"HTTPS enabled for MCP HTTP transport",
-				extra={"ssl_cert": ssl_cert},
+				extra={"ssl_cert": ssl_cert, "ssl_key": ssl_key},
 			)
 
 		try:

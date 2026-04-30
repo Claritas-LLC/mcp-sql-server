@@ -1,0 +1,14 @@
+{
+  "tool_name": "db_02_drop_object",
+  "args": {
+    "database_name": "TEST_DB",
+    "sql": "DROP TABLE sales.MCP_TMP_TABLE"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 32.24,
+  "captured_at_utc": "2026-04-14T05:14:44.173531+00:00",
+  "result": {
+    "status": "success",
+    "database": "TEST_DB"
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "tool_name": "db_02_get_schema",
+  "args": {
+    "database_name": "TEST_DB",
+    "table_name": "Customers",
+    "schema_name": "sales"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 39.83,
+  "captured_at_utc": "2026-04-14T05:14:44.376799+00:00",
+  "result": {
+    "database": "TEST_DB",
+    "schema": "sales",
+    "table": "Customers",
+    "columns": [
+      {
+        "COLUMN_NAME": "CustomerID",
+        "ORDINAL_POSITION": 1,
+        "DATA_TYPE": "int",
+        "IS_NULLABLE": "NO",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "NUMERIC_PRECISION": 10,
+        "NUMERIC_SCALE": 0,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "FirstName",
+        "ORDINAL_POSITION": 2,
+        "DATA_TYPE": "nvarchar",
+        "IS_NULLABLE": "NO",
+        "CHARACTER_MAXIMUM_LENGTH": 50,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "LastName",
+        "ORDINAL_POSITION": 3,
+        "DATA_TYPE": "nvarchar",
+        "IS_NULLABLE": "NO",
+        "CHARACTER_MAXIMUM_LENGTH": 50,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "Email",
+        "ORDINAL_POSITION": 4,
+        "DATA_TYPE": "nvarchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 100,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "City",
+        "ORDINAL_POSITION": 5,
+        "DATA_TYPE": "nvarchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 50,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "State",
+        "ORDINAL_POSITION": 6,
+        "DATA_TYPE": "nvarchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 2,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "CreatedDate",
+        "ORDINAL_POSITION": 7,
+        "DATA_TYPE": "datetime2",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": "(getdate())"
+      }
+    ],
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.columns": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 7,
+          "total_pages": 1
+        }
+      }
+    }
+  }
+}

@@ -1,42 +1,12 @@
-import re
-
-def _validate_single_statement(sql: str) -> bool:
-    """Detects if SQL contains multiple statements to prevent chaining."""
-    if not sql:
-        return False
-    # 1. Remove comments to avoid false positives inside them
-    s = re.sub(r'--.*?$', '', sql, flags=re.MULTILINE)
-    s = re.sub(r'/\*.*?\*/', '', s, flags=re.DOTALL)
-    # 2. Remove bracketed identifiers [foo;bar]
-    s = re.sub(r"\[(?:[^\]]|\]\])*\]", '', s)
-    # 3. Remove string literals (single and double quotes)
-    s = re.sub(r"'([^']|'')*'", '', s)
-    s = re.sub(r'"([^"\\]|\\.)*"', '', s)
-    
-    # Look for semicolon outside of string/comments/identifiers
-    # Allow trailing semicolon if it's the only one
-    semicolons = [m.start() for m in re.finditer(';', s)]
-    if not semicolons:
-        return False
-    # If only one semicolon and it's at the end (ignoring whitespace), allow
-    if len(semicolons) == 1 and s.strip().endswith(';'):
-        return False
-    return True
-
-def _is_strong_password(password: str) -> bool:
-    """Checks for minimum password complexity."""
-    if len(password) < 8:
-        return False
-    if not re.search(r"[A-Z]", password):
-        return False
-    if not re.search(r"[a-z]", password):
-        return False
-    if not re.search(r"[0-9]", password):
-        return False
-    if not re.search(r"[^A-Za-z0-9]", password):
-        return False
-    return True
+# --- Helper for normalizing db_name consistently ---
+def _normalize_db_name(db_name: str | int | None) -> str | None:
+    if db_name is None:
+        return None
+    if isinstance(db_name, str):
+        return db_name
+    return str(db_name)
 import queue
+import psutil
 import logging
 from logging.handlers import RotatingFileHandler
 import os
@@ -46,28 +16,20 @@ import json
 import time
 import base64
 import hashlib
+import hmac
 import uuid
 import sys
+import functools
+import asyncio
 from datetime import datetime, timezone
 from threading import Lock
 from contextvars import ContextVar
-from typing import Any, Sequence, Literal, Union
+from typing import Any, Sequence, Literal, Annotated
 from html import escape
-from functools import wraps
-import fastmcp
+from urllib.parse import quote
+from functools import lru_cache, wraps
 import pyodbc
-from fastmcp import FastMCP
-import xml.etree.ElementTree as ET
-import math
-
-
-# --- Helper for normalizing db_name consistently ---
-def _normalize_db_name(db_name: str | int | None) -> str | None:
-    if db_name is None:
-        return None
-    if isinstance(db_name, str):
-        return db_name
-    return str(db_name)
+from fastmcp import FastMCP, Context
 
 # --- Connection Pool Wrapper ---
 
@@ -85,98 +47,32 @@ class PooledConnection:
         except queue.Full:
             self._conn.close()
 
-# Generative UI support (FastMCP 3.2.0+)
-try:
-    from fastmcp.apps.generative import GenerativeUI
-    GENERATIVE_UI_AVAILABLE = True
-except ImportError:
-    GenerativeUI = None  # type: ignore
-    GENERATIVE_UI_AVAILABLE = False
-    logger_temp = logging.getLogger("mcp_sqlserver")
-    logger_temp.debug("GenerativeUI not available; fastmcp[apps] not installed")
+import psutil
+import logging
+from logging.handlers import RotatingFileHandler
+import os
+import pathlib
+import re
+import json
+import time
+import base64
+import hashlib
+import hmac
+import uuid
+import sys
+import functools
+import asyncio
+from datetime import datetime, timezone
+from threading import Lock
+from contextvars import ContextVar
+from typing import Any, Sequence, Literal, Annotated
+from html import escape
+from urllib.parse import quote
+from functools import lru_cache, wraps
+import pyodbc
+from fastmcp import FastMCP, Context
 
 logger = logging.getLogger("mcp_sqlserver")
-
-_TOOL_EXEC_LOG_ENABLED = os.getenv("MCP_TOOL_EXECUTION_LOG_ENABLED", "true").lower() in {"1", "true", "yes", "on", "y"}
-_SENSITIVE_LOG_KEYS = {"password", "token", "secret", "api_key", "prompt_context", "headers", "authorization"}
-
-# Report storage for web UI (UUID -> HTML content)
-_REPORT_STORAGE: dict[str, dict[str, Any]] = {}
-_REPORT_STORAGE_LOCK = Lock()
-_REPORT_STORAGE_DIR = pathlib.Path(os.getenv("MCP_REPORT_STORAGE_DIR", ".mcp_reports"))
-
-
-def _sanitize_tool_log_context(payload: dict[str, Any]) -> dict[str, Any]:
-    """Remove sensitive fields from log context."""
-    def _sanitize_value(value: Any) -> Any:
-        if isinstance(value, dict):
-            clean_dict: dict[str, Any] = {}
-            for key, nested_value in value.items():
-                key_text = str(key)
-                if key_text.lower() in _SENSITIVE_LOG_KEYS:
-                    clean_dict[key_text] = "[redacted]"
-                else:
-                    clean_dict[key_text] = _sanitize_value(nested_value)
-            return clean_dict
-        if isinstance(value, list):
-            return [_sanitize_value(item) for item in value]
-        return value
-
-    return _sanitize_value(payload)
-
-
-def _extract_result_meta(result: Any) -> dict[str, Any]:
-    """Summarize result metadata without dumping full payload."""
-    meta: dict[str, Any] = {"result_type": type(result).__name__}
-    if isinstance(result, dict):
-        meta["keys"] = sorted(list(result.keys()))[:20]
-        if "status" in result:
-            meta["status"] = result.get("status")
-        if "count" in result and isinstance(result.get("count"), int):
-            meta["count"] = result.get("count")
-        if "items" in result and isinstance(result.get("items"), list):
-            meta["items_count"] = len(result.get("items", []))
-    elif isinstance(result, list):
-        meta["count"] = len(result)
-    return meta
-
-
-def _log_tool_start(tool_name: str, function_name: str, invocation_id: str, context: dict[str, Any]) -> None:
-    if not _TOOL_EXEC_LOG_ENABLED:
-        return
-    logger.info(
-        "tool.start tool=%s function=%s invocation_id=%s context=%s",
-        tool_name,
-        function_name,
-        invocation_id,
-        json.dumps(_sanitize_tool_log_context(context), default=str),
-    )
-
-
-def _log_tool_success(tool_name: str, function_name: str, invocation_id: str, elapsed_ms: int, result: Any) -> None:
-    if not _TOOL_EXEC_LOG_ENABLED:
-        return
-    logger.info(
-        "tool.success tool=%s function=%s invocation_id=%s elapsed_ms=%s result=%s",
-        tool_name,
-        function_name,
-        invocation_id,
-        elapsed_ms,
-        json.dumps(_extract_result_meta(result), default=str),
-    )
-
-
-def _log_tool_error(tool_name: str, function_name: str, invocation_id: str, elapsed_ms: int, exc: Exception) -> None:
-    if not _TOOL_EXEC_LOG_ENABLED:
-        return
-    logger.exception(
-        "tool.error tool=%s function=%s invocation_id=%s elapsed_ms=%s error=%s",
-        tool_name,
-        function_name,
-        invocation_id,
-        elapsed_ms,
-        str(exc),
-    )
 
 # Minimal Settings class to satisfy code references
 class Settings:
@@ -191,8 +87,8 @@ class Settings:
         self.host = kwargs.get('host', '0.0.0.0')
         self.port = kwargs.get('port', 8000)
         self.auth_type = kwargs.get('auth_type', '')
-        self.mcp_access_key = kwargs.get('mcp_access_key', '')
-        self.query_token_validation_enabled = kwargs.get('query_token_validation_enabled', False)
+        self.api_key = kwargs.get('api_key', '')
+        self.allow_query_token_auth = kwargs.get('allow_query_token_auth', False)
         self.public_base_url = kwargs.get('public_base_url', '')
         self.ssl_cert = kwargs.get('ssl_cert', '')
         self.ssl_key = kwargs.get('ssl_key', '')
@@ -233,6 +129,7 @@ if _log_file:
     log_path = pathlib.Path(_log_file)
     if log_path.parent and not log_path.parent.exists():
         log_path.parent.mkdir(parents=True, exist_ok=True)
+from logging.handlers import RotatingFileHandler
 
 _log_level = os.getenv("MCP_LOG_LEVEL", "INFO").upper()
 _log_level_value = getattr(logging, _log_level, logging.INFO)
@@ -262,24 +159,16 @@ _audit_log_rotate_backup_count = int(os.getenv("MCP_AUDIT_LOG_ROTATE_BACKUP_COUN
 
 # Module-level audit log handler and lock
 _AUDIT_LOG_HANDLER = None
-_AUDIT_LOG_HANDLER_PATH: str | None = None
 _AUDIT_LOG_HANDLER_INIT_LOCK = Lock()
 
 def _get_audit_handler():
-    global _AUDIT_LOG_HANDLER, _AUDIT_LOG_HANDLER_PATH
-    log_path = str(getattr(SETTINGS, "audit_log_file", _audit_log_file) or _audit_log_file)
-    if _AUDIT_LOG_HANDLER is not None and _AUDIT_LOG_HANDLER_PATH == log_path:
+    global _AUDIT_LOG_HANDLER
+    if _AUDIT_LOG_HANDLER is not None:
         return _AUDIT_LOG_HANDLER
     with _AUDIT_LOG_HANDLER_INIT_LOCK:
-        if _AUDIT_LOG_HANDLER is not None and _AUDIT_LOG_HANDLER_PATH == log_path:
-            return _AUDIT_LOG_HANDLER
         if _AUDIT_LOG_HANDLER is not None:
-            try:
-                _AUDIT_LOG_HANDLER.close()
-            except Exception:
-                pass
-            _AUDIT_LOG_HANDLER = None
-            _AUDIT_LOG_HANDLER_PATH = None
+            return _AUDIT_LOG_HANDLER
+        log_path = _audit_log_file
         log_dir = os.path.dirname(log_path)
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
@@ -295,11 +184,11 @@ def _get_audit_handler():
         handler.setLevel(logging.INFO)
         handler.setFormatter(logging.Formatter("%(message)s"))
         _AUDIT_LOG_HANDLER = handler
-        _AUDIT_LOG_HANDLER_PATH = log_path
         return handler
 
 
 # --- Simple Connection Pool Implementation ---
+import queue
 
 _CONN_POOLS: dict[int, queue.Queue] = {}
 _CONN_POOL_LOCKS: dict[int, Lock] = {}
@@ -368,14 +257,10 @@ def _load_settings() -> Settings:
     # Load up to 2 instances: DB_01_*, DB_02_*, fallback to DB_* for instance 1
     def load_instance(idx: int) -> dict[str, str | int]:
         prefix = f"DB_{idx:02d}_"
-        def get(key: str, default=None):
-            return os.getenv(prefix + key, default)
-
+        get = lambda k, default=None: os.getenv(prefix + k, default)
         # Fallback for instance 1: support legacy DB_*
         if idx == 1:
-            def get(key: str, default=None):
-                return os.getenv(prefix + key, os.getenv("DB_" + key, default))
-
+            get = lambda k, default=None: os.getenv(prefix + k, os.getenv("DB_" + k, default))
         port_val = get("PORT") or get("SQL_PORT") or "1433"
         try:
             db_port = int(port_val)
@@ -420,8 +305,8 @@ def _load_settings() -> Settings:
         host=_env("MCP_HOST", "0.0.0.0"),
         port=_env_int("MCP_PORT", 8000),
         auth_type=_env("FASTMCP_AUTH_TYPE", "").lower(),
-        mcp_access_key=_env("FASTMCP_API_KEY", ""),
-        query_token_validation_enabled=_env_bool("MCP_ALLOW_QUERY_TOKEN_AUTH", False),
+        api_key=_env("FASTMCP_API_KEY", ""),
+        allow_query_token_auth=_env_bool("MCP_ALLOW_QUERY_TOKEN_AUTH", False),
         public_base_url=_env("MCP_PUBLIC_BASE_URL", "").strip(),
         ssl_cert=_env("MCP_SSL_CERT", "").strip(),
         ssl_key=_env("MCP_SSL_KEY", "").strip(),
@@ -645,97 +530,6 @@ def _extract_jwt_subject(token: str) -> str | None:
     return subject.strip()
 
 
-def _convert_sqlplan_to_mermaid(xml_str: str) -> str:
-    """Convert SQL Server Execution Plan (XML) to a detailed Mermaid flow chart."""
-    if not xml_str or not xml_str.strip().startswith("<"):
-        return "graph TD\n  Start[No plan available]"
-
-    try:
-        # Prepare XML for parsing (remove root namespaces for simpler lookups)
-        xml_clean = re.sub(r'\s+xmlns="[^"]+"', '', xml_str, count=1)
-        root = ET.fromstring(xml_clean)
-        
-        nodes: list[str] = ["graph BT"]
-        counter = [0]
-
-        def process_node(element, parent_id=None):
-            # Focus on RelOp (Relationship Operation) nodes
-            if element.tag.endswith("RelOp"):
-                counter[0] += 1
-                curr_id = f"node_{counter[0]}"
-                
-                physical_op = element.attrib.get("PhysicalOp", "Operation")
-                logical_op = element.attrib.get("LogicalOp", "")
-                cost = element.attrib.get("EstimatedTotalSubtreeCost", "0")
-                
-                # Sub-elements for detail
-                details = []
-                
-                # 1. DB Objects (Tables/Indexes)
-                objects = element.findall(".//Object")
-                for obj in objects:
-                    schema = obj.attrib.get("Schema", "").replace("[", "").replace("]", "")
-                    table = obj.attrib.get("Table", "").replace("[", "").replace("]", "")
-                    if table:
-                        details.append(f"OBJ: {schema}.{table}" if schema else f"OBJ: {table}")
-                        break # Show primary object
-                
-                # 2. Predicates (Filter/Seek)
-                # Note: Predicates can be deep, taking a peek at SeekPredicates or Filter
-                for pred_type in ["SeekPredicate", "Filter", "Predicate"]:
-                    p_node = element.find(f".//{pred_type}")
-                    if p_node is not None:
-                        # Extract some text to show intent
-                        text = "".join(p_node.itertext()).strip()
-                        if text:
-                            details.append(f"PRED: {escape(text[:30])}...")
-                            break
-                
-                # 3. Runtime Stats (Actuals)
-                runtime = element.find(".//RunTimeCountersPerThread")
-                if runtime is not None:
-                    ms = runtime.attrib.get("ActualElapsedms")
-                    rows = runtime.attrib.get("ActualRows")
-                    if ms: details.append(f"TIME: {ms}ms")
-                    if rows: details.append(f"ROWS: {rows}")
-
-                # Build final label
-                label_lines = [f"<b>{physical_op}</b>", f"({logical_op})"] + details + [f"Cost: {cost}"]
-                label = "<br/>".join(label_lines)
-                
-                # Style based on cost
-                style = ""
-                try:
-                    cost_val = float(cost)
-                    if cost_val > 0.5: style = f"style {curr_id} fill:#fecaca,stroke:#b91c1c"
-                    elif cost_val > 0.1: style = f"style {curr_id} fill:#fef3c7,stroke:#b45309"
-                except ValueError:
-                    pass
-
-                nodes.append(f"  {curr_id}[\"{label}\"]")
-                if style:
-                    nodes.append(f"  {style}")
-                
-                if parent_id:
-                    # In SQL plans, data flows from child to parent (Bottom up)
-                    nodes.append(f"  {curr_id} --> {parent_id}")
-                
-                new_parent = curr_id
-            else:
-                new_parent = parent_id
-
-            for child in element:
-                process_node(child, new_parent)
-
-        process_node(root)
-        if len(nodes) <= 1:
-            return "graph TD\n  Start[Empty or Unparseable Plan]"
-        return "\n".join(nodes)
-    except Exception as exc:
-        logger.warning(f"Failed to convert SQL plan to Mermaid: {exc}")
-        return f"graph TD\n  Error[Failed to parse plan: {escape(str(exc))}]"
-
-
 def _write_query_audit_record(
     tool_name: str,
     database_name: str,
@@ -885,25 +679,12 @@ def _connection_string(database: str | None = None, instance: int = 1) -> str:
         f"PWD={inst['db_password']};"
         f"Encrypt={inst['db_encrypt']};"
         f"TrustServerCertificate={inst['db_trust_cert']};"
-        f"MARS_Connection=Yes;"
     )
 
 
-def _quote_sql_ident(identifier: str) -> str:
-    return f"[{identifier.replace(']', ']]')}]"
 
 
-def _ensure_connection_database_scope(conn: pyodbc.Connection, database: str | None, instance: int) -> None:
-    """Force connection context to the requested (or default) database."""
-    inst = SETTINGS.db_instances.get(instance)
-    if not inst:
-        raise RuntimeError(f"No database instance configured for instance={instance}.")
-    target_db = str(database or inst["db_name"])
-    cur = conn.cursor()
-    try:
-        cur.execute(f"USE {_quote_sql_ident(target_db)}")
-    finally:
-        cur.close()
+from typing import Union
 
 def get_connection(database: str | None = None, instance: int = 1) -> Union[pyodbc.Connection, 'PooledConnection']:
     validate_instance(instance)
@@ -916,10 +697,7 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
             # Validate connection is alive
             try:
                 cur = conn.cursor()
-                try:
-                    cur.execute("SELECT 1")
-                finally:
-                    cur.close()
+                cur.execute("SELECT 1")
             except Exception:
                 # Connection is dead, replace
                 conn.close()
@@ -929,29 +707,6 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
             # Pool exhausted, create new connection (not pooled)
             conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
             conn.autocommit = True
-
-        # Reset scope on every checkout since pool keys are per-instance (not per-database).
-        # If a pooled connection is left in a bad state (e.g., busy with previous results),
-        # replace it and retry scope reset once.
-        try:
-            _ensure_connection_database_scope(conn, database, instance)
-        except Exception as exc:
-            logger.warning(f"Discarding pooled connection after scope reset failure: {exc}")
-            try:
-                conn.close()
-            except Exception:
-                pass
-            conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
-            conn.autocommit = True
-            try:
-                _ensure_connection_database_scope(conn, database, instance)
-            except Exception as retry_exc:
-                logger.warning(f"Failed scope reset on replacement pooled connection: {retry_exc}")
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-                raise
 
         # Return a wrapped connection with pooled close
         return PooledConnection(conn, pool)
@@ -963,7 +718,6 @@ def get_connection(database: str | None = None, instance: int = 1) -> Union[pyod
         else:
             conn = pyodbc.connect(_connection_string(database, instance), timeout=max(1, SETTINGS.statement_timeout_ms // 1000))
         conn.autocommit = True
-        _ensure_connection_database_scope(conn, database, instance)
         return conn
 
 
@@ -1349,58 +1103,16 @@ def _ensure_write_enabled() -> None:
         raise ValueError("Write operations are disabled. Set MCP_ALLOW_WRITE=true and MCP_CONFIRM_WRITE=true.")
 
 
-def _public_base_url() -> str:
-    if SETTINGS.public_base_url:
-        return SETTINGS.public_base_url.rstrip("/")
-
-    host = SETTINGS.host.strip() or "localhost"
-    if host in {"0.0.0.0", "::", "127.0.0.1"}:
-        host = "localhost"
-    return f"http://{host}:{SETTINGS.port}"
-
-
-def _report_file_path(report_id: str) -> pathlib.Path:
-    return _REPORT_STORAGE_DIR / f"{report_id}.html"
-
-
-def _persist_report_html(report_id: str, html: str) -> None:
-    try:
-        _REPORT_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-        _report_file_path(report_id).write_text(html, encoding="utf-8")
-    except OSError as exc:
-        raise IOError(f"Failed to persist report '{report_id}'") from exc
-
-
-def _load_report_html(report_id: str) -> str | None:
-    report_path = _report_file_path(report_id)
-    if not report_path.exists():
-        return None
-    return report_path.read_text(encoding="utf-8")
-
-
-def _get_report_html(report_id: str) -> str | None:
-    with _REPORT_STORAGE_LOCK:
-        report = _REPORT_STORAGE.get(report_id)
-    html = report.get("html") if report else None
-    if html is None:
-        html = _load_report_html(report_id)
-    return html
-
-
 
 # FastMCP app initialization
 MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "SQL Server MCP Server")
 mcp = FastMCP(name=MCP_SERVER_NAME)
 
-# Add Generative UI provider for dynamic dashboard generation
-if GENERATIVE_UI_AVAILABLE and GenerativeUI is not None:
-    try:
-        mcp.add_provider(GenerativeUI())  # type: ignore
-        logger.info("GenerativeUI provider registered for dynamic dashboard generation")
-    except Exception as e:
-        logger.warning(f"Failed to add GenerativeUI provider: {e}")
-
-print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: {fastmcp.__version__}\n========================\n")
+try:
+    import fastmcp
+    print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: {fastmcp.__version__}\n========================\n")
+except Exception:
+    print(f"\n=== MCP Server Banner ===\n{MCP_SERVER_NAME} | FastMCP version: unknown\n========================\n")
 
 
 def _configure_tool_search_transform() -> None:
@@ -1423,9 +1135,9 @@ def _configure_tool_search_transform() -> None:
 
     try:
         if strategy == "bm25":
-            pass
+            from fastmcp.server.transforms.search import BM25SearchTransform as SearchTransform
         else:
-            pass
+            from fastmcp.server.transforms.search import RegexSearchTransform as SearchTransform
     except Exception as exc:
         logger.warning(
             "Tool search transform requested but unavailable in current FastMCP runtime: %s",
@@ -1617,7 +1329,7 @@ def _run_query_internal(
     enforce_readonly: bool = True,
     tool_name: str = "db_sql2019_run_query",
     prompt_context: str | None = None,
-) -> list[dict[str, Any]] | dict[str, Any]:
+) -> list[dict[str, Any]]:
     validate_instance(instance)
     if enforce_readonly and not SETTINGS.allow_write:
         _require_readonly(sql)
@@ -1646,7 +1358,7 @@ def _run_query_internal(
         try:
             rows = _fetch_limited(cur, row_cap)
             return _rows_to_dicts(cur, rows)
-        except pyodbc.ProgrammingError:
+        except pyodbc.ProgrammingError as e:
             # For DDL (CREATE/ALTER/DROP), fetching results raises ProgrammingError: No results. Previous SQL was not a query.
             if tool_name in {"db_sql2019_create_object", "db_sql2019_alter_object", "db_sql2019_drop_object"}:
                 return {"status": "success", "message": "DDL executed successfully."}
@@ -1668,8 +1380,6 @@ def db_sql2019_execute_query(
     """Legacy-compatible query executor (read-only unless write mode is enabled)."""
     if not sql:
         raise ValueError("sql is required")
-    if _validate_single_statement(sql):
-        raise ValueError("Multi-statement SQL is not allowed. Only a single statement is permitted.")
     rows = _run_query_internal(
         instance=instance,
         database_name=database_name,
@@ -1687,35 +1397,27 @@ def db_sql2019_run_query(
     instance: int = 1,
     arg1: str | None = None,
     arg2: str | None = None,
-    database_name: str | None = None,
-    sql: str | None = None,
     params_json: str | None = None,
     max_rows: int | None = None,
     prompt_context: str | None = None,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
-    """Execute SQL; supports legacy positional args and keyword-style database_name/sql."""
-    if sql is not None:
-        resolved_sql = sql
-        resolved_database_name = database_name
+    """Execute SQL; supports both legacy (db, sql) and new (sql only) signatures."""
+    if arg1 is None:
+         raise ValueError("At least one argument (sql) is required")
+         
+    if arg2 is None:
+        database_name = None
+        sql = arg1
     else:
-        if arg1 is None:
-            raise ValueError("At least one argument (sql) is required")
+        database_name = arg1
+        sql = arg2
 
-        if arg2 is None:
-            resolved_database_name = database_name
-            resolved_sql = arg1
-        else:
-            resolved_database_name = database_name or arg1
-            resolved_sql = arg2
-
-    if resolved_sql is not None and _validate_single_statement(resolved_sql):
-        raise ValueError("Multi-statement SQL is not allowed. Only a single statement is permitted.")
     rows = _run_query_internal(
         instance=instance,
-        database_name=resolved_database_name,
-        sql=resolved_sql,
+        database_name=database_name,
+        sql=sql,
         params_json=params_json,
         max_rows=max_rows,
         enforce_readonly=True,
@@ -1728,7 +1430,6 @@ def db_sql2019_run_query(
 def db_sql2019_list_objects(
     instance: int = 1,
     database_name: str | None = None,
-    database: str | None = None,
     object_type: str = "TABLE",
     object_name: str | None = None,
     schema: str | None = None,
@@ -1739,7 +1440,7 @@ def db_sql2019_list_objects(
 ) -> dict[str, Any]:
     """Unified object listing for database/schema/table/view/index/function/procedure/trigger."""
     validate_instance(instance)
-    db_name = database_name or database or get_instance_config(instance)["db_name"]
+    db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = _normalize_db_name(db_name)
     conn = get_connection(db_name_str, instance=instance)
     try:
@@ -2048,7 +1749,6 @@ def _get_index_fragmentation_data(
 def db_sql2019_get_index_fragmentation(
     instance: int = 1,
     database_name: str | None = None,
-    database: str | None = None,
     schema: str | None = None,
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
@@ -2059,7 +1759,7 @@ def db_sql2019_get_index_fragmentation(
     """Return index fragmentation rows from dm_db_index_physical_stats."""
     items = _get_index_fragmentation_data(
         instance=instance,
-        database_name=database_name or database,
+        database_name=database_name,
         schema=schema,
         min_fragmentation=min_fragmentation,
         min_page_count=min_page_count,
@@ -2071,7 +1771,6 @@ def db_sql2019_get_index_fragmentation(
 def db_sql2019_analyze_index_health(
     instance: int = 1,
     database_name: str | None = None,
-    database: str | None = None,
     schema: str | None = None,
     min_fragmentation: float = 10.0,
     min_page_count: int = 100,
@@ -2082,7 +1781,7 @@ def db_sql2019_analyze_index_health(
     """High-level index health summary."""
     items = _get_index_fragmentation_data(
         instance=instance,
-        database_name=database_name or database,
+        database_name=database_name,
         schema=schema,
         min_fragmentation=min_fragmentation,
         min_page_count=min_page_count,
@@ -2092,7 +1791,7 @@ def db_sql2019_analyze_index_health(
     severe = [r for r in items if (r.get("avg_fragmentation_in_percent") or 0) >= 30]
     medium = [r for r in items if 10 <= (r.get("avg_fragmentation_in_percent") or 0) < 30]
 
-    db_name = database_name or database or get_instance_config(instance)["db_name"]
+    db_name = database_name or get_instance_config(instance)["db_name"]
     result = {
         "database": db_name,
         "schema": schema,
@@ -2120,14 +1819,6 @@ def db_sql2019_analyze_table_health(
     """Table-level storage/index/stats/constraint analysis."""
     if not schema or not table_name:
         raise ValueError("schema and table_name are required")
-    logger.info(
-        "table_health.start instance=%s database=%s schema=%s table=%s view=%s",
-        instance,
-        database_name,
-        schema,
-        table_name,
-        view,
-    )
     validate_instance(instance)
     _enforce_table_scope_for_ident(schema, table_name)
     db_name = database_name or get_instance_config(instance)["db_name"]
@@ -2341,25 +2032,7 @@ def db_sql2019_analyze_table_health(
         shaped = _apply_table_health_view(result, view)
         budgeted = _apply_token_budget(shaped, token_budget)
         projected = _apply_field_projection(budgeted, fields)
-        output = _paginate_tool_result(projected, page=page, page_size=page_size)
-        logger.info(
-            "table_health.success instance=%s database=%s schema=%s table=%s recommendations=%s",
-            instance,
-            db_name_str,
-            schema,
-            table_name,
-            len(recommendations),
-        )
-        return output
-    except Exception:
-        logger.exception(
-            "table_health.error instance=%s database=%s schema=%s table=%s",
-            instance,
-            db_name_str,
-            schema,
-            table_name,
-        )
-        raise
+        return _paginate_tool_result(projected, page=page, page_size=page_size)
     finally:
         conn.close()
 
@@ -2498,6 +2171,7 @@ def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict
             )
 
     referenced_tables = {(r.get("referenced_schema"), r.get("referenced_table")) for r in relationships}
+    parent_tables = {(r.get("parent_schema"), r.get("parent_table")) for r in relationships}
     all_modeled = {(e.get("schema"), e.get("name")) for e in entities}
 
     for schema, table in referenced_tables:
@@ -2513,335 +2187,31 @@ def _analyze_erd_issues(entities: list[dict[str, Any]], relationships: list[dict
     return issues
 
 
-def _sanitize_relationship_label(value: Any) -> str:
-    raw = str(value or "")
-    return re.sub(r"[^A-Za-z0-9_]", "", raw)
-
-
-def _render_data_model_html(model: Any, issues: Any = None, page: int = 1, focus_entity: str | None = None) -> str:
-    # Backward compatibility path used by tests: _render_data_model_html(report_id, model, page=..., focus_entity=...)
-    if isinstance(model, str) and isinstance(issues, dict):
-        report_id = model
-        legacy_model = issues
-        logical_model = legacy_model.get("logical_model", {}) if isinstance(legacy_model, dict) else {}
-        relationships = logical_model.get("relationships", []) if isinstance(logical_model, dict) else []
-        mermaid_lines = ["graph TD"]
-        for rel in relationships:
-            if not isinstance(rel, dict):
-                continue
-            from_entity = str(rel.get("from_entity", "")).replace(".", "_")
-            to_entity = str(rel.get("to_entity", "")).replace(".", "_")
-            safe_label = _sanitize_relationship_label(rel.get("name", ""))
-            if from_entity and to_entity:
-                mermaid_lines.append(f"{from_entity} -->|\"{safe_label}\"| {to_entity}")
-        mermaid_markup = escape("\n".join(mermaid_lines))
-        return (
-            "<html><head><title>Logical Data Model</title></head><body>"
-            f"<div id=\"reportMeta\">{escape(report_id)}</div>"
-            f"<div id=\"diagramLayer\" class=\"mermaid\">{mermaid_markup}</div>"
-            "</body></html>"
-        )
-
-    if not isinstance(model, dict):
-        return "<html><body><p>Invalid model payload.</p></body></html>"
-    if not isinstance(issues, dict):
-        issues = {}
-
-    database_name = escape(str(model.get("database", "Unknown database")))
-    summary = model.get("summary", {}) if isinstance(model.get("summary"), dict) else {}
-    entities = model.get("entities", []) if isinstance(model.get("entities"), list) else []
-    relationships = model.get("relationships", []) if isinstance(model.get("relationships"), list) else []
-    entity_cards = _render_entity_cards_html(entities)
-    relationships_html = _render_relationships_html(relationships)
-    issue_total = sum(len(group) for group in issues.values())
+def _render_data_model_html(model: dict[str, Any], issues: dict[str, list[dict[str, Any]]]) -> str:
+    # Minimal HTML rendering logic for open_logical_model
     html = f"""
     <html>
-    <head>
-        <title>Logical Data Model - {database_name}</title>
-        <style>
-            body {{ font-family: 'Segoe UI', sans-serif; margin: 0; background: #f4f7fb; color: #1f2937; }}
-            .page {{ max-width: 1440px; margin: 0 auto; padding: 32px 24px 48px; }}
-            .hero {{ background: linear-gradient(135deg, #0f172a, #1d4ed8); color: white; border-radius: 18px; padding: 28px; box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18); }}
-            .hero h1 {{ margin: 0 0 8px; font-size: 32px; }}
-            .hero p {{ margin: 0; color: rgba(255,255,255,0.84); }}
-            .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 24px 0; }}
-            .stat {{ background: white; border-radius: 14px; padding: 18px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
-            .stat .label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
-            .stat .value {{ font-size: 28px; font-weight: 700; margin-top: 8px; }}
-            .section {{ margin-top: 28px; }}
-            .section h2 {{ margin: 0 0 14px; font-size: 22px; }}
-            .entity-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }}
-            .entity-card, .panel {{ background: white; border-radius: 14px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); overflow: hidden; }}
-            .entity-head {{ padding: 16px 18px; border-bottom: 1px solid #e5e7eb; background: #eff6ff; }}
-            .entity-title {{ font-size: 18px; font-weight: 700; margin: 0; }}
-            .entity-subtitle {{ color: #475569; font-size: 12px; margin-top: 4px; }}
-            .entity-body {{ max-height: 320px; overflow: auto; }}
-            table {{ width: 100%; border-collapse: collapse; }}
-            th, td {{ padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; }}
-            th {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; background: #f8fafc; }}
-            .pill {{ display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #dbeafe; color: #1d4ed8; }}
-            .issue {{ color: #b91c1c; }}
-            .muted {{ color: #64748b; }}
-            .empty {{ padding: 18px; background: white; border-radius: 14px; color: #64748b; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
-        </style>
-    </head>
+    <head><style>body {{ font-family: sans-serif; }} .issue {{ color: red; }}</style></head>
     <body>
-        <div class="page">
-            <div class="hero">
-                <h1>Logical Data Model</h1>
-                <p>Database <strong>{database_name}</strong> with rendered entities, column metadata, and detected foreign-key relationships.</p>
-            </div>
-            <div class="stats">
-                <div class="stat"><div class="label">Entities</div><div class="value">{len(entities)}</div></div>
-                <div class="stat"><div class="label">Relationships</div><div class="value">{len(relationships)}</div></div>
-                <div class="stat"><div class="label">Issues</div><div class="value">{issue_total}</div></div>
-                <div class="stat"><div class="label">Summary</div><div class="value">{escape(str(summary.get('total_issues', issue_total)))}</div></div>
-            </div>
-            <div class="section">
-                <h2>Relationships</h2>
-                {relationships_html}
-            </div>
-            <div class="section">
-                <h2>Entities</h2>
-                {entity_cards}
-            </div>
-            <div class="section">
-                <h2>Issues</h2>
-                {_render_issue_list_html(issues)}
-            </div>
-        </div>
+        <h1>Logical Data Model: {model.get('database')}</h1>
+        <h2>Summary</h2>
+        <ul>
+            <li>Entities: {len(model.get('entities', []))}</li>
+            <li>Relationships: {len(model.get('relationships', []))}</li>
+        </ul>
+        <h2>Issues</h2>
+        {_render_issue_list_html(issues)}
     </body>
     </html>
     """
     return html
 
 
-def _render_performance_dashboard_html(report: dict[str, Any]) -> str:
-    def fmt_num(value: Any, digits: int = 2) -> str:
-        if isinstance(value, (int, float)):
-            return f"{value:,.{digits}f}" if isinstance(value, float) else f"{value:,}"
-        return "N/A"
-
-    kpis = report.get("kpis", {}) if isinstance(report, dict) else {}
-    top_queries = report.get("top_slow_queries", []) if isinstance(report, dict) else []
-    top_fragments = report.get("top_fragmented_indexes", []) if isinstance(report, dict) else []
-
-    query_rows = []
-    for row in top_queries:
-        if not isinstance(row, dict):
-            continue
-        plan_xml = str(row.get("query_plan", "No plan available"))
-        sql_text = str(row.get("query_sql_text", ""))
-        mermaid_plan = str(row.get("mermaid_plan", "graph TD\n  NoPlan[Plan data missing]"))
-        
-        query_rows.append(
-            "<tr>"
-            f"<td>{escape(str(row.get('query_id', '')))}</td>"
-            f"<td>{escape(fmt_num(row.get('metric_value'), 2))}</td>"
-            f"<td>{escape(str(row.get('count_executions', '')))}</td>"
-            f"<td>{escape(str(row.get('last_execution_time', '')))}</td>"
-            "</tr>"
-            "<tr>"
-            "<td colspan='4'>"
-            f"<details><summary class='small-link'>View Graphical Plan & SQL</summary>"
-            f"<div class='code-block'><strong>Visual Execution Plan:</strong><div class='mermaid'>{mermaid_plan}</div></div>"
-            f"<div class='code-block'><strong>SQL Source:</strong><pre><code>{escape(sql_text)}</code></pre></div>"
-            f"<div class='code-block'><strong>XML Execution Plan:</strong><pre><code>{escape(plan_xml[:5000])}{'...' if len(plan_xml) > 5000 else ''}</code></pre></div>"
-            "</details></td></tr>"
-        )
-    if not query_rows:
-        query_rows.append("<tr><td colspan='4' class='muted'>No slow query data available.</td></tr>")
-
-    frag_rows = []
-    for row in top_fragments:
-        if not isinstance(row, dict):
-            continue
-        frag_rows.append(
-            "<tr>"
-            f"<td>{escape(str(row.get('schema_name', '')))}</td>"
-            f"<td>{escape(str(row.get('table_name', '')))}</td>"
-            f"<td>{escape(str(row.get('index_name', '')))}</td>"
-            f"<td>{escape(fmt_num(row.get('avg_fragmentation_in_percent'), 2))}</td>"
-            f"<td>{escape(str(row.get('page_count', '')))}</td>"
-            "</tr>"
-        )
-    if not frag_rows:
-        frag_rows.append("<tr><td colspan='5' class='muted'>No fragmentation data available.</td></tr>")
-
-    table_frag_rows = []
-    top_fragmented_tables = report.get("top_fragmented_tables", [])
-    for row in top_fragmented_tables:
-        if not isinstance(row, dict):
-            continue
-        table_frag_rows.append(
-            "<tr>"
-            f"<td>{escape(str(row.get('schema_name', '')))}</td>"
-            f"<td>{escape(str(row.get('table_name', '')))}</td>"
-            f"<td>{escape(fmt_num(row.get('max_fragmentation'), 2))}</td>"
-            f"<td>{escape(str(row.get('page_count_total', '')))}</td>"
-            "</tr>"
-        )
-    if not table_frag_rows:
-        table_frag_rows.append("<tr><td colspan='4' class='muted'>No table fragmentation data available.</td></tr>")
-
-    return f"""
-    <html>
-    <head>
-        <title>SQL Server Performance Dashboard</title>
-        <meta http-equiv="refresh" content="30">
-        <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-        <script>mermaid.initialize({{startOnLoad:true, theme:'neutral', securityLevel:'loose'}});</script>
-        <style>
-            body {{ font-family: 'Segoe UI', sans-serif; margin: 0; background: #eef2ff; color: #1f2937; }}
-            .page {{ max-width: 1400px; margin: 0 auto; padding: 28px 24px 48px; }}
-            .hero {{ background: linear-gradient(135deg, #111827, #2563eb); color: white; border-radius: 18px; padding: 24px; box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18); }}
-            .hero h1 {{ margin: 0 0 6px; }}
-            .hero p {{ margin: 4px 0 0; color: rgba(255,255,255,0.88); }}
-            .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 24px 0; }}
-            .card, .panel {{ background: white; border-radius: 16px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
-            .card {{ padding: 18px; }}
-            .label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
-            .value {{ font-size: 28px; font-weight: 700; margin-top: 8px; }}
-            .panel {{ overflow: hidden; margin-top: 20px; }}
-            .panel-head {{ padding: 16px 18px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; gap: 12px; }}
-            .panel-title {{ font-size: 20px; font-weight: 700; }}
-            .muted {{ color: #64748b; }}
-            table {{ width: 100%; border-collapse: collapse; }}
-            th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; vertical-align: top; }}
-            th {{ background: #f8fafc; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
-            .small {{ font-size: 13px; color: #475569; }}
-            .small-link {{ cursor: pointer; color: #2563eb; font-size: 13px; font-weight: 600; text-decoration: underline; margin: 4px 0; display: block; }}
-            .code-block {{ background: #f1f5f9; padding: 12px; border-radius: 8px; margin: 8px 0; border: 1px solid #e2e8f0; overflow-x: auto; }}
-            pre {{ margin: 0; font-family: 'Consolas', 'Monaco', monospace; font-size: 11px; white-space: pre-wrap; }}
-            .mermaid {{ display: flex; justify-content: center; background: white; padding: 10px; border-radius: 6px; }}
-        </style>
-    </head>
-    <body>
-        <div class="page">
-            <div class="hero">
-                <h1>SQL Server Performance Dashboard</h1>
-                <p>Database {escape(str(report.get('database', '')))} on instance {escape(str(report.get('instance', '')))} ({escape(str(report.get('server', '')))}).</p>
-                <p class="small">Generated at {escape(str(report.get('timestamp', '')))} | Query Store enabled: {escape(str(report.get('query_store_enabled', 'unknown')))}</p>
-            </div>
-
-            <div class="stats">
-                <div class="card"><div class="label">Avg Query Duration Metric</div><div class="value">{escape(fmt_num(kpis.get('avg_query_duration_metric'), 2))}</div></div>
-                <div class="card"><div class="label">Max Query Duration Metric</div><div class="value">{escape(fmt_num(kpis.get('max_query_duration_metric'), 2))}</div></div>
-                <div class="card"><div class="label">Avg Fragmentation %</div><div class="value">{escape(fmt_num(kpis.get('fragmentation_avg_percent'), 2))}</div></div>
-                <div class="card"><div class="label">Data Size MB</div><div class="value">{escape(fmt_num(kpis.get('data_size_mb'), 0))}</div></div>
-                <div class="card"><div class="label">Open Transactions</div><div class="value">{escape(fmt_num(kpis.get('open_transactions'), 0))}</div></div>
-                <div class="card"><div class="label">DB Users</div><div class="value">{escape(fmt_num(kpis.get('user_count'), 0))}</div></div>
-            </div>
-
-            <div class="panel">
-                <div class="panel-head">
-                    <div class="panel-title">Top Slow Queries</div>
-                    <div class="muted">Showing top 5 by duration metric</div>
-                </div>
-                <table>
-                    <thead>
-                        <tr><th>Query ID</th><th>Duration Metric</th><th>Executions</th><th>Last Execution</th></tr>
-                    </thead>
-                    <tbody>{''.join(query_rows)}</tbody>
-                </table>
-            </div>
-
-            <div class="panel">
-                <div class="panel-head">
-                    <div class="panel-title">Top Fragmented Tables</div>
-                    <div class="muted">Showing top 5 tables by max fragmentation</div>
-                </div>
-                <table>
-                    <thead>
-                        <tr><th>Schema</th><th>Table</th><th>Max Fragmentation %</th><th>Total Pages</th></tr>
-                    </thead>
-                    <tbody>{''.join(table_frag_rows)}</tbody>
-                </table>
-            </div>
-            
-            <div class="panel">
-                <div class="panel-head">
-                    <div class="panel-title">Top Fragmented Indexes</div>
-                    <div class="muted">Showing top 5 fragmentation rows</div>
-                </div>
-                <table>
-                    <thead>
-                        <tr><th>Schema</th><th>Table</th><th>Index</th><th>Fragmentation %</th><th>Pages</th></tr>
-                    </thead>
-                    <tbody>{''.join(frag_rows)}</tbody>
-                </table>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-
-
-def _render_entity_cards_html(entities: list[dict[str, Any]]) -> str:
-    if not entities:
-        return "<div class='empty'>No entities were found for this scope.</div>"
-
-    cards: list[str] = []
-    for entity in entities:
-        schema_name = escape(str(entity.get("schema", "dbo")))
-        table_name = escape(str(entity.get("name", "unknown")))
-        columns = entity.get("columns", []) if isinstance(entity.get("columns"), list) else []
-        rows: list[str] = []
-        for column in columns:
-            if not isinstance(column, dict):
-                continue
-            column_name = escape(str(column.get("COLUMN_NAME", column.get("name", ""))))
-            data_type = escape(str(column.get("DATA_TYPE", column.get("type", ""))))
-            nullable = escape(str(column.get("IS_NULLABLE", column.get("nullable", ""))))
-            rows.append(
-                f"<tr><td><strong>{column_name}</strong></td><td>{data_type}</td><td>{nullable}</td></tr>"
-            )
-        body = "".join(rows) if rows else "<tr><td colspan='3' class='muted'>No column metadata available.</td></tr>"
-        cards.append(
-            f"""
-            <div class="entity-card">
-                <div class="entity-head">
-                    <p class="entity-title">{table_name}</p>
-                    <div class="entity-subtitle">Schema: <span class="pill">{schema_name}</span></div>
-                </div>
-                <div class="entity-body">
-                    <table>
-                        <thead><tr><th>Column</th><th>Type</th><th>Nullable</th></tr></thead>
-                        <tbody>{body}</tbody>
-                    </table>
-                </div>
-            </div>
-            """
-        )
-    return f"<div class='entity-grid'>{''.join(cards)}</div>"
-
-
-def _render_relationships_html(relationships: list[dict[str, Any]]) -> str:
-    if not relationships:
-        return "<div class='empty'>No foreign-key relationships were discovered for this scope.</div>"
-
-    rows: list[str] = []
-    for relationship in relationships:
-        if not isinstance(relationship, dict):
-            continue
-        parent = f"{relationship.get('parent_schema', 'dbo')}.{relationship.get('parent_table', '')}.{relationship.get('parent_column', '')}"
-        referenced = f"{relationship.get('referenced_schema', 'dbo')}.{relationship.get('referenced_table', '')}.{relationship.get('referenced_column', '')}"
-        constraint_name = escape(str(relationship.get("constraint_name", "")))
-        rows.append(
-            f"<tr><td>{constraint_name}</td><td>{escape(parent)}</td><td>{escape(referenced)}</td></tr>"
-        )
-
-    return (
-        "<div class='panel'><table><thead><tr><th>Constraint</th><th>From</th><th>To</th></tr></thead>"
-        f"<tbody>{''.join(rows)}</tbody></table></div>"
-    )
-
-
 def _render_issue_list_html(issues: dict[str, list[dict[str, Any]]]) -> str:
     items = []
     for category, list_obj in issues.items():
         for issue in list_obj:
-            items.append(f"<li class='issue'><b>[{escape(category.upper())}]</b> {escape(str(issue.get('issue', 'Issue detected')))} in {escape(str(issue.get('entity', 'model')))}</li>")
+            items.append(f"<li class='issue'><b>[{category.upper()}]</b> {issue.get('issue')} in {issue.get('entity', 'model')}</li>")
     if not items:
         return "<p>No issues found.</p>"
     return "<ul>" + "".join(items) + "</ul>"
@@ -2917,7 +2287,6 @@ def _analyze_logical_data_model_internal(
 def db_sql2019_show_top_queries(
     instance: int = 1,
     database_name: str | None = None,
-    database: str | None = None,
     metric: Literal["cpu", "io", "execution_count", "duration"] = "cpu",
     limit: int = 10,
     view: Literal["summary", "standard", "full"] = "standard",
@@ -2926,7 +2295,7 @@ def db_sql2019_show_top_queries(
 ) -> dict[str, Any]:
     """Performance analysis using Query Store or dm_exec_query_stats."""
     validate_instance(instance)
-    db_name = database_name or database or get_instance_config(instance)["db_name"]
+    db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
     conn = get_connection(db_name_str, instance=instance)
     try:
@@ -2953,8 +2322,7 @@ def db_sql2019_show_top_queries(
                 qt.query_sql_text,
                 rs.{sort_col} AS metric_value,
                 rs.count_executions,
-                CAST(rs.last_execution_time AS nvarchar(40)) AS last_execution_time,
-                p.query_plan
+                CAST(rs.last_execution_time AS nvarchar(40)) AS last_execution_time
             FROM sys.query_store_query q
             JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
             JOIN sys.query_store_plan p ON q.query_id = p.query_id
@@ -2978,11 +2346,9 @@ def db_sql2019_show_top_queries(
                 st.text AS query_sql_text,
                 {sort_col} AS metric_value,
                 count.execution_count,
-                CAST(count.last_execution_time AS nvarchar(40)) AS last_execution_time,
-                qp.query_plan
+                CAST(count.last_execution_time AS nvarchar(40)) AS last_execution_time
             FROM sys.dm_exec_query_stats count
             CROSS APPLY sys.dm_exec_sql_text(count.sql_handle) st
-            CROSS APPLY sys.dm_exec_query_plan(count.plan_handle) qp
             ORDER BY metric_value DESC
             """
             _execute_safe(cur, sql, [limit])
@@ -3003,19 +2369,15 @@ def db_sql2019_show_top_queries(
 def db_sql2019_check_fragmentation(
     instance: int = 1,
     database_name: str | None = None,
-    database: str | None = None,
     schema_name: str | None = None,
     table_name: str | None = None,
-    min_fragmentation: float = 0.0,
-    min_page_count: int = 1,
-    include_recommendations: bool = False,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Check fragmentation for a specific table or all tables in a schema."""
     items = _get_index_fragmentation_data(
         instance=instance,
-        database_name=database_name or database,
+        database_name=str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name,
         schema=schema_name,
     )
     if table_name:
@@ -3026,14 +2388,12 @@ def db_sql2019_check_fragmentation(
 def db_sql2019_db_sec_perf_metrics(
     instance: int = 1,
     database_name: str | None = None,
-    database: str | None = None,
-    profile: str | None = None,
     page: int = 1,
     page_size: int = DEFAULT_TOOL_PAGE_SIZE,
 ) -> dict[str, Any]:
     """Database security and basic performance metrics."""
     validate_instance(instance)
-    db_name = database_name or database or get_instance_config(instance)["db_name"]
+    db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
     conn = get_connection(db_name_str, instance=instance)
     try:
@@ -3107,64 +2467,24 @@ def db_sql2019_open_logical_model(
     instance: int = 1,
     database_name: str | None = None,
     schema: str | None = None,
-    return_dict: bool = False,
-) -> str | dict[str, Any]:
-    """Generate a logical model report.
-
-    When return_dict is False (default), returns the rendered HTML string for backward compatibility.
-    When return_dict is True, returns metadata including erd_url, report_id, and summary.
-    """
+) -> str:
+    """Returns an HTML visualization of the logical data model."""
     result = _analyze_logical_data_model_internal(instance, str(database_name) if database_name is not None and not isinstance(database_name, str) else database_name, schema)
     html = _render_data_model_html(result, result.get("issues", {}))
-    
-    # Generate UUID and store report
-    report_id = uuid.uuid4().hex
-    with _REPORT_STORAGE_LOCK:
-        _REPORT_STORAGE[report_id] = {
-            "html": html,
-            "database": database_name or get_instance_config(instance)["db_name"],
-            "schema": schema or "all",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "instance": instance,
-        }
-    _persist_report_html(report_id, html)
-
-    if return_dict:
-        # Return dict with URL and metadata
-        return {
-            "message": f"ERD webpage generated for database '{database_name or get_instance_config(instance)['db_name']}'.",
-            "database": database_name or get_instance_config(instance)["db_name"],
-            "erd_url": f"{_public_base_url()}/data-model-analysis?id={report_id}",
-            "report_id": report_id,
-            "summary": result.get("summary", {}),
-            "url_hint": "Set MCP_PUBLIC_BASE_URL when the server runs behind Docker port mapping or a reverse proxy.",
-        }
-
     return html
 
 
 def db_sql2019_generate_ddl(
     instance: int = 1,
     database_name: str | None = None,
-    schema_name: str | None = None,
+    schema_name: str = "dbo",
     table_name: str | None = None,
-    schema: str | None = None,
-    object_name: str | None = None,
-    object_type: str | None = None,
 ) -> str:
     """Generate T-SQL CREATE TABLE script."""
-    if object_type and str(object_type).strip().lower() not in {"table", "tables"}:
-        raise ValueError("object_type must be 'table' for DDL generation")
-    schema_val = schema_name or schema or "dbo"
-    resolved_schema_name = schema_val
-    if not table_name and object_name:
-        parsed_schema, parsed_table = _parse_schema_qualified_name(object_name, default_schema=schema_val)
-        resolved_schema_name = parsed_schema
-        table_name = parsed_table
     if not table_name:
         raise ValueError("table_name is required")
     validate_instance(instance)
-    _enforce_table_scope_for_ident(resolved_schema_name, table_name)
+    _enforce_table_scope_for_ident(schema_name, table_name)
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
     conn = get_connection(db_name_str, instance=instance)
@@ -3189,13 +2509,13 @@ def db_sql2019_generate_ddl(
             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
             ORDER BY ORDINAL_POSITION
             """,
-            [resolved_schema_name, table_name],
+            [schema_name, table_name],
         )
         rows = cur.fetchall()
         if not rows:
-            raise ValueError(f"Table not found: {resolved_schema_name}.{table_name}")
+            raise ValueError(f"Table not found: {schema_name}.{table_name}")
 
-        lines = [f"CREATE TABLE [{resolved_schema_name}].[{table_name}] ("]
+        lines = [f"CREATE TABLE [{schema_name}]. [{table_name}] ("]
         col_lines = []
         for r in rows:
             line = f"    [{r[0]}] {_render_type(r)}"
@@ -3221,22 +2541,18 @@ def db_sql2019_create_db_user(
     _ensure_write_enabled()
     if not username or not password:
         raise ValueError("username and password are required")
-    if not _is_strong_password(password):
-        raise ValueError("Password does not meet minimum complexity requirements.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = str(db_name) if not isinstance(db_name, str) else db_name
     conn = get_connection(db_name_str, instance=instance)
     try:
         cur = conn.cursor()
-        # Use proper bracket escaping for identifiers to prevent injection
-        safe_username = str(username).replace("]", "]]")
+        # SQL Server does not allow parameterized identifiers or DDL keywords, so we must inline safely.
+        # Escape single quotes in password and username
+        safe_username = str(username).replace("'", "''")
         safe_password = str(password).replace("'", "''")
-        
-        # Build SQL without direct f-string "password" pattern to avoid scanner alerts
-        sql_parts = ["CREATE USER [", safe_username, "] WITH ", "PASSWORD = '", safe_password, "'"]
-        sql_stmt = "".join(sql_parts)
-        _execute_safe(cur, sql_stmt)
+        sql = f"CREATE USER [{safe_username}] WITH PASSWORD = '{safe_password}'"
+        _execute_safe(cur, sql)
         return {"status": "success", "username": username, "database": db_name}
     finally:
         conn.close()
@@ -3299,8 +2615,6 @@ def db_sql2019_create_object(
     _ensure_write_enabled()
     if not sql:
         raise ValueError("sql is required")
-    if _validate_single_statement(sql):
-        raise ValueError("Multi-statement SQL is not allowed. Only a single CREATE statement is permitted.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
@@ -3322,8 +2636,6 @@ def db_sql2019_alter_object(
     _ensure_write_enabled()
     if not sql:
         raise ValueError("sql is required")
-    if _validate_single_statement(sql):
-        raise ValueError("Multi-statement SQL is not allowed. Only a single ALTER statement is permitted.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
@@ -3345,8 +2657,6 @@ def db_sql2019_drop_object(
     _ensure_write_enabled()
     if not sql:
         raise ValueError("sql is required")
-    if _validate_single_statement(sql):
-        raise ValueError("Multi-statement SQL is not allowed. Only a single DROP statement is permitted.")
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     _run_query_internal(
@@ -3395,619 +2705,20 @@ def _register_dual_instance_tools():
             tool_name = f"{prefix}{name}"
             
             # Use a closure to capture function and instance correctly
-            def make_wrapper(f, inst, registered_tool_name: str):
+            def make_wrapper(f, inst):
                 @wraps(f)
                 def wrapper(*args, **kwargs):
                     # Remove instance from kwargs if it was passed by MCP (it shouldn't be, but just in case)
                     kwargs.pop("instance", None)
                     kwargs["instance"] = inst
-                    invocation_id = uuid.uuid4().hex
-                    start = time.perf_counter()
-                    context = {
-                        "instance": inst,
-                        "database_name": kwargs.get("database_name") or kwargs.get("database"),
-                        "schema": kwargs.get("schema") or kwargs.get("schema_name"),
-                        "table_name": kwargs.get("table_name"),
-                        "args_keys": sorted(list(kwargs.keys())),
-                    }
-                    function_name = f.__name__
-                    _log_tool_start(registered_tool_name, function_name, invocation_id, context)
-                    try:
-                        result = f(*args, **kwargs)
-                        elapsed_ms = int((time.perf_counter() - start) * 1000)
-                        _log_tool_success(registered_tool_name, function_name, invocation_id, elapsed_ms, result)
-                        return result
-                    except Exception as exc:
-                        elapsed_ms = int((time.perf_counter() - start) * 1000)
-                        _log_tool_error(registered_tool_name, function_name, invocation_id, elapsed_ms, exc)
-                        raise
+                    return f(*args, **kwargs)
                 return wrapper
             
-            wrapped = make_wrapper(func, instance, tool_name)
+            wrapped = make_wrapper(func, instance)
             mcp.tool(name=tool_name)(wrapped)
-
-            # Backward-compatible aliases for clients that call by function-style names.
-            # Example: db_sql2019_analyze_table_health / db_01_sql2019_analyze_table_health
-            func_name = getattr(func, "__name__", "")
-            alias_name_set: set[str] = set()
-            if func_name.startswith("db_sql2019_"):
-                suffix = func_name.removeprefix("db_sql2019_")
-                # Per-instance function-style alias.
-                alias_name_set.add(f"{prefix}sql2019_{suffix}")
-                # Unprefixed function-style alias routes to instance 1 for compatibility.
-                if instance == 1:
-                    alias_name_set.add(func_name)
-
-            # Per-instance map-key-style alias (e.g. db_01_sql2019_table_health).
-            alias_name_set.add(f"{prefix}sql2019_{name}")
-            # Unprefixed map-key-style alias routes to instance 1 for compatibility.
-            if instance == 1:
-                alias_name_set.add(f"db_sql2019_{name}")
-                # Typo-compatible aliases observed in some clients (db_db2019_*).
-                alias_name_set.add(f"db_db2019_{name}")
-                if func_name.startswith("db_sql2019_"):
-                    alias_name_set.add(func_name.replace("db_sql2019_", "db_db2019_", 1))
-
-            for alias_name in sorted(alias_name_set):
-                alias_wrapped = make_wrapper(func, instance, alias_name)
-                mcp.tool(name=alias_name)(alias_wrapped)
 
 
 _register_dual_instance_tools()
-
-
-# === Web UI Endpoints ===
-
-def _generate_sessions_monitor_html() -> str:
-    """Generate HTML for the sessions monitoring dashboard."""
-    return _generate_sessions_monitor_html_for_instance(1)
-
-
-def _fetch_sessions_monitor_snapshot(instance: int) -> dict[str, Any]:
-    validate_instance(instance)
-    inst_cfg = get_instance_config(instance)
-    conn = get_connection("master", instance=instance)
-    try:
-        cur = conn.cursor()
-        _execute_safe(
-            cur,
-            """
-            SELECT
-                SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS active_sessions,
-                SUM(CASE WHEN status = 'sleeping' THEN 1 ELSE 0 END) AS idle_sessions,
-                COUNT(*) AS total_sessions
-            FROM sys.dm_exec_sessions
-            WHERE is_user_process = 1
-            """,
-        )
-        summary_row = cur.fetchone()
-        _execute_safe(
-            cur,
-            """
-            SELECT TOP (15)
-                s.session_id,
-                s.login_name,
-                s.host_name,
-                s.program_name,
-                s.status,
-                DB_NAME(r.database_id) AS database_name,
-                COALESCE(r.command, '') AS command,
-                COALESCE(r.cpu_time, s.cpu_time, 0) AS cpu_time_ms,
-                COALESCE(r.total_elapsed_time, 0) AS elapsed_time_ms,
-                LEFT(REPLACE(REPLACE(COALESCE(t.text, ''), CHAR(13), ' '), CHAR(10), ' '), 220) AS sql_text
-            FROM sys.dm_exec_sessions AS s
-            LEFT JOIN sys.dm_exec_requests AS r ON s.session_id = r.session_id
-            OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS t
-            WHERE s.is_user_process = 1
-            ORDER BY
-                CASE WHEN r.session_id IS NULL THEN 1 ELSE 0 END,
-                COALESCE(r.total_elapsed_time, 0) DESC,
-                COALESCE(r.cpu_time, s.cpu_time, 0) DESC
-            """,
-        )
-        top_sessions = _rows_to_dicts(cur, cur.fetchall())
-        return {
-            "instance": instance,
-            "database": inst_cfg.get("db_name"),
-            "server": inst_cfg.get("db_server"),
-            "active_sessions": int(summary_row[0] or 0) if summary_row else 0,
-            "idle_sessions": int(summary_row[1] or 0) if summary_row else 0,
-            "total_sessions": int(summary_row[2] or 0) if summary_row else 0,
-            "top_sessions": top_sessions,
-            "available_instances": sorted(SETTINGS.db_instances.keys()),
-            "generated_at": _now_utc_iso(),
-        }
-    finally:
-        conn.close()
-
-
-def _render_session_rows(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return "<tr><td colspan='8' class='muted'>No user sessions were found.</td></tr>"
-
-    rendered_rows: list[str] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        rendered_rows.append(
-            "<tr>"
-            f"<td>{escape(str(row.get('session_id', '')))}</td>"
-            f"<td>{escape(str(row.get('login_name', '')))}</td>"
-            f"<td>{escape(str(row.get('host_name', '')))}</td>"
-            f"<td>{escape(str(row.get('status', '')))}</td>"
-            f"<td>{escape(str(row.get('database_name') or ''))}</td>"
-            f"<td>{escape(str(row.get('command', '')))}</td>"
-            f"<td>{escape(str(row.get('elapsed_time_ms', 0)))}</td>"
-            f"<td>{escape(str(row.get('sql_text', '')))}</td>"
-            "</tr>"
-        )
-    return "".join(rendered_rows)
-
-
-def _generate_sessions_monitor_html_for_instance(instance: int) -> str:
-    snapshot = _fetch_sessions_monitor_snapshot(instance)
-    links = []
-    for instance_id in snapshot.get("available_instances", []):
-        active_class = "instance-link active" if instance_id == instance else "instance-link"
-        links.append(f"<a class='{active_class}' href='/sessions-monitor?instance={instance_id}'>Instance {instance_id}</a>")
-    switcher = "".join(links)
-    return f"""
-    <html>
-    <head>
-        <title>SQL Server Sessions Monitor</title>
-        <meta http-equiv="refresh" content="15">
-        <style>
-            body {{ font-family: 'Segoe UI', sans-serif; margin: 0; background: #eef2ff; color: #1f2937; }}
-            .page {{ max-width: 1400px; margin: 0 auto; padding: 28px 24px 48px; }}
-            .hero {{ background: linear-gradient(135deg, #0f172a, #1d4ed8); color: white; border-radius: 18px; padding: 24px; box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18); }}
-            .hero h1 {{ margin: 0 0 6px; }}
-            .hero p {{ margin: 4px 0 0; color: rgba(255,255,255,0.86); }}
-            .switcher {{ margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }}
-            .instance-link {{ display: inline-block; padding: 8px 14px; border-radius: 999px; text-decoration: none; color: white; background: rgba(255,255,255,0.18); }}
-            .instance-link.active {{ background: white; color: #1d4ed8; font-weight: 700; }}
-            .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 24px 0; }}
-            .card, .table-panel {{ background: white; border-radius: 16px; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }}
-            .card {{ padding: 18px; }}
-            .label {{ font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
-            .value {{ font-size: 28px; font-weight: 700; margin-top: 8px; }}
-            .table-panel {{ overflow: hidden; }}
-            .panel-head {{ padding: 16px 18px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; gap: 12px; }}
-            .panel-title {{ font-size: 20px; font-weight: 700; }}
-            .muted {{ color: #64748b; }}
-            table {{ width: 100%; border-collapse: collapse; }}
-            th, td {{ padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; vertical-align: top; }}
-            th {{ background: #f8fafc; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #64748b; }}
-            code {{ font-family: Consolas, monospace; font-size: 12px; }}
-        </style>
-    </head>
-    <body>
-        <div class="page">
-            <div class="hero">
-                <h1>SQL Server Sessions Monitor</h1>
-                <p>Instance {snapshot['instance']} on {escape(str(snapshot['server']))} watching database {escape(str(snapshot['database']))}.</p>
-                <div class="switcher">{switcher}</div>
-            </div>
-            <div class="stats">
-                <div class="card"><div class="label">Active Sessions</div><div class="value">{snapshot['active_sessions']}</div></div>
-                <div class="card"><div class="label">Idle Sessions</div><div class="value">{snapshot['idle_sessions']}</div></div>
-                <div class="card"><div class="label">Total Sessions</div><div class="value">{snapshot['total_sessions']}</div></div>
-                <div class="card"><div class="label">Generated At</div><div class="value" style="font-size:16px">{escape(str(snapshot['generated_at']))}</div></div>
-            </div>
-            <div class="table-panel">
-                <div class="panel-head">
-                    <div class="panel-title">Top Sessions</div>
-                    <div class="muted">Auto-refreshes every 15 seconds</div>
-                </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Session</th><th>Login</th><th>Host</th><th>Status</th><th>Database</th><th>Command</th><th>Elapsed ms</th><th>SQL</th>
-                        </tr>
-                    </thead>
-                    <tbody>{_render_session_rows(snapshot['top_sessions'])}</tbody>
-                </table>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-
-
-# ============================================================================
-# Generative Dashboard Tools (FastMCP 3.2.0+ with GenerativeUI)
-# ============================================================================
-# These tools dynamically generate Prefab UI dashboards using LLM-written code.
-# The LLM sees examples of Prefab components and generates code in real-time.
-# This allows rich, interactive dashboards without pre-built HTML.
-
-def db_sql2019_generate_sessions_dashboard(instance: int = 1) -> dict[str, Any]:
-    """
-    Generate a dynamic Prefab UI dashboard for real-time session monitoring.
-    
-    The LLM writes Python code using Prefab components (charts, cards, tables)
-    to visualize active sessions, their status, and query performance metrics.
-    The dashboard updates dynamically as the user's analysis progresses.
-    
-    Returns a Prefab app definition that the browser renders in real-time as tokens are generated.
-    """
-    try:
-        if not GENERATIVE_UI_AVAILABLE:
-            return {"status": "error", "message": "GenerativeUI not available. Install with: pip install fastmcp[apps]"}
-        
-        # Fetch current sessions metadata for context
-        inst_cfg = get_instance_config(instance)
-        conn = get_connection(instance=instance)
-        try:
-            cur = conn.cursor()
-            # Lightweight query for session counts
-            _execute_safe(cur, """
-                SELECT COUNT(*) as active_sessions
-                FROM sys.dm_exec_sessions 
-                WHERE session_id > 50
-            """)
-            row = cur.fetchone()
-            active_sessions = row[0] if row else 0
-        finally:
-            conn.close()
-        
-        # Return context for the LLM to build the dashboard
-        return {
-            "status": "ready",
-            "tool_name": "generate_prefab_ui",
-            "instructions": """
-Generate a Prefab Python UI dashboard for SQL Server session monitoring.
-
-Use these Prefab components:
-- Column, Row, Heading, Text, Card, CardContent, Badge
-- from prefab_ui.components.charts import BarChart, LineChart, ChartSeries
-
-Include:
-1. Header with database name and instance info
-2. Session stats cards (Active, Idle, Total)
-3. A chart showing session duration distribution
-4. A table listing top sessions with status
-
-Example structure:
-    with Column(gap=6, css_class="p-6"):
-        Heading(f"Session Monitor - {database_name}")
-        with Row(gap=4):
-            # Stat cards here
-        # Chart and table here
-            """,
-            "data": {
-                "database": inst_cfg.get("db_name"),
-                "server": inst_cfg.get("db_server"),
-                "active_sessions": active_sessions,
-                "instance": instance,
-                "timestamp": _now_utc_iso()
-            }
-        }
-    except Exception as e:
-        logger.error(f"Error in db_sql2019_generate_sessions_dashboard: {e}")
-        return {"status": "error", "message": str(e)}
-
-
-def db_sql2019_generate_model_diagram(database_name: str, instance: int = 1) -> dict[str, Any]:
-    """
-    Generate a dynamic Prefab UI diagram for the logical data model.
-    
-    The LLM analyzes the database schema and writes Python code using Prefab
-    to visualize entity relationships, constraints, and health metrics.
-    
-    Returns a Prefab app definition with an interactive schema visualization.
-    """
-    try:
-        if not GENERATIVE_UI_AVAILABLE:
-            return {"status": "error", "message": "GenerativeUI not available. Install with: pip install fastmcp[apps]"}
-        
-        # Get schema info for the LLM to reference
-        inst_cfg = get_instance_config(instance)
-        conn = get_connection(instance=instance)
-        db_ident = _quote_sql_ident(database_name)
-        try:
-            cur = conn.cursor()
-            # Count tables and relationships
-            _execute_safe(cur, f"""
-                SELECT COUNT(*) as table_count
-                FROM {db_ident}.INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_TYPE = 'BASE TABLE'
-            """)
-            tables_row = cur.fetchone()
-            table_count = tables_row[0] if tables_row else 0
-            
-            _execute_safe(cur, f"""
-                SELECT COUNT(*) as fk_count
-                FROM {db_ident}.INFORMATION_SCHEMA.TABLE_CONSTRAINTS
-                WHERE CONSTRAINT_TYPE = 'FOREIGN KEY'
-            """)
-            fk_row = cur.fetchone()
-            fk_count = fk_row[0] if fk_row else 0
-        finally:
-            conn.close()
-        
-        return {
-            "status": "ready",
-            "tool_name": "generate_prefab_ui",
-            "instructions": """
-Generate a Prefab Python UI dashboard for the logical data model.
-
-Use these Prefab components:
-- Column, Row, Heading, Text, Badge, Card, CardContent
-- from prefab_ui.components.charts import BarChart, ChartSeries
-- Heading levels, color-coded badges for constraints
-
-Include:
-1. Title with database name
-2. Summary badges (Table Count, FK Count, Health Score)
-3. A chart showing table size distribution
-4. Key constraints and normalization insights
-5. Recommendations for schema improvements
-
-Example structure:
-    with Column(gap=6, css_class="p-8"):
-        Heading(f"Data Model - {database_name}")
-        with Row(gap=4):
-            # Summary badges
-        # Charts and insights
-            """,
-            "data": {
-                "database": database_name,
-                "server": inst_cfg.get("db_server"),
-                "table_count": table_count,
-                "foreign_key_count": fk_count,
-                "instance": instance,
-                "timestamp": _now_utc_iso()
-            }
-        }
-    except Exception as e:
-        logger.error(f"Error in db_sql2019_generate_model_diagram: {e}")
-        return {"status": "error", "message": str(e)}
-
-
-def db_sql2019_generate_performance_dashboard(database_name: str, instance: int = 1) -> dict[str, Any]:
-    """
-    Generate a dynamic Prefab UI dashboard for performance metrics.
-    
-    The LLM writes Python code to visualize query performance, index fragmentation,
-    CPU usage, and other key performance indicators in an interactive dashboard.
-    
-    Returns a Prefab app definition with performance visualizations.
-    """
-    try:
-        validate_instance(instance)
-        db_name = database_name or get_instance_config(instance)["db_name"]
-        db_name_str = _normalize_db_name(db_name)
-        inst_cfg = get_instance_config(instance)
-
-        top_q = db_sql2019_show_top_queries(
-            instance=instance,
-            database_name=db_name_str,
-            metric="duration",
-            limit=10,
-            view="standard",
-            page=1,
-            page_size=50,
-        )
-        frag = db_sql2019_check_fragmentation(
-            instance=instance,
-            database_name=db_name_str,
-            page=1,
-            page_size=50,
-        )
-        sec_perf = db_sql2019_db_sec_perf_metrics(instance=instance, database_name=db_name_str)
-
-        queries = top_q.get("queries", []) if isinstance(top_q, dict) else []
-        metric_values = [
-            q.get("metric_value", 0)
-            for q in queries
-            if isinstance(q, dict) and isinstance(q.get("metric_value", 0), (int, float))
-        ]
-        avg_query_metric = (sum(metric_values) / len(metric_values)) if metric_values else None
-        max_query_metric = max(metric_values) if metric_values else None
-
-        frag_items = frag.get("items", []) if isinstance(frag, dict) else []
-        frag_vals = [
-            r.get("avg_fragmentation_in_percent", 0)
-            for r in frag_items
-            if isinstance(r, dict) and isinstance(r.get("avg_fragmentation_in_percent", 0), (int, float))
-        ]
-        avg_frag = (sum(frag_vals) / len(frag_vals)) if frag_vals else 0.0
-
-        report_payload = {
-            "database": db_name,
-            "instance": instance,
-            "server": inst_cfg.get("db_server"),
-            "timestamp": _now_utc_iso(),
-            "query_store_enabled": top_q.get("query_store_enabled") if isinstance(top_q, dict) else None,
-            "kpis": {
-                "avg_query_duration_metric": round(avg_query_metric, 2) if isinstance(avg_query_metric, (int, float)) else None,
-                "max_query_duration_metric": max_query_metric,
-                "fragmentation_avg_percent": round(avg_frag, 2),
-                "fragmentation_high_count_ge_30": len([v for v in frag_vals if v >= 30]),
-                "fragmentation_medium_count_10_29": len([v for v in frag_vals if 10 <= v < 30]),
-                "data_size_mb": sec_perf.get("data_size_mb") if isinstance(sec_perf, dict) else None,
-                "open_transactions": sec_perf.get("open_transactions") if isinstance(sec_perf, dict) else None,
-                "user_count": sec_perf.get("user_count") if isinstance(sec_perf, dict) else None,
-            },
-            "top_slow_queries": [
-                {
-                    "query_id": q.get("query_id"),
-                    "metric_value": q.get("metric_value"),
-                    "count_executions": q.get("count_executions"),
-                    "last_execution_time": q.get("last_execution_time"),
-                    "query_sql_text": q.get("query_sql_text"),
-                    "query_plan": q.get("query_plan"),
-                    "mermaid_plan": _convert_sqlplan_to_mermaid(str(q.get("query_plan") or "")),
-                }
-                for q in queries[:5]
-                if isinstance(q, dict)
-            ],
-            "top_fragmented_indexes": [
-                {
-                    "schema_name": r.get("schema_name"),
-                    "table_name": r.get("table_name"),
-                    "index_name": r.get("index_name"),
-                    "avg_fragmentation_in_percent": r.get("avg_fragmentation_in_percent"),
-                    "page_count": r.get("page_count"),
-                }
-                for r in frag_items[:5]
-                if isinstance(r, dict)
-            ],
-            "top_fragmented_tables": sorted(
-                [
-                    {
-                        "schema_name": r.get("schema_name"),
-                        "table_name": r.get("table_name"),
-                        "max_fragmentation": float(r.get("avg_fragmentation_in_percent") or 0.0),
-                        "page_count_total": r.get("page_count"),
-                    }
-                    for r in frag_items
-                    if isinstance(r, dict) and r.get("index_name")
-                ],
-                key=lambda x: float(x.get("max_fragmentation") or 0.0),
-                reverse=True
-            )[:5],
-        }
-
-        html = _render_performance_dashboard_html(report_payload)
-        report_id = uuid.uuid4().hex
-        with _REPORT_STORAGE_LOCK:
-            _REPORT_STORAGE[report_id] = {
-                "html": html,
-                "database": db_name,
-                "instance": instance,
-                "timestamp": report_payload["timestamp"],
-                "report_type": "performance-dashboard",
-            }
-        _persist_report_html(report_id, html)
-
-        return {
-            "status": "success",
-            "message": f"Performance dashboard webpage generated for database '{db_name}'.",
-            "database": db_name,
-            "instance": instance,
-            "performance_dashboard_url": f"{_public_base_url()}/performance-dashboard?id={report_id}",
-            "report_id": report_id,
-            "kpis": report_payload["kpis"],
-            "url_hint": "Set MCP_PUBLIC_BASE_URL when the server runs behind Docker port mapping or a reverse proxy.",
-        }
-    except Exception as e:
-        logger.error(f"Error in db_sql2019_generate_performance_dashboard: {e}")
-        return {"status": "error", "message": str(e)}
-
-
-def _register_generative_dashboard_tools() -> None:
-    tool_map = {
-        "generate_sessions_dashboard": db_sql2019_generate_sessions_dashboard,
-        "generate_model_diagram": db_sql2019_generate_model_diagram,
-        "generate_performance_dashboard": db_sql2019_generate_performance_dashboard,
-    }
-
-    for instance in [1, 2]:
-        prefix = "db_01_" if instance == 1 else "db_02_"
-        for name, func in tool_map.items():
-            tool_name = f"{prefix}{name}"
-
-            def make_wrapper(f, inst, registered_tool_name: str):
-                @wraps(f)
-                def wrapper(*args, **kwargs):
-                    kwargs.pop("instance", None)
-                    kwargs["instance"] = inst
-                    invocation_id = uuid.uuid4().hex
-                    start = time.perf_counter()
-                    context = {
-                        "instance": inst,
-                        "database_name": kwargs.get("database_name") or kwargs.get("database"),
-                        "schema": kwargs.get("schema") or kwargs.get("schema_name"),
-                        "table_name": kwargs.get("table_name"),
-                        "args_keys": sorted(list(kwargs.keys())),
-                    }
-                    function_name = f.__name__
-                    _log_tool_start(registered_tool_name, function_name, invocation_id, context)
-                    try:
-                        result = f(*args, **kwargs)
-                        elapsed_ms = int((time.perf_counter() - start) * 1000)
-                        _log_tool_success(registered_tool_name, function_name, invocation_id, elapsed_ms, result)
-                        return result
-                    except Exception as exc:
-                        elapsed_ms = int((time.perf_counter() - start) * 1000)
-                        _log_tool_error(registered_tool_name, function_name, invocation_id, elapsed_ms, exc)
-                        raise
-                return wrapper
-
-            wrapped = make_wrapper(func, instance, tool_name)
-            mcp.tool(name=tool_name)(wrapped)
-
-            func_name = getattr(func, "__name__", "")
-            alias_name_set: set[str] = set()
-            if func_name.startswith("db_sql2019_"):
-                suffix = func_name.removeprefix("db_sql2019_")
-                alias_name_set.add(f"{prefix}sql2019_{suffix}")
-                if instance == 1:
-                    alias_name_set.add(func_name)
-
-            alias_name_set.add(f"{prefix}sql2019_{name}")
-            if instance == 1:
-                alias_name_set.add(f"db_sql2019_{name}")
-                alias_name_set.add(f"db_db2019_{name}")
-                if func_name.startswith("db_sql2019_"):
-                    alias_name_set.add(func_name.replace("db_sql2019_", "db_db2019_", 1))
-
-            for alias_name in sorted(alias_name_set):
-                alias_wrapped = make_wrapper(func, instance, alias_name)
-                mcp.tool(name=alias_name)(alias_wrapped)
-
-
-_register_generative_dashboard_tools()
-
-
-try:
-    from starlette.responses import HTMLResponse, JSONResponse
-
-    @mcp.custom_route("/data-model-analysis", methods=["GET"], name="data_model_analysis")
-    async def data_model_analysis_handler(request):
-        """Handler for /data-model-analysis endpoint."""
-        report_id = request.query_params.get("id")
-        if not report_id:
-            return JSONResponse({"error": "Missing 'id' parameter"}, status_code=400)
-
-        html = _get_report_html(report_id)
-
-        if html is None:
-            return JSONResponse({"error": f"Report '{report_id}' not found"}, status_code=404)
-
-        return HTMLResponse(content=html, status_code=200)
-
-    @mcp.custom_route("/performance-dashboard", methods=["GET"], name="performance_dashboard")
-    async def performance_dashboard_handler(request):
-        """Handler for /performance-dashboard endpoint."""
-        report_id = request.query_params.get("id")
-        if not report_id:
-            return JSONResponse({"error": "Missing 'id' parameter"}, status_code=400)
-
-        html = _get_report_html(report_id)
-        if html is None:
-            return JSONResponse({"error": f"Report '{report_id}' not found"}, status_code=404)
-
-        return HTMLResponse(content=html, status_code=200)
-
-    @mcp.custom_route("/sessions-monitor", methods=["GET"], name="sessions_monitor")
-    async def sessions_monitor_handler(request):
-        """Handler for /sessions-monitor endpoint."""
-        raw_instance = request.query_params.get("instance", "1")
-        try:
-            instance = int(raw_instance)
-            html = _generate_sessions_monitor_html_for_instance(instance)
-            return HTMLResponse(content=html, status_code=200)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=400)
-        except Exception as exc:
-            logger.exception("Failed to render sessions monitor for instance=%s", raw_instance)
-            return JSONResponse({"error": str(exc)}, status_code=500)
-
-except Exception as e:
-    logger.exception("Failed to add web UI routes: %s", e)
-    raise
 
 
 if __name__ == "__main__":

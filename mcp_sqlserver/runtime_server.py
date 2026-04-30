@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -66,18 +67,6 @@ def main() -> None:
 			"allow_write": settings.allow_write,
 		},
 	)
-
-	# Initialize connection pools for all configured instances.
-	# Must be called here (not at import time) so the process is fully
-	# initialised and environment variables are guaranteed to be loaded.
-	try:
-		module.initialize_connection_pools()
-		logger.info(
-			"Connection pools initialized for instances: %s",
-			sorted(settings.db_instances.keys()),
-		)
-	except Exception as pool_exc:
-		logger.warning("Connection pool initialization failed: %s", pool_exc)
 
 	if transport in {"http", "sse"}:
 		run_kwargs: dict[str, Any] = {}

@@ -1,25 +1,18 @@
-# Exclude everything by default; explicitly include only files required
-# to build and run the MCP SQL Server container image.
-**
-
-# Build/runtime entrypoints
-!requirements.txt
-!server_startup.py
-!server.py
-
-# Application package
-!mcp_sqlserver/
-!mcp_sqlserver/**
-
-# Exclude local-only artifacts inside the package
-mcp_sqlserver/__pycache__/
-
-# Exclude test, docs, and local artifacts
-logs/
-docs/
-plan/
-testing/
+.git
+.gitignore
+.venv
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.env
+.env.*
+*.log
 tests/
+testing/
+pytest_output.txt
 pytest_results.txt
-test_output.txt
-setup_test_simple.sql
+compile_report.txt
+compile_check_output.txt
