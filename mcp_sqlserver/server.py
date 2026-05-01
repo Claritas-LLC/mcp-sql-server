@@ -1361,7 +1361,7 @@ def _run_query_internal(
         except pyodbc.ProgrammingError as e:
             # For DDL (CREATE/ALTER/DROP), fetching results raises ProgrammingError: No results. Previous SQL was not a query.
             if tool_name in {"db_sql2019_create_object", "db_sql2019_alter_object", "db_sql2019_drop_object"}:
-                return {"status": "success", "message": "DDL executed successfully."}
+                return [{"status": "success", "message": "DDL executed successfully."}]
             raise
     finally:
         conn.close()
