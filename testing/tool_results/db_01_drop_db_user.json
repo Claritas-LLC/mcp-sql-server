@@ -1,15 +1,17 @@
 {
   "tool_name": "db_01_drop_db_user",
+  "tool_suffix": "drop_db_user",
+  "instance": "db_01",
   "args": {
-    "database_name": "TEST_DB",
-    "username": "mcp_tmp_user"
+    "username": "mcp_tmp_user",
+    "database_name": "test1"
   },
   "status": "SUCCESS",
-  "duration_ms": 12.72,
-  "captured_at_utc": "2026-04-14T05:14:41.645650+00:00",
+  "duration_ms": 52.28,
+  "captured_at_utc": "2026-05-01T13:14:17.381873+00:00",
   "result": {
-    "status": "not_found",
+    "status": "success",
     "username": "mcp_tmp_user",
-    "database": "TEST_DB"
+    "database": "test1"
   }
 }

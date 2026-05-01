@@ -1,0 +1,281 @@
+
+=== MCP Server Banner ===
+SQL Server MCP Server | FastMCP version: 3.2.4
+========================
+
+[16:54:59] === Phase 1: Pre-flight ===
+[16:54:59]   Pinging db_01_ping (instance 1)...
+[16:55:00]     OK  nonprod_preflight_ping_i1.json
+[16:55:00]   Pinging db_02_ping (instance 2)...
+[16:55:00]     OK  nonprod_preflight_ping_i2.json
+[16:55:00] === Phase 2: Discovery ===
+[16:55:00]   db_01_list_databases...
+[16:55:01]     Saved nonprod_db_01_list_databases.json
+[16:55:01]   list_tables for db_01_USGISPRO_800...
+[16:55:01]     schema='dbo' table='Account'
+[16:55:01]   list_tables for db_01_US_RT_User_800...
+[16:55:19]     schema='dbo' table='000D6C78-5784-4A7F-8C31-3DEEF4457529'
+[16:55:19]   db_02_list_databases...
+[16:55:19]     Saved nonprod_db_02_list_databases.json
+[16:55:19]   list_tables for db_02_ListGateway...
+[16:55:20]     schema='dbo' table='bb_202101_bg'
+[16:55:20]   list_tables for db_02_US_UserData...
+[16:55:22]     schema='dbo' table='_ln_155_056fef58-efd6-48d2-94e5-9009d3111549'
+[16:55:22]   Saved testing\nonprod_args_templates.json with 4 entries
+[16:55:22] === Phase 3 + 4: Executing read-only tools ===
+[16:55:22]   --- Suffix: ping ---
+[16:55:22]     [SKIP] db_01_ping db=N/A -> nonprod_db_01_instance1_ping.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_ping db=N/A -> nonprod_db_02_instance2_ping.json (already SUCCESS)
+[16:55:22]   --- Suffix: list_databases ---
+[16:55:22]     [SKIP] db_01_list_databases db=N/A -> nonprod_db_01_instance1_list_databases.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_list_databases db=N/A -> nonprod_db_02_instance2_list_databases.json (already SUCCESS)
+[16:55:22]   --- Suffix: list_tables ---
+[16:55:22]     [SKIP] db_01_list_tables db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_list_tables.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_list_tables db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_list_tables.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_list_tables db=ListGateway -> nonprod_db_02_ListGateway_list_tables.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_list_tables db=US_UserData -> nonprod_db_02_US_UserData_list_tables.json (already SUCCESS)
+[16:55:22]   --- Suffix: get_schema ---
+[16:55:22]     [SKIP] db_01_get_schema db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_get_schema.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_get_schema db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_get_schema.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_get_schema db=ListGateway -> nonprod_db_02_ListGateway_get_schema.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_get_schema db=US_UserData -> nonprod_db_02_US_UserData_get_schema.json (already SUCCESS)
+[16:55:22]   --- Suffix: execute_query ---
+[16:55:22]     [SKIP] db_01_execute_query db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_execute_query.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_execute_query db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_execute_query.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_execute_query db=ListGateway -> nonprod_db_02_ListGateway_execute_query.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_execute_query db=US_UserData -> nonprod_db_02_US_UserData_execute_query.json (already SUCCESS)
+[16:55:22]   --- Suffix: run_query ---
+[16:55:22]     [SKIP] db_01_run_query db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_run_query.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_run_query db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_run_query.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_run_query db=ListGateway -> nonprod_db_02_ListGateway_run_query.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_run_query db=US_UserData -> nonprod_db_02_US_UserData_run_query.json (already SUCCESS)
+[16:55:22]   --- Suffix: list_objects ---
+[16:55:22]     [SKIP] db_01_list_objects db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_list_objects.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_list_objects db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_list_objects.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_list_objects db=ListGateway -> nonprod_db_02_ListGateway_list_objects.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_list_objects db=US_UserData -> nonprod_db_02_US_UserData_list_objects.json (already SUCCESS)
+[16:55:22]   --- Suffix: index_fragmentation ---
+[16:55:22]     [SKIP] db_01_index_fragmentation db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_index_fragmentation.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_index_fragmentation db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_index_fragmentation.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_index_fragmentation db=ListGateway -> nonprod_db_02_ListGateway_index_fragmentation.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_index_fragmentation db=US_UserData -> nonprod_db_02_US_UserData_index_fragmentation.json (already SUCCESS)
+[16:55:22]   --- Suffix: index_health ---
+[16:55:22]     [SKIP] db_01_index_health db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_index_health.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_index_health db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_index_health.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_index_health db=ListGateway -> nonprod_db_02_ListGateway_index_health.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_index_health db=US_UserData -> nonprod_db_02_US_UserData_index_health.json (already SUCCESS)
+[16:55:22]   --- Suffix: table_health ---
+[16:55:22]     [SKIP] db_01_table_health db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_table_health.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_table_health db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_table_health.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_table_health db=ListGateway -> nonprod_db_02_ListGateway_table_health.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_table_health db=US_UserData -> nonprod_db_02_US_UserData_table_health.json (already SUCCESS)
+[16:55:22]   --- Suffix: db_stats ---
+[16:55:22]     [SKIP] db_01_db_stats db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_db_stats.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_db_stats db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_db_stats.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_db_stats db=ListGateway -> nonprod_db_02_ListGateway_db_stats.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_db_stats db=US_UserData -> nonprod_db_02_US_UserData_db_stats.json (already SUCCESS)
+[16:55:22]   --- Suffix: server_info_mcp ---
+[16:55:22]     [SKIP] db_01_server_info_mcp db=N/A -> nonprod_db_01_instance1_server_info_mcp.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_server_info_mcp db=N/A -> nonprod_db_02_instance2_server_info_mcp.json (already SUCCESS)
+[16:55:22]   --- Suffix: show_top_queries ---
+[16:55:22]     [SKIP] db_01_show_top_queries db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_show_top_queries.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_show_top_queries db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_show_top_queries.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_show_top_queries db=ListGateway -> nonprod_db_02_ListGateway_show_top_queries.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_show_top_queries db=US_UserData -> nonprod_db_02_US_UserData_show_top_queries.json (already SUCCESS)
+[16:55:22]   --- Suffix: check_fragmentation ---
+[16:55:22]     [SKIP] db_01_check_fragmentation db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_check_fragmentation.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_check_fragmentation db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_check_fragmentation.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_check_fragmentation db=ListGateway -> nonprod_db_02_ListGateway_check_fragmentation.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_check_fragmentation db=US_UserData -> nonprod_db_02_US_UserData_check_fragmentation.json (already SUCCESS)
+[16:55:22]   --- Suffix: db_sec_perf_metrics ---
+[16:55:22]     [SKIP] db_01_db_sec_perf_metrics db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_db_sec_perf_metrics.json (already SUCCESS)
+[16:55:22]     [SKIP] db_01_db_sec_perf_metrics db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_db_sec_perf_metrics.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_db_sec_perf_metrics db=ListGateway -> nonprod_db_02_ListGateway_db_sec_perf_metrics.json (already SUCCESS)
+[16:55:22]     [SKIP] db_02_db_sec_perf_metrics db=US_UserData -> nonprod_db_02_US_UserData_db_sec_perf_metrics.json (already SUCCESS)
+[16:55:22]   --- Suffix: explain_query ---
+[05/01/26 12:55:23] Error calling tool 'db_01_explain_query'                    
+                    +----------- Traceback (most recent call last) ------------+
+                    | C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.1 |
+                    | 4-64\Lib\site-packages\fastmcp\server\server.py:1240 in  |
+                    | call_tool                                                |
+                    |                                                          |
+                    | C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.1 |
+                    | 4-64\Lib\site-packages\fastmcp\tools\base.py:377 in _run |
+                    |                                                          |
+                    |                 ... 7 frames hidden ...                  |
+                    |                                                          |
+                    | C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-ser |
+                    | ver\mcp_sqlserver\server.py:2538 in                      |
+                    | db_sql2019_explain_query                                 |
+                    |                                                          |
+                    |   2535             _execute_safe(cur, f"USE [{_validate_ |
+                    |   2536         _execute_safe(cur, "SET SHOWPLAN_ALL ON") |
+                    |   2537         try:                                      |
+                    | > 2538             _execute_safe(cur, sql)               |
+                    |   2539             plan_rows = _rows_to_dicts(cur, cur.f |
+                    |   2540         finally:                                  |
+                    |   2541             _execute_safe(cur, "SET SHOWPLAN_ALL  |
+                    |                                                          |
+                    | C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-ser |
+                    | ver\mcp_sqlserver\server.py:743 in _execute_safe         |
+                    |                                                          |
+                    |    740                                                   |
+                    |    741 def _execute_safe(cur: pyodbc.Cursor, sql: str, p |
+                    |        None = None) -> None:                             |
+                    |    742     if params is None:                            |
+                    | >  743         cur.execute(sql)                          |
+                    |    744     else:                                         |
+                    |    745         cur.execute(sql, params)                  |
+                    |    746                                                   |
+                    +----------------------------------------------------------+
+                    ProgrammingError: ('42000', "[42000] [Microsoft][ODBC Driver
+                    17 for SQL Server][SQL Server]SHOWPLAN permission denied in 
+                    database 'USGISPRO_800'. (262) (SQLExecDirectW)")           
+[16:55:23]   DEFECT logged: DEF-001 ù Error calling tool 'db_01_explain_query': ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Serv
+[16:55:23]     [FAIL] db_01_explain_query db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_explain_query.json (639ms)
+                    Error calling tool 'db_01_explain_query'                    
+                    +----------- Traceback (most recent call last) ------------+
+                    | C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.1 |
+                    | 4-64\Lib\site-packages\fastmcp\server\server.py:1240 in  |
+                    | call_tool                                                |
+                    |                                                          |
+                    | C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.1 |
+                    | 4-64\Lib\site-packages\fastmcp\tools\base.py:377 in _run |
+                    |                                                          |
+                    |                 ... 7 frames hidden ...                  |
+                    |                                                          |
+                    | C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-ser |
+                    | ver\mcp_sqlserver\server.py:2538 in                      |
+                    | db_sql2019_explain_query                                 |
+                    |                                                          |
+                    |   2535             _execute_safe(cur, f"USE [{_validate_ |
+                    |   2536         _execute_safe(cur, "SET SHOWPLAN_ALL ON") |
+                    |   2537         try:                                      |
+                    | > 2538             _execute_safe(cur, sql)               |
+                    |   2539             plan_rows = _rows_to_dicts(cur, cur.f |
+                    |   2540         finally:                                  |
+                    |   2541             _execute_safe(cur, "SET SHOWPLAN_ALL  |
+                    |                                                          |
+                    | C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-ser |
+                    | ver\mcp_sqlserver\server.py:743 in _execute_safe         |
+                    |                                                          |
+                    |    740                                                   |
+                    |    741 def _execute_safe(cur: pyodbc.Cursor, sql: str, p |
+                    |        None = None) -> None:                             |
+                    |    742     if params is None:                            |
+                    | >  743         cur.execute(sql)                          |
+                    |    744     else:                                         |
+                    |    745         cur.execute(sql, params)                  |
+                    |    746                                                   |
+                    +----------------------------------------------------------+
+                    ProgrammingError: ('42000', "[42000] [Microsoft][ODBC Driver
+                    17 for SQL Server][SQL Server]SHOWPLAN permission denied in 
+                    database 'US_RT_User_800'. (262) (SQLExecDirectW)")         
+[16:55:24]   DEFECT logged: DEF-002 ù Error calling tool 'db_01_explain_query': ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Serv
+[16:55:24]     [FAIL] db_01_explain_query db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_explain_query.json (656ms)
+[05/01/26 12:55:24] Error calling tool 'db_02_explain_query'                    
+                    +----------- Traceback (most recent call last) ------------+
+                    | C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.1 |
+                    | 4-64\Lib\site-packages\fastmcp\server\server.py:1240 in  |
+                    | call_tool                                                |
+                    |                                                          |
+                    | C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.1 |
+                    | 4-64\Lib\site-packages\fastmcp\tools\base.py:377 in _run |
+                    |                                                          |
+                    |                 ... 7 frames hidden ...                  |
+                    |                                                          |
+                    | C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-ser |
+                    | ver\mcp_sqlserver\server.py:2538 in                      |
+                    | db_sql2019_explain_query                                 |
+                    |                                                          |
+                    |   2535             _execute_safe(cur, f"USE [{_validate_ |
+                    |   2536         _execute_safe(cur, "SET SHOWPLAN_ALL ON") |
+                    |   2537         try:                                      |
+                    | > 2538             _execute_safe(cur, sql)               |
+                    |   2539             plan_rows = _rows_to_dicts(cur, cur.f |
+                    |   2540         finally:                                  |
+                    |   2541             _execute_safe(cur, "SET SHOWPLAN_ALL  |
+                    |                                                          |
+                    | C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-ser |
+                    | ver\mcp_sqlserver\server.py:743 in _execute_safe         |
+                    |                                                          |
+                    |    740                                                   |
+                    |    741 def _execute_safe(cur: pyodbc.Cursor, sql: str, p |
+                    |        None = None) -> None:                             |
+                    |    742     if params is None:                            |
+                    | >  743         cur.execute(sql)                          |
+                    |    744     else:                                         |
+                    |    745         cur.execute(sql, params)                  |
+                    |    746                                                   |
+                    +----------------------------------------------------------+
+                    ProgrammingError: ('42000', "[42000] [Microsoft][ODBC Driver
+                    17 for SQL Server][SQL Server]SHOWPLAN permission denied in 
+                    database 'ListGateway'. (262) (SQLExecDirectW)")            
+[16:55:24]   DEFECT logged: DEF-003 ù Error calling tool 'db_02_explain_query': ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Serv
+[16:55:24]     [FAIL] db_02_explain_query db=ListGateway -> nonprod_db_02_ListGateway_explain_query.json (663ms)
+[05/01/26 12:55:25] Error calling tool 'db_02_explain_query'                    
+                    +----------- Traceback (most recent call last) ------------+
+                    | C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.1 |
+                    | 4-64\Lib\site-packages\fastmcp\server\server.py:1240 in  |
+                    | call_tool                                                |
+                    |                                                          |
+                    | C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.1 |
+                    | 4-64\Lib\site-packages\fastmcp\tools\base.py:377 in _run |
+                    |                                                          |
+                    |                 ... 7 frames hidden ...                  |
+                    |                                                          |
+                    | C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-ser |
+                    | ver\mcp_sqlserver\server.py:2538 in                      |
+                    | db_sql2019_explain_query                                 |
+                    |                                                          |
+                    |   2535             _execute_safe(cur, f"USE [{_validate_ |
+                    |   2536         _execute_safe(cur, "SET SHOWPLAN_ALL ON") |
+                    |   2537         try:                                      |
+                    | > 2538             _execute_safe(cur, sql)               |
+                    |   2539             plan_rows = _rows_to_dicts(cur, cur.f |
+                    |   2540         finally:                                  |
+                    |   2541             _execute_safe(cur, "SET SHOWPLAN_ALL  |
+                    |                                                          |
+                    | C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-ser |
+                    | ver\mcp_sqlserver\server.py:743 in _execute_safe         |
+                    |                                                          |
+                    |    740                                                   |
+                    |    741 def _execute_safe(cur: pyodbc.Cursor, sql: str, p |
+                    |        None = None) -> None:                             |
+                    |    742     if params is None:                            |
+                    | >  743         cur.execute(sql)                          |
+                    |    744     else:                                         |
+                    |    745         cur.execute(sql, params)                  |
+                    |    746                                                   |
+                    +----------------------------------------------------------+
+                    ProgrammingError: ('42000', "[42000] [Microsoft][ODBC Driver
+                    17 for SQL Server][SQL Server]SHOWPLAN permission denied in 
+                    database 'US_UserData'. (262) (SQLExecDirectW)")            
+[16:55:25]   DEFECT logged: DEF-004 ù Error calling tool 'db_02_explain_query': ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Serv
+[16:55:25]     [FAIL] db_02_explain_query db=US_UserData -> nonprod_db_02_US_UserData_explain_query.json (609ms)
+[16:55:25]   HALT: errors in suffix 'explain_query'. Open defects: 4. Fix required before continuing.
+[16:55:25]   --- Suffix: analyze_logical_data_model ---
+[16:55:25]     [SKIP] db_01_analyze_logical_data_model db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_analyze_logical_data_model.json (already SUCCESS)
+[16:55:25]     [SKIP] db_01_analyze_logical_data_model db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_analyze_logical_data_model.json (already SUCCESS)
+[16:55:25]     [SKIP] db_02_analyze_logical_data_model db=ListGateway -> nonprod_db_02_ListGateway_analyze_logical_data_model.json (already SUCCESS)
+[16:55:25]     [SKIP] db_02_analyze_logical_data_model db=US_UserData -> nonprod_db_02_US_UserData_analyze_logical_data_model.json (already SUCCESS)
+[16:55:25]   --- Suffix: open_logical_model ---
+[16:55:25]     [SKIP] db_01_open_logical_model db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_open_logical_model.json (already SUCCESS)
+[16:55:25]     [SKIP] db_01_open_logical_model db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_open_logical_model.json (already SUCCESS)
+[16:55:25]     [SKIP] db_02_open_logical_model db=ListGateway -> nonprod_db_02_ListGateway_open_logical_model.json (already SUCCESS)
+[16:55:25]     [SKIP] db_02_open_logical_model db=US_UserData -> nonprod_db_02_US_UserData_open_logical_model.json (already SUCCESS)
+[16:55:25]   --- Suffix: generate_ddl ---
+[16:55:25]     [SKIP] db_01_generate_ddl db=USGISPRO_800 -> nonprod_db_01_USGISPRO_800_generate_ddl.json (already SUCCESS)
+[16:55:25]     [SKIP] db_01_generate_ddl db=US_RT_User_800 -> nonprod_db_01_US_RT_User_800_generate_ddl.json (already SUCCESS)
+[16:55:25]     [SKIP] db_02_generate_ddl db=ListGateway -> nonprod_db_02_ListGateway_generate_ddl.json (already SUCCESS)
+[16:55:25]     [SKIP] db_02_generate_ddl db=US_UserData -> nonprod_db_02_US_UserData_generate_ddl.json (already SUCCESS)
+[16:55:25]   Tool execution complete: passed=66 failed=4
+[16:55:25] === Phase 5: Bulk artifact audit ===
+[16:55:25]   Total nonprod artifacts: 78
+[16:55:25]   Artifacts with errors: 4
+[16:55:25]     nonprod_db_01_USGISPRO_800_explain_query.json
+[16:55:25]     nonprod_db_01_US_RT_User_800_explain_query.json
+[16:55:25]     nonprod_db_02_ListGateway_explain_query.json
+[16:55:25]     nonprod_db_02_US_UserData_explain_query.json
+[16:55:25] === DONE: passed=66 failed=4 open_defects=4 artifacts=78 artifact_errors=4 ===
+[16:55:25]   Open defects remain ù see testing\nonprod_defect_register.json

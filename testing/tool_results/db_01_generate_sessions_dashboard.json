@@ -1,0 +1,19 @@
+{
+  "tool_name": "db_01_generate_sessions_dashboard",
+  "args": {},
+  "status": "SUCCESS",
+  "duration_ms": 8.56,
+  "captured_at_utc": "2026-04-23T10:04:03.605860+00:00",
+  "result": {
+    "status": "ready",
+    "tool_name": "generate_prefab_ui",
+    "instructions": "\nGenerate a Prefab Python UI dashboard for SQL Server session monitoring.\n\nABSOLUTE REQUIREMENTS - YOUR RESPONSE MUST FOLLOW THESE EXACTLY:\n1. Output ONLY valid Python code - no markdown, no backticks, no explanations\n2. NO ```python blocks, NO conversational text before or after code\n3. Start immediately with the import statements\n4. End with the last closing parenthesis - nothing after\n5. Use ONLY \"with\" syntax for containers (Column, Row, Card, CardContent)\n\nAvailable data variables (use these exact names):\n- database_name (string)\n- server (string)  \n- active_sessions (integer)\n- instance (integer)\n- timestamp (string)\n\nRequired imports at the very top:\nfrom prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, Badge\nfrom prefab_ui.components.charts import BarChart, ChartSeries\n\nComplete working template - replace values with actual data:\n\nfrom prefab_ui.components import Column, Row, Heading, Text, Card, CardContent, Badge\nfrom prefab_ui.components.charts import BarChart, ChartSeries\n\nwith Column(gap=6, css_class=\"p-6\"):\n    Heading(content=\"Session Monitor - \" + database_name)\n    Text(\"Server: \" + server + \" | Instance: \" + str(instance))\n    with Row(gap=4):\n        with Card():\n            with CardContent():\n                Heading(content=\"Active Sessions\")\n                Text(str(active_sessions))\n    BarChart(\n        title=\"Session Overview\",\n        series=[ChartSeries(name=\"Active\", data=[active_sessions])]\n    )\n",
+    "data": {
+      "database_name": "TEST_DB",
+      "server": "localhost",
+      "active_sessions": 1,
+      "instance": 1,
+      "timestamp": "2026-04-23T10:04:03.605249+00:00"
+    }
+  }
+}

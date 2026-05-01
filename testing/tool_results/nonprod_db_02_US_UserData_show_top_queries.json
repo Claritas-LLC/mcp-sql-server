@@ -1,0 +1,33 @@
+{
+  "tool_name": "db_02_show_top_queries",
+  "tool_suffix": "show_top_queries",
+  "database": "US_UserData",
+  "args": {
+    "instance": 2,
+    "database_name": "US_UserData",
+    "view": "summary"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 316.76,
+  "error": null,
+  "captured_at_utc": "2026-05-01T14:47:39.265376+00:00",
+  "result": {
+    "database": "US_UserData",
+    "query_store_enabled": false,
+    "query_store_config": null,
+    "summary": {},
+    "recommendations": [],
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.recommendations": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        }
+      }
+    }
+  }
+}

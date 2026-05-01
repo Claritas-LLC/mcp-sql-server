@@ -1,0 +1,32 @@
+{
+  "tool_name": "db_01_sql2019_analyze_index_health",
+  "args": {
+    "database_name": "TEST_DB",
+    "database": "TEST_DB"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 29.77,
+  "captured_at_utc": "2026-04-23T10:04:05.150907+00:00",
+  "result": {
+    "database": "TEST_DB",
+    "schema": null,
+    "fragmented_indexes": [],
+    "summary": {
+      "severe": 0,
+      "medium": 0,
+      "total": 0
+    },
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.fragmented_indexes": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        }
+      }
+    }
+  }
+}

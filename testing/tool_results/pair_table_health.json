@@ -1,0 +1,24 @@
+{
+  "suffix": "table_health",
+  "status": "SUCCESS",
+  "tools": [
+    {
+      "tool_name": "db_01_table_health",
+      "instance": "db_01",
+      "status": "SUCCESS",
+      "duration_ms": 35.91,
+      "result_file": "testing/tool_results/db_01_table_health.json",
+      "error": null
+    },
+    {
+      "tool_name": "db_02_table_health",
+      "instance": "db_02",
+      "status": "SUCCESS",
+      "duration_ms": 33.62,
+      "result_file": "testing/tool_results/db_02_table_health.json",
+      "error": null
+    }
+  ],
+  "validation_errors": [],
+  "captured_at_utc": "2026-05-01T13:14:16.792825+00:00"
+}

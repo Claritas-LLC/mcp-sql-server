@@ -1,0 +1,34 @@
+{
+  "db_01_USGISPRO_800": {
+    "prefix": "db_01",
+    "instance": 1,
+    "database_name": "USGISPRO_800",
+    "schema": "dbo",
+    "table": "Account",
+    "sql": "SELECT TOP 5 * FROM [dbo].[Account]"
+  },
+  "db_01_US_RT_User_800": {
+    "prefix": "db_01",
+    "instance": 1,
+    "database_name": "US_RT_User_800",
+    "schema": "dbo",
+    "table": "000D6C78-5784-4A7F-8C31-3DEEF4457529",
+    "sql": "SELECT TOP 5 * FROM [dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529]"
+  },
+  "db_02_ListGateway": {
+    "prefix": "db_02",
+    "instance": 2,
+    "database_name": "ListGateway",
+    "schema": "dbo",
+    "table": "bb_202101_bg",
+    "sql": "SELECT TOP 5 * FROM [dbo].[bb_202101_bg]"
+  },
+  "db_02_US_UserData": {
+    "prefix": "db_02",
+    "instance": 2,
+    "database_name": "US_UserData",
+    "schema": "dbo",
+    "table": "_ln_155_056fef58-efd6-48d2-94e5-9009d3111549",
+    "sql": "SELECT TOP 5 * FROM [dbo].[_ln_155_056fef58-efd6-48d2-94e5-9009d3111549]"
+  }
+}

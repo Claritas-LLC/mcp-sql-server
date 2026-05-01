@@ -1,0 +1,54 @@
+{
+  "tool_name": "db_02_get_schema",
+  "tool_suffix": "get_schema",
+  "database": "US_UserData",
+  "args": {
+    "instance": 2,
+    "database_name": "US_UserData",
+    "schema_name": "dbo",
+    "table_name": "_ln_155_056fef58-efd6-48d2-94e5-9009d3111549"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 261.62,
+  "error": null,
+  "captured_at_utc": "2026-05-01T16:47:33.786958+00:00",
+  "result": {
+    "database": "US_UserData",
+    "schema": "dbo",
+    "table": "_ln_155_056fef58-efd6-48d2-94e5-9009d3111549",
+    "columns": [
+      {
+        "COLUMN_NAME": "GeoFIPS",
+        "ORDINAL_POSITION": 1,
+        "DATA_TYPE": "varchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 100,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "col1",
+        "ORDINAL_POSITION": 2,
+        "DATA_TYPE": "bigint",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "NUMERIC_PRECISION": 19,
+        "NUMERIC_SCALE": 0,
+        "COLUMN_DEFAULT": null
+      }
+    ],
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.columns": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 2,
+          "total_pages": 1
+        }
+      }
+    }
+  }
+}

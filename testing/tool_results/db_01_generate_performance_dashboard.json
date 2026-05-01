@@ -1,0 +1,17 @@
+{
+  "tool_name": "db_01_generate_performance_dashboard",
+  "args": {
+    "database_name": "TEST_DB"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 1.15,
+  "captured_at_utc": "2026-04-23T10:04:03.595784+00:00",
+  "result": {
+    "status": "success",
+    "message": "Performance dashboard ready for database 'TEST_DB'.",
+    "database": "TEST_DB",
+    "instance": 1,
+    "performance_dashboard_url": "http://localhost:8000/performance-dashboard?instance=1&database=TEST_DB",
+    "url_hint": "The dashboard fetches data on-demand when visited. Use dedicated tools (show_top_queries, check_fragmentation) for detailed analysis."
+  }
+}

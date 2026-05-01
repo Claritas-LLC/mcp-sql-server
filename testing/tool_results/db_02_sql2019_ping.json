@@ -1,0 +1,14 @@
+{
+  "tool_name": "db_02_sql2019_ping",
+  "args": {},
+  "status": "SUCCESS",
+  "duration_ms": 7.0,
+  "captured_at_utc": "2026-04-23T10:04:20.663115+00:00",
+  "result": {
+    "status": "ok",
+    "database": "TEST_DB",
+    "server": "localhost",
+    "result": 1,
+    "timestamp": "2026-04-23T10:04:20.662402+00:00"
+  }
+}

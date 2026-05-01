@@ -1,39 +1,41 @@
 {
   "tool_name": "db_01_list_objects",
+  "tool_suffix": "list_objects",
+  "instance": "db_01",
   "args": {
-    "database_name": "TEST_DB",
     "object_type": "TABLE",
     "schema": "sales",
-    "limit": 20
+    "limit": 20,
+    "database_name": "test1"
   },
   "status": "SUCCESS",
-  "duration_ms": 40.9,
-  "captured_at_utc": "2026-04-14T05:14:42.115415+00:00",
+  "duration_ms": 19.4,
+  "captured_at_utc": "2026-05-01T13:14:16.597076+00:00",
   "result": {
     "items": [
       {
         "schema_name": "sales",
         "table_name": "Customers",
-        "create_date": "2026-04-14 04:55:44.443",
-        "modify_date": "2026-04-14 04:55:44.480"
+        "create_date": "2026-05-01 13:06:33.057",
+        "modify_date": "2026-05-01 13:06:33.133"
       },
       {
         "schema_name": "sales",
         "table_name": "OrderDetails",
-        "create_date": "2026-04-14 04:55:44.460",
-        "modify_date": "2026-04-14 04:55:44.497"
+        "create_date": "2026-05-01 13:06:33.090",
+        "modify_date": "2026-05-01 13:06:33.163"
       },
       {
         "schema_name": "sales",
         "table_name": "Orders",
-        "create_date": "2026-04-14 04:55:44.457",
-        "modify_date": "2026-04-14 04:55:44.490"
+        "create_date": "2026-05-01 13:06:33.080",
+        "modify_date": "2026-05-01 13:06:33.150"
       },
       {
         "schema_name": "sales",
         "table_name": "Products",
-        "create_date": "2026-04-14 04:55:44.450",
-        "modify_date": "2026-04-14 04:55:44.477"
+        "create_date": "2026-05-01 13:06:33.070",
+        "modify_date": "2026-05-01 13:06:33.123"
       }
     ],
     "pagination": {

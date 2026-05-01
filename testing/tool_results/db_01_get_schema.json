@@ -1,15 +1,17 @@
 {
   "tool_name": "db_01_get_schema",
+  "tool_suffix": "get_schema",
+  "instance": "db_01",
   "args": {
-    "database_name": "TEST_DB",
     "table_name": "Customers",
-    "schema_name": "sales"
+    "schema_name": "sales",
+    "database_name": "test1"
   },
   "status": "SUCCESS",
-  "duration_ms": 13.62,
-  "captured_at_utc": "2026-04-14T05:14:41.764730+00:00",
+  "duration_ms": 11.92,
+  "captured_at_utc": "2026-05-01T13:14:16.513249+00:00",
   "result": {
-    "database": "TEST_DB",
+    "database": "test1",
     "schema": "sales",
     "table": "Customers",
     "columns": [

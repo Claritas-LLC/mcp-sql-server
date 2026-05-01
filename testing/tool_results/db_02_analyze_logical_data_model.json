@@ -1,13 +1,15 @@
 {
   "tool_name": "db_02_analyze_logical_data_model",
+  "tool_suffix": "analyze_logical_data_model",
+  "instance": "db_02",
   "args": {
-    "database_name": "TEST_DB",
     "schema": "sales",
-    "view": "summary"
+    "view": "summary",
+    "database_name": "test2"
   },
   "status": "SUCCESS",
-  "duration_ms": 68.16,
-  "captured_at_utc": "2026-04-14T05:14:43.236503+00:00",
+  "duration_ms": 26.68,
+  "captured_at_utc": "2026-05-01T13:14:17.107636+00:00",
   "result": {
     "summary": {
       "entity_count": 4,

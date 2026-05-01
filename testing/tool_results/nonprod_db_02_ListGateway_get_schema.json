@@ -1,0 +1,134 @@
+{
+  "tool_name": "db_02_get_schema",
+  "tool_suffix": "get_schema",
+  "database": "ListGateway",
+  "args": {
+    "instance": 2,
+    "database_name": "ListGateway",
+    "schema_name": "dbo",
+    "table_name": "bb_202101_bg"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 287.24,
+  "error": null,
+  "captured_at_utc": "2026-05-01T16:47:33.521450+00:00",
+  "result": {
+    "database": "ListGateway",
+    "schema": "dbo",
+    "table": "bb_202101_bg",
+    "columns": [
+      {
+        "COLUMN_NAME": "GeoFIPS",
+        "ORDINAL_POSITION": 1,
+        "DATA_TYPE": "varchar",
+        "IS_NULLABLE": "NO",
+        "CHARACTER_MAXIMUM_LENGTH": 12,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "GeoNAME",
+        "ORDINAL_POSITION": 2,
+        "DATA_TYPE": "varchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 12,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "State",
+        "ORDINAL_POSITION": 3,
+        "DATA_TYPE": "char",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 2,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "BB202101T_TOTAL",
+        "ORDINAL_POSITION": 4,
+        "DATA_TYPE": "int",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "NUMERIC_PRECISION": 10,
+        "NUMERIC_SCALE": 0,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "BB202101T_EMP_0",
+        "ORDINAL_POSITION": 5,
+        "DATA_TYPE": "int",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "NUMERIC_PRECISION": 10,
+        "NUMERIC_SCALE": 0,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "BB202101T_EMP_A",
+        "ORDINAL_POSITION": 6,
+        "DATA_TYPE": "int",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "NUMERIC_PRECISION": 10,
+        "NUMERIC_SCALE": 0,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "BB202101T_EMP_B",
+        "ORDINAL_POSITION": 7,
+        "DATA_TYPE": "int",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "NUMERIC_PRECISION": 10,
+        "NUMERIC_SCALE": 0,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "BB202101T_EMP_C",
+        "ORDINAL_POSITION": 8,
+        "DATA_TYPE": "int",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "NUMERIC_PRECISION": 10,
+        "NUMERIC_SCALE": 0,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "BB202101T_EMP_D",
+        "ORDINAL_POSITION": 9,
+        "DATA_TYPE": "int",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "NUMERIC_PRECISION": 10,
+        "NUMERIC_SCALE": 0,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "BB202101T_EMP_E",
+        "ORDINAL_POSITION": 10,
+        "DATA_TYPE": "int",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": null,
+        "NUMERIC_PRECISION": 10,
+        "NUMERIC_SCALE": 0,
+        "COLUMN_DEFAULT": null
+      }
+    ],
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.columns": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 449,
+          "total_pages": 45
+        }
+      }
+    }
+  }
+}

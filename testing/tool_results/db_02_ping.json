@@ -1,14 +1,16 @@
 {
   "tool_name": "db_02_ping",
+  "tool_suffix": "ping",
+  "instance": "db_02",
   "args": {},
   "status": "SUCCESS",
-  "duration_ms": 15.2,
-  "captured_at_utc": "2026-04-14T05:14:45.275887+00:00",
+  "duration_ms": 37.99,
+  "captured_at_utc": "2026-05-01T13:14:16.427889+00:00",
   "result": {
     "status": "ok",
-    "database": "TEST_DB",
+    "database": "test2",
     "server": "127.0.0.1",
     "result": 1,
-    "timestamp": "2026-04-14T05:14:45.275259+00:00"
+    "timestamp": "2026-05-01T13:14:16.427346+00:00"
   }
 }

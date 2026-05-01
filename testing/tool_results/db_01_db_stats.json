@@ -1,17 +1,19 @@
 {
   "tool_name": "db_01_db_stats",
+  "tool_suffix": "db_stats",
+  "instance": "db_01",
   "args": {
-    "database": "TEST_DB"
+    "database": "test1"
   },
   "status": "SUCCESS",
-  "duration_ms": 29.51,
-  "captured_at_utc": "2026-04-14T05:14:41.629176+00:00",
+  "duration_ms": 13.67,
+  "captured_at_utc": "2026-05-01T13:14:16.812435+00:00",
   "result": {
-    "DatabaseName": "TEST_DB",
-    "TableCount": 8,
+    "DatabaseName": "test1",
+    "TableCount": 7,
     "ViewCount": 1,
     "ProcedureCount": 1,
-    "IndexCount": 174,
+    "IndexCount": 173,
     "SchemaCount": 16
   }
 }

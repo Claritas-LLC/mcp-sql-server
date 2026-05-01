@@ -1,0 +1,120 @@
+{
+  "tool_name": "db_01_index_health",
+  "tool_suffix": "index_health",
+  "database": "USGISPRO_800",
+  "args": {
+    "instance": 1,
+    "database_name": "USGISPRO_800",
+    "schema": "dbo",
+    "min_fragmentation": 0.0,
+    "min_page_count": 1,
+    "limit": 20
+  },
+  "status": "SUCCESS",
+  "duration_ms": 21160.48,
+  "error": null,
+  "captured_at_utc": "2026-05-01T16:07:39.862219+00:00",
+  "result": {
+    "database": "USGISPRO_800",
+    "schema": "dbo",
+    "fragmented_indexes": [
+      {
+        "schema_name": "dbo",
+        "table_name": "Account",
+        "index_name": "IX_Account_AccountNameStatus",
+        "avg_fragmentation_in_percent": 77.27272727272727,
+        "page_count": 22,
+        "index_type": "NONCLUSTERED"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "DataGroup",
+        "index_name": "PK_DataGroup",
+        "avg_fragmentation_in_percent": 66.66666666666666,
+        "page_count": 15,
+        "index_type": "CLUSTERED"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "GeographyGroupItem",
+        "index_name": "IX_GeographyGroupItem",
+        "avg_fragmentation_in_percent": 50.0,
+        "page_count": 2,
+        "index_type": "NONCLUSTERED"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "ReportGroupReportValueType",
+        "index_name": "PK_ReportGroupReportValueType",
+        "avg_fragmentation_in_percent": 50.0,
+        "page_count": 2,
+        "index_type": "CLUSTERED"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "AccountReportFormat",
+        "index_name": "PK_AccountReportFormat",
+        "avg_fragmentation_in_percent": 50.0,
+        "page_count": 2,
+        "index_type": "CLUSTERED"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "AccountCreditCardInformation",
+        "index_name": "PK_AccountCreditCardInformation",
+        "avg_fragmentation_in_percent": 50.0,
+        "page_count": 2,
+        "index_type": "CLUSTERED"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "AccountSiteDataIndicatorItem",
+        "index_name": "PK_AccountSiteDataIndicatorItem",
+        "avg_fragmentation_in_percent": 50.0,
+        "page_count": 2,
+        "index_type": "CLUSTERED"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "AccountDataUpload",
+        "index_name": "IX_AccountDataUpload_Account",
+        "avg_fragmentation_in_percent": 36.36363636363637,
+        "page_count": 11,
+        "index_type": "NONCLUSTERED"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "ModuleAccess",
+        "index_name": "PK_ModuleAccess",
+        "avg_fragmentation_in_percent": 35.0,
+        "page_count": 20,
+        "index_type": "CLUSTERED"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "AccountCreditCardTransactionItem",
+        "index_name": "PK_AccountCreditCardTransactionItem",
+        "avg_fragmentation_in_percent": 33.33333333333333,
+        "page_count": 3,
+        "index_type": "CLUSTERED"
+      }
+    ],
+    "summary": {
+      "severe": 15,
+      "medium": 5,
+      "total": 20
+    },
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.fragmented_indexes": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 20,
+          "total_pages": 2
+        }
+      }
+    }
+  }
+}

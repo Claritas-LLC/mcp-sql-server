@@ -1,14 +1,16 @@
 {
   "tool_name": "db_01_drop_object",
+  "tool_suffix": "drop_object",
+  "instance": "db_01",
   "args": {
-    "database_name": "TEST_DB",
-    "sql": "DROP TABLE sales.MCP_TMP_TABLE"
+    "sql": "DROP TABLE sales.MCP_TMP_TABLE",
+    "database_name": "test1"
   },
   "status": "SUCCESS",
-  "duration_ms": 20.88,
-  "captured_at_utc": "2026-04-14T05:14:41.676198+00:00",
+  "duration_ms": 16.73,
+  "captured_at_utc": "2026-05-01T13:14:17.605388+00:00",
   "result": {
     "status": "success",
-    "database": "TEST_DB"
+    "database": "test1"
   }
 }

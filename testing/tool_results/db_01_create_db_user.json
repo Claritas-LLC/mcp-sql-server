@@ -1,14 +1,18 @@
 {
   "tool_name": "db_01_create_db_user",
+  "tool_suffix": "create_db_user",
+  "instance": "db_01",
   "args": {
-    "database_name": "TEST_DB",
     "username": "mcp_tmp_user",
-    "password": "McpTempPwd123!"
+    "password": "McpTempPwd123!",
+    "database_name": "test1"
   },
-  "status": "FAILED",
-  "duration_ms": 805.49,
-  "captured_at_utc": "2026-04-14T05:14:41.513739+00:00",
+  "status": "SUCCESS",
+  "duration_ms": 56.02,
+  "captured_at_utc": "2026-05-01T13:14:17.273882+00:00",
   "result": {
-    "error": "Error calling tool 'db_01_create_db_user': ('42000', '[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]You can only create a user with a password in a contained database. (33233) (SQLExecDirectW)')"
+    "status": "success",
+    "username": "mcp_tmp_user",
+    "database": "test1"
   }
 }

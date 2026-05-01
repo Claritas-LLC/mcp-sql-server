@@ -1,13 +1,15 @@
 {
   "tool_name": "db_01_check_fragmentation",
+  "tool_suffix": "check_fragmentation",
+  "instance": "db_01",
   "args": {
-    "database_name": "TEST_DB",
     "schema_name": "sales",
-    "table_name": "Customers"
+    "table_name": "Customers",
+    "database_name": "test1"
   },
   "status": "SUCCESS",
-  "duration_ms": 67.06,
-  "captured_at_utc": "2026-04-14T05:14:40.703816+00:00",
+  "duration_ms": 14.46,
+  "captured_at_utc": "2026-05-01T13:14:16.947525+00:00",
   "result": {
     "items": [],
     "pagination": {

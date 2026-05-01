@@ -1,0 +1,17 @@
+{
+  "tool_name": "db_02_explain_query",
+  "tool_suffix": "explain_query",
+  "database": "US_UserData",
+  "args": {
+    "instance": 2,
+    "database_name": "US_UserData",
+    "sql": "SELECT TOP 5 * FROM [dbo].[_ln_155_056fef58-efd6-48d2-94e5-9009d3111549]"
+  },
+  "status": "FAILED",
+  "duration_ms": 608.86,
+  "error": "Error calling tool 'db_02_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'US_UserData'. (262) (SQLExecDirectW)\")",
+  "captured_at_utc": "2026-05-01T16:55:25.488999+00:00",
+  "result": {
+    "error": "Error calling tool 'db_02_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'US_UserData'. (262) (SQLExecDirectW)\")"
+  }
+}

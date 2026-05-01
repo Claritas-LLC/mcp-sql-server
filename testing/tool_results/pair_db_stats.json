@@ -1,0 +1,24 @@
+{
+  "suffix": "db_stats",
+  "status": "SUCCESS",
+  "tools": [
+    {
+      "tool_name": "db_01_db_stats",
+      "instance": "db_01",
+      "status": "SUCCESS",
+      "duration_ms": 13.67,
+      "result_file": "testing/tool_results/db_01_db_stats.json",
+      "error": null
+    },
+    {
+      "tool_name": "db_02_db_stats",
+      "instance": "db_02",
+      "status": "SUCCESS",
+      "duration_ms": 10.82,
+      "result_file": "testing/tool_results/db_02_db_stats.json",
+      "error": null
+    }
+  ],
+  "validation_errors": [],
+  "captured_at_utc": "2026-05-01T13:14:16.830501+00:00"
+}

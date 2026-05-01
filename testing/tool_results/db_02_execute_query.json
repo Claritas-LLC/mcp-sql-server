@@ -1,12 +1,14 @@
 {
   "tool_name": "db_02_execute_query",
+  "tool_suffix": "execute_query",
+  "instance": "db_02",
   "args": {
-    "database_name": "TEST_DB",
-    "sql": "SELECT TOP 5 CustomerID, FirstName, LastName FROM sales.Customers ORDER BY CustomerID"
+    "sql": "SELECT TOP 5 CustomerID, FirstName, LastName FROM sales.Customers ORDER BY CustomerID",
+    "database_name": "test2"
   },
   "status": "SUCCESS",
-  "duration_ms": 36.17,
-  "captured_at_utc": "2026-04-14T05:14:44.222877+00:00",
+  "duration_ms": 5.91,
+  "captured_at_utc": "2026-05-01T13:14:16.546901+00:00",
   "result": {
     "items": [
       {

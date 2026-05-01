@@ -1,0 +1,19 @@
+{
+  "tool_name": "db_02_sql2019_get_index_fragmentation",
+  "args": {
+    "database_name": "TEST_DB",
+    "database": "TEST_DB"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 14.33,
+  "captured_at_utc": "2026-04-23T10:04:19.776510+00:00",
+  "result": {
+    "items": [],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_items": 0,
+      "total_pages": 1
+    }
+  }
+}

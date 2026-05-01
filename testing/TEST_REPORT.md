@@ -1,277 +1,133 @@
-# MCP SQL Server - Comprehensive Test Report
-**Date:** February 24, 2026  
-**Version:** v1.0  
-**Status:** COMPLETE WITH RECOMMENDATIONS
+# MCP SQL Server - Dual-Instance Database Scope Test Report
+**Date:** May 1, 2026  
+**Version:** v2.0  
+**Status:** COMPLETE
 
 ---
 
 ## Executive Summary
 
-Comprehensive testing of the MCP SQL Server has been conducted including unit tests, integration tests, code review, and quality analysis. The server is **FUNCTIONAL** with several **MINOR IMPROVEMENTS** recommended for production use.
+The dual-instance database-scope refactor is complete. Named-database execution now runs through database-scoped `EXEC [db].sys.sp_executesql ...` from stable per-instance pooled sessions, and the current validation set is green.
 
-**Overall Status:** ✓ READY FOR DEPLOYMENT (with minor fixes)
-
----
-
-## Test Categories Conducted
-
-### 1. Unit Tests ✓ PASS
-- **SQL Readonly Validation**: All readonly checks working correctly
-  - SELECT statements: ✓ Pass
-  - INSERT/UPDATE/DELETE: ✓ Blocked
-  - Comments stripped: ✓ Pass
-  - String literals ignored: ✓ Pass
-
-- **Connection Management**: ✓ Pass
-  - Connection pool management functional
-  - SSH tunnel support verified
-  - Error handling robust
-
-- **Parameter Binding**: ✓ Pass
-  - Parameterized queries used throughout
-  - No SQL injection vulnerabilities detected
-
-### 2. Integration Tests ✓ PARTIAL PASS
-**Database:** Temp SQL Server 2019 container successfully provisioned and populated
-
-**Tests Executed:**
-- ✓ Database connection to TEST_DB successful
-- ✓ Schema creation (sales, hr, inventory)
-- ✓ Table creation with relationships
-- ✓ Index creation and population
-- ✓ Sample data insertion (150+ rows)
-- ✓ Stored procedures and views
-
-**Tools Tested:**
-- `db_01_sql2019_list_databases()` → ✓ Working
-- `db_01_sql2019_list_tables()` → ✓ Working  
-- `db_01_sql2019_get_schema()` → ✓ Working
-- `db_01_sql2019_execute_query()` → ✓ Working (readonly mode enforced)
-- `db_get_index_fragmentation()` → ✓ Working
-- Tool registration with @mcp.tool → ✓ 11 tools registered
-
-### 3. Code Quality Review ✓ PASS
-
-**Strengths Found:**
-- ✓ Robust error handling (try/finally patterns throughout)
-- ✓ Connection cleanup enforced (conn.close() in finally blocks)
-- ✓ Parameterized queries (100% compliance, no f-string SQL)
-- ✓ Environment variable configuration (no hardcoded credentials)
-- ✓ Comprehensive logging with security masking
-- ✓ Input validation (is_valid_sql_identifier checks)
-- ✓ Result limiting (MAX_ROWS = 10000 protection)
-- ✓ Windows asyncio ProactorEventLoop patch (handles benign ConnectionResetError)
-- ✓ SSH tunnel support with atexit cleanup handlers
-- ✓ Middleware for API key and browser-friendly responses
-- ✓ Decimal and datetime JSON encoding handled
-
-**Issues Found:**
-None critical. Minor observations below.
-
-### 4. Security Audit ✓ PASS
-- ✓ Read-only mode correctly enforces SELECT-only
-- ✓ Dangerous keywords blocked (INSERT, UPDATE, DELETE, DROP, CREATE, etc.)
-- ✓ SQL injection attacks prevented (parameterized queries)
-- ✓ No hardcoded credentials present
-- ✓ Sensitive parameter logging masked
-- ✓ Connection errors user-friendly (don't leak DB structure)
-- ✓ Authentication middleware for HTTP transport
-- ✓ Write-mode requires explicit env variables
-
-### 5. Performance Observations ⚠ NOTE
-- Connection pooling: Functional but basic (1:1 connections)
-  - Recommendation: Consider `queue.Queue` wrapper for high-concurrency scenarios
-- Result limiting: 10,000 rows max (good balance)
-- Query timeout: Configurable via `MCP_STATEMENT_TIMEOUT_MS` (default 120s)
-- Index fragmentation uses SAMPLED mode (fast, efficient)
+**Overall Status:** READY FOR DEPLOYMENT
 
 ---
 
-## Issues & Recommendations
+## Scope Completed
 
-### Minor: Code Organization
-**Status:** LOW PRIORITY
-
-**Observation:** 
-- Server.py is a monolith (2498 lines). While this is the intended design pattern per copilot-instructions.md, consider:
-
-**Recommendation:**
-- Keep as-is for simplicity, but consider future modularization if tool count exceeds 30
-- Current structure is maintainable and FastMCP-friendly
-
-### Minor: DATA_MODEL_CACHE No TTL
-**Status:** LOW PRIORITY
-
-**Observation:**
-- `analyze_logical_data_model()` caches results indefinitely
-
-**Recommendation:**
-- Add timestamp-based TTL in future release
-- Current impact: negligible for typical use
-
-### Minor: Execution Plan Parsing
-**Status:** LOW PRIORITY
-
-**Observation:**
-- STATISTICS XML parsing needs improvement for nested queries
-
-**Recommendation:**
-- Document limitation in README
-- Plan enhancement for v2.0
-
-### FIXED: setup_test_database.sql Syntax Errors
-**Status:** RESOLVED ✓
-
-**Issue Found:**
-- PostgreSQL-style `CREATE SCHEMA IF NOT EXISTS` not compatible with SQL Server 2019
-- Mixed static and GO statements caused batch processing errors
-
-**Fix Applied:**
-- Created `setup_test_simple.sql` with T-SQL compatible syntax
-- All schemas created with EXEC() or separate GO batches
-- Database successfully populated with 150+ test records across 8 tables
+- Centralized target-database execution in `_execute_in_database()`.
+- Replaced ad hoc `USE [database]` switching in the affected tool paths.
+- Preserved instance-local connection pooling semantics.
+- Updated the dual-instance harness to validate `test1` on instance 1 and `test2` on instance 2.
+- Added focused unit coverage for scoped execution and pooling behavior.
 
 ---
 
-## Test Database Schema
+## Validation Results
 
-Successfully created and populated:
+### 1. Narrow Regression Suite
 
-```
-TEST_DB
-├── sales
-│   ├── Customers (10 rows)
-│   ├── Products (5 rows)
-│   ├── Orders (5 rows)
-│   ├── OrderDetails (5 rows)
-│   ├── CustomerOrderSummary (VIEW)
-│   └── GetCustomerOrders (PROCEDURE)
-├── hr
-│   ├── Employees (5 rows)
-│   └── 1 FK relationship
-└── inventory
-    ├── Warehouses (3 rows)
-    └── StockMovements (6 rows)
+Command run:
 
-Total: 8 tables, 2 views, 3 indexes, 1 stored procedure
+```text
+python -m pytest tests/test_execute_in_database.py tests/test_run_query_internal.py tests/test_get_connection_retry_cleanup.py -q
 ```
 
----
+Result:
 
-## Tool Inventory (11 Tools)
+- 10 tests passed
+- 0 failed
 
-All tools successfully registered with @mcp.tool decorator:
+Covered behaviors:
 
-1. `db_01_sql2019_list_databases()` - List all databases
-2. `db_01_sql2019_list_tables()` - List tables in schema
-3. `db_01_sql2019_get_schema()` - Get full table schema with columns/keys/FKs
-4. `db_01_sql2019_execute_query()` - Execute SELECT or DML queries
-5. `db_get_index_fragmentation()` - Analyze index health
-6. `db_01_sql2019_check_fragmentation()` - Index fragmentation check
-7. `db_01_sql2019_analyze_logical_data_model()` - Foreign key analysis
-8. `db_01_sql2019_analyze_sessions()` - Session monitoring
-9. `db_01_sql2019_db_sec_perf_metrics()` - Security & performance metrics
-10. `db_01_sql2019_rec_indexes()` - Recommend missing indexes
-11. Plus additional utility functions
+- `_execute_in_database()` emits `EXEC [db].sys.sp_executesql ...`
+- positional `?` parameters are rewritten to deterministic `@p1`, `@p2`, ... placeholders
+- literal question marks inside strings are preserved
+- invalid database identifiers are rejected before execution
+- `_run_query_internal()` routes named-database execution through the scoped helper
+- pool exhaustion still falls back to an instance-default direct connection without changing pool keying
 
----
+### 2. HTTP Blackbox Validation
 
-## Environment Configuration Validated
+Command previously recorded in [testing/blackbox_results.txt](testing/blackbox_results.txt):
 
-```env
-DB_SERVER=localhost
-DB_PORT=14333
-DB_USER=readonly_user
-DB_PASSWORD=McpTestPassword123!
-DB_NAME=TEST_DB
-DB_DRIVER=ODBC Driver 17 for SQL Server
-
-MCP_ALLOW_WRITE=false (Default - readonly mode)
-MCP_TRANSPORT=stdio (Default)
-MCP_HOST=127.0.0.1 (For HTTP transport)
-MCP_PORT=8000 (For HTTP transport)
+```text
+pytest tests/test_blackbox_http.py -q
 ```
 
-✓ All environment variables properly used
-✓ No hardcoded values in code
-✓ SSH tunnel support functional (optional)
+Result:
+
+- 2 tests passed
+- 0 failed
+
+### 3. Dual-Instance End-to-End Validation
+
+Evidence file: [testing/tool_execution_summary.json](testing/tool_execution_summary.json)
+
+Result:
+
+- Total tools executed: 50
+- Passed: 50
+- Failed: 0
+- Halted suffix: null
+
+Execution model validated:
+
+- `db_01_*` tools ran against database `test1`
+- `db_02_*` tools ran against database `test2`
+- each logical suffix pair completed serially with artifact rereads and no validation errors
+
+### 4. Artifact Review
+
+Evidence directory: [testing/tool_results](testing/tool_results)
+
+Validated outcomes:
+
+- per-tool raw artifacts exist for both instances
+- per-suffix pair summaries exist for the final run
+- final pair summaries record zero `validation_errors`
+- final artifacts attribute results to `test1` and `test2` rather than a shared `TEST_DB`
 
 ---
 
-## Container Testing
+## Implementation Notes
 
-**Container:** `mcr.microsoft.com/mssql/server:2019-latest`  
-**Port:** 14333 (mapped from 1433)  
-**Status:** ✓ Running and responsive
+### Execution Model
 
-```bash
-docker ps
-# CONTAINER ID  NAMES           STATUS           
-# 4be10f48e8ed  mcp_sqlserver_temp  Up 5 minutes
-```
+- database identifiers continue to pass through existing validation before interpolation
+- SQL text remains parameterized through `pyodbc`
+- `sp_executesql` parameter declarations are generated deterministically from bound Python values
+- write and read tool paths both use the shared scoped execution helper where appropriate
 
-**Quick Cleanup:**
-```bash
-docker stop mcp_sqlserver_temp
-docker rm mcp_sqlserver_temp
-```
+### Pooling Behavior
 
----
+- pools remain keyed by instance, not by database name
+- pooled sessions are reused within an instance even when executing against multiple databases via scoped SQL
+- fallback direct connections continue to use the instance-default database when the pool is exhausted
 
-## Deployment Readiness Checklist
+### Dual-Instance Mapping
 
-- [x] Code review complete
-- [x] Unit tests pass
-- [x] Integration tests pass (with temp DB)
-- [x] Security audit pass (no vulnerabilities found)
-- [x] Error handling comprehensive
-- [x] Connection cleanup guaranteed
-- [x] Parameter binding 100%
-- [x] Environment config complete
-- [x] SSH tunnel optional support
-- [x] API key middleware ready
-- [x] Logging configured
-- [x] Windows ProactorEventLoop patch applied
-- [x] Documentation up-to-date
-
-**Recommendation:** ✓ READY FOR PRODUCTION DEPLOYMENT
+- instance 1 -> `test1`
+- instance 2 -> `test2`
 
 ---
 
-## Performance Recommendations
+## Open Defects
 
-1. **For High-Concurrency Scenarios (>20 concurrent requests):**
-   - Monitor connection pool usage
-   - Consider connection pooling wrapper around `get_connection()`
+Current defect register: [testing/defect_register.json](testing/defect_register.json)
 
-2. **For Large Result Sets (>100MB):**
-   - Current 10,000 row limit is safe
-   - Consider streaming pagination for clients
-
-3. **For Complex Queries:**
-   - Default 120s timeout is appropriate
-   - Increase `MCP_STATEMENT_TIMEOUT_MS` if needed (monitor server logs)
+- No open defects recorded
 
 ---
 
-## Next Steps
+## Deployment Readiness
 
-1. ✓ **DONE:** Run complete test suite (this report)
-2. **TODO:** Deploy to staging environment
-3. **TODO:** Update README.md with test results
-4. **TODO:** Update DEPLOYMENT.md with testing procedures
-5. **TODO:** Configure production SSH tunnels (if needed)
-6. **TODO:** Set up monitoring/alerting
+- [x] Scoped database execution implemented
+- [x] Affected tool paths migrated
+- [x] Focused unit regressions passing
+- [x] HTTP blackbox checks passing
+- [x] Dual-instance end-to-end run passing
+- [x] Artifact audit clean
+- [x] No open defects remaining
 
----
-
-## References
-
-- FastMCP: https://github.com/zeke/fastmcp
-- SQL Server DMVs: https://learn.microsoft.com/en-us/sql/relational-databases/
-- pyodbc: https://github.com/mkleehammer/pyodbc/wiki
-
----
-
-**Report Generated:** 2026-02-24  
-**Test Environment:** Windows 11 + Docker + Python 3.14 + SQL Server 2019
+**Recommendation:** The dual-instance database-scope change set is complete and validated for release.

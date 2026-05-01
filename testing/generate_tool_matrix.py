@@ -31,30 +31,51 @@ READ_ONLY_SUFFIXES = {
 }
 
 
-ARG_TEMPLATES = {
-    "list_tables": {"database_name": "TEST_DB", "schema_name": "sales"},
-    "get_schema": {"database_name": "TEST_DB", "table_name": "Customers", "schema_name": "sales"},
-    "execute_query": {"database_name": "TEST_DB", "sql": "SELECT TOP 5 CustomerID, FirstName, LastName FROM sales.Customers ORDER BY CustomerID"},
-    "run_query": {"arg1": "TEST_DB", "arg2": "SELECT TOP 5 ProductID, ProductName FROM sales.Products ORDER BY ProductID"},
-    "list_objects": {"database_name": "TEST_DB", "object_type": "TABLE", "schema": "sales", "limit": 20},
-    "index_fragmentation": {"database_name": "TEST_DB", "schema": "sales", "min_fragmentation": 0.0, "min_page_count": 1, "limit": 20},
-    "index_health": {"database_name": "TEST_DB", "schema": "sales", "min_fragmentation": 0.0, "min_page_count": 1, "limit": 20},
-    "table_health": {"database_name": "TEST_DB", "schema": "sales", "table_name": "Customers", "view": "standard"},
-    "db_stats": {"database": "TEST_DB"},
-    "show_top_queries": {"database_name": "TEST_DB", "view": "summary"},
-    "check_fragmentation": {"database_name": "TEST_DB", "schema_name": "sales", "table_name": "Customers"},
-    "db_sec_perf_metrics": {"database_name": "TEST_DB"},
-    "explain_query": {"database_name": "TEST_DB", "sql": "SELECT TOP 5 * FROM sales.Customers"},
-    "analyze_logical_data_model": {"database_name": "TEST_DB", "schema": "sales", "view": "summary"},
-    "open_logical_model": {"database_name": "TEST_DB", "schema": "sales"},
-    "generate_ddl": {"database_name": "TEST_DB", "schema_name": "sales", "table_name": "Customers"},
-    "create_db_user": {"database_name": "TEST_DB", "username": "mcp_tmp_user", "password": "McpTempPwd123!"},
-    "drop_db_user": {"database_name": "TEST_DB", "username": "mcp_tmp_user"},
-    "kill_session": {"session_id": 0},
-    "create_object": {"database_name": "TEST_DB", "sql": "CREATE TABLE sales.MCP_TMP_TABLE (Id INT PRIMARY KEY, Name NVARCHAR(50) NULL)"},
-    "alter_object": {"database_name": "TEST_DB", "sql": "ALTER TABLE sales.MCP_TMP_TABLE ADD CreatedAt DATETIME2 NULL"},
-    "drop_object": {"database_name": "TEST_DB", "sql": "DROP TABLE sales.MCP_TMP_TABLE"},
+INSTANCE_DATABASES = {
+    "db_01": "test1",
+    "db_02": "test2",
 }
+
+
+BASE_ARG_TEMPLATES = {
+    "list_tables": {"schema_name": "sales"},
+    "get_schema": {"table_name": "Customers", "schema_name": "sales"},
+    "execute_query": {"sql": "SELECT TOP 5 CustomerID, FirstName, LastName FROM sales.Customers ORDER BY CustomerID"},
+    "run_query": {"arg2": "SELECT TOP 5 ProductID, ProductName FROM sales.Products ORDER BY ProductID"},
+    "list_objects": {"object_type": "TABLE", "schema": "sales", "limit": 20},
+    "index_fragmentation": {"schema": "sales", "min_fragmentation": 0.0, "min_page_count": 1, "limit": 20},
+    "index_health": {"schema": "sales", "min_fragmentation": 0.0, "min_page_count": 1, "limit": 20},
+    "table_health": {"schema": "sales", "table_name": "Customers", "view": "standard"},
+    "db_stats": {},
+    "show_top_queries": {"view": "summary"},
+    "check_fragmentation": {"schema_name": "sales", "table_name": "Customers"},
+    "db_sec_perf_metrics": {},
+    "explain_query": {"sql": "SELECT TOP 5 * FROM sales.Customers"},
+    "analyze_logical_data_model": {"schema": "sales", "view": "summary"},
+    "open_logical_model": {"schema": "sales"},
+    "generate_ddl": {"schema_name": "sales", "table_name": "Customers"},
+    "create_db_user": {"username": "mcp_tmp_user", "password": "McpTempPwd123!"},
+    "drop_db_user": {"username": "mcp_tmp_user"},
+    "kill_session": {"session_id": 0},
+    "create_object": {"sql": "CREATE TABLE sales.MCP_TMP_TABLE (Id INT PRIMARY KEY, Name NVARCHAR(50) NULL)"},
+    "alter_object": {"sql": "ALTER TABLE sales.MCP_TMP_TABLE ADD CreatedAt DATETIME2 NULL"},
+    "drop_object": {"sql": "DROP TABLE sales.MCP_TMP_TABLE"},
+}
+
+
+def _args_template_for_tool(name: str, suffix: str) -> dict[str, object]:
+    prefix = "db_01" if name.startswith("db_01_") else "db_02"
+    database_name = INSTANCE_DATABASES[prefix]
+    args = dict(BASE_ARG_TEMPLATES.get(suffix, {}))
+
+    if suffix == "run_query":
+        args["arg1"] = database_name
+    elif suffix == "db_stats":
+        args["database"] = database_name
+    elif suffix != "kill_session" and suffix not in {"ping", "list_databases", "server_info_mcp"}:
+        args["database_name"] = database_name
+
+    return args
 
 
 async def main() -> None:
@@ -74,7 +95,7 @@ async def main() -> None:
                 "tool_name": name,
                 "suffix": suffix,
                 "classification": classification,
-                "args_template": ARG_TEMPLATES.get(suffix, {}),
+                "args_template": _args_template_for_tool(name, suffix),
                 "param_names": sorted(param_props.keys()),
                 "required_params": params_schema.get("required", []),
                 "parameters_schema": params_schema,

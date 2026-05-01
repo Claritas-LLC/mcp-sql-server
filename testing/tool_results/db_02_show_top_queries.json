@@ -1,14 +1,16 @@
 {
   "tool_name": "db_02_show_top_queries",
+  "tool_suffix": "show_top_queries",
+  "instance": "db_02",
   "args": {
-    "database_name": "TEST_DB",
-    "view": "summary"
+    "view": "summary",
+    "database_name": "test2"
   },
   "status": "SUCCESS",
-  "duration_ms": 140.4,
-  "captured_at_utc": "2026-04-14T05:14:45.469069+00:00",
+  "duration_ms": 25.57,
+  "captured_at_utc": "2026-05-01T13:14:16.925182+00:00",
   "result": {
-    "database": "TEST_DB",
+    "database": "test2",
     "query_store_enabled": true,
     "query_store_config": null,
     "summary": {},

@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-04-14T05:14:30.578418+00:00",
+  "generated_at_utc": "2026-05-01T13:01:00.121110+00:00",
   "total_tools": 50,
   "db_01_count": 25,
   "db_02_count": 25,
@@ -10,8 +10,8 @@
       "suffix": "alter_object",
       "classification": "write",
       "args_template": {
-        "database_name": "TEST_DB",
-        "sql": "ALTER TABLE sales.MCP_TMP_TABLE ADD CreatedAt DATETIME2 NULL"
+        "sql": "ALTER TABLE sales.MCP_TMP_TABLE ADD CreatedAt DATETIME2 NULL",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -57,9 +57,9 @@
       "suffix": "analyze_logical_data_model",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema": "sales",
-        "view": "summary"
+        "view": "summary",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -125,9 +125,9 @@
       "suffix": "check_fragmentation",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema_name": "sales",
-        "table_name": "Customers"
+        "table_name": "Customers",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -195,9 +195,9 @@
       "suffix": "create_db_user",
       "classification": "write",
       "args_template": {
-        "database_name": "TEST_DB",
         "username": "mcp_tmp_user",
-        "password": "McpTempPwd123!"
+        "password": "McpTempPwd123!",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -255,8 +255,8 @@
       "suffix": "create_object",
       "classification": "write",
       "args_template": {
-        "database_name": "TEST_DB",
-        "sql": "CREATE TABLE sales.MCP_TMP_TABLE (Id INT PRIMARY KEY, Name NVARCHAR(50) NULL)"
+        "sql": "CREATE TABLE sales.MCP_TMP_TABLE (Id INT PRIMARY KEY, Name NVARCHAR(50) NULL)",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -302,7 +302,7 @@
       "suffix": "db_sec_perf_metrics",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB"
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -346,7 +346,7 @@
       "suffix": "db_stats",
       "classification": "read",
       "args_template": {
-        "database": "TEST_DB"
+        "database": "test1"
       },
       "param_names": [
         "database",
@@ -380,8 +380,8 @@
       "suffix": "drop_db_user",
       "classification": "write",
       "args_template": {
-        "database_name": "TEST_DB",
-        "username": "mcp_tmp_user"
+        "username": "mcp_tmp_user",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -427,8 +427,8 @@
       "suffix": "drop_object",
       "classification": "write",
       "args_template": {
-        "database_name": "TEST_DB",
-        "sql": "DROP TABLE sales.MCP_TMP_TABLE"
+        "sql": "DROP TABLE sales.MCP_TMP_TABLE",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -474,8 +474,8 @@
       "suffix": "execute_query",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
-        "sql": "SELECT TOP 5 CustomerID, FirstName, LastName FROM sales.Customers ORDER BY CustomerID"
+        "sql": "SELECT TOP 5 CustomerID, FirstName, LastName FROM sales.Customers ORDER BY CustomerID",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -567,8 +567,8 @@
       "suffix": "explain_query",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
-        "sql": "SELECT TOP 5 * FROM sales.Customers"
+        "sql": "SELECT TOP 5 * FROM sales.Customers",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -614,9 +614,9 @@
       "suffix": "generate_ddl",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema_name": "sales",
-        "table_name": "Customers"
+        "table_name": "Customers",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -667,9 +667,9 @@
       "suffix": "get_schema",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "table_name": "Customers",
-        "schema_name": "sales"
+        "schema_name": "sales",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -730,11 +730,11 @@
       "suffix": "index_fragmentation",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema": "sales",
         "min_fragmentation": 0.0,
         "min_page_count": 1,
-        "limit": 20
+        "limit": 20,
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -805,11 +805,11 @@
       "suffix": "index_health",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema": "sales",
         "min_fragmentation": 0.0,
         "min_page_count": 1,
-        "limit": 20
+        "limit": 20,
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -944,10 +944,10 @@
       "suffix": "list_objects",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "object_type": "TABLE",
         "schema": "sales",
-        "limit": 20
+        "limit": 20,
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -1037,8 +1037,8 @@
       "suffix": "list_tables",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
-        "schema_name": "sales"
+        "schema_name": "sales",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -1094,8 +1094,8 @@
       "suffix": "open_logical_model",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
-        "schema": "sales"
+        "schema": "sales",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -1161,8 +1161,8 @@
       "suffix": "run_query",
       "classification": "read",
       "args_template": {
-        "arg1": "TEST_DB",
-        "arg2": "SELECT TOP 5 ProductID, ProductName FROM sales.Products ORDER BY ProductID"
+        "arg2": "SELECT TOP 5 ProductID, ProductName FROM sales.Products ORDER BY ProductID",
+        "arg1": "test1"
       },
       "param_names": [
         "arg1",
@@ -1294,8 +1294,8 @@
       "suffix": "show_top_queries",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
-        "view": "summary"
+        "view": "summary",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -1365,10 +1365,10 @@
       "suffix": "table_health",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema": "sales",
         "table_name": "Customers",
-        "view": "standard"
+        "view": "standard",
+        "database_name": "test1"
       },
       "param_names": [
         "database_name",
@@ -1470,8 +1470,8 @@
       "suffix": "alter_object",
       "classification": "write",
       "args_template": {
-        "database_name": "TEST_DB",
-        "sql": "ALTER TABLE sales.MCP_TMP_TABLE ADD CreatedAt DATETIME2 NULL"
+        "sql": "ALTER TABLE sales.MCP_TMP_TABLE ADD CreatedAt DATETIME2 NULL",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -1517,9 +1517,9 @@
       "suffix": "analyze_logical_data_model",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema": "sales",
-        "view": "summary"
+        "view": "summary",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -1585,9 +1585,9 @@
       "suffix": "check_fragmentation",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema_name": "sales",
-        "table_name": "Customers"
+        "table_name": "Customers",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -1655,9 +1655,9 @@
       "suffix": "create_db_user",
       "classification": "write",
       "args_template": {
-        "database_name": "TEST_DB",
         "username": "mcp_tmp_user",
-        "password": "McpTempPwd123!"
+        "password": "McpTempPwd123!",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -1715,8 +1715,8 @@
       "suffix": "create_object",
       "classification": "write",
       "args_template": {
-        "database_name": "TEST_DB",
-        "sql": "CREATE TABLE sales.MCP_TMP_TABLE (Id INT PRIMARY KEY, Name NVARCHAR(50) NULL)"
+        "sql": "CREATE TABLE sales.MCP_TMP_TABLE (Id INT PRIMARY KEY, Name NVARCHAR(50) NULL)",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -1762,7 +1762,7 @@
       "suffix": "db_sec_perf_metrics",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB"
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -1806,7 +1806,7 @@
       "suffix": "db_stats",
       "classification": "read",
       "args_template": {
-        "database": "TEST_DB"
+        "database": "test2"
       },
       "param_names": [
         "database",
@@ -1840,8 +1840,8 @@
       "suffix": "drop_db_user",
       "classification": "write",
       "args_template": {
-        "database_name": "TEST_DB",
-        "username": "mcp_tmp_user"
+        "username": "mcp_tmp_user",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -1887,8 +1887,8 @@
       "suffix": "drop_object",
       "classification": "write",
       "args_template": {
-        "database_name": "TEST_DB",
-        "sql": "DROP TABLE sales.MCP_TMP_TABLE"
+        "sql": "DROP TABLE sales.MCP_TMP_TABLE",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -1934,8 +1934,8 @@
       "suffix": "execute_query",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
-        "sql": "SELECT TOP 5 CustomerID, FirstName, LastName FROM sales.Customers ORDER BY CustomerID"
+        "sql": "SELECT TOP 5 CustomerID, FirstName, LastName FROM sales.Customers ORDER BY CustomerID",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -2027,8 +2027,8 @@
       "suffix": "explain_query",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
-        "sql": "SELECT TOP 5 * FROM sales.Customers"
+        "sql": "SELECT TOP 5 * FROM sales.Customers",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -2074,9 +2074,9 @@
       "suffix": "generate_ddl",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema_name": "sales",
-        "table_name": "Customers"
+        "table_name": "Customers",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -2127,9 +2127,9 @@
       "suffix": "get_schema",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "table_name": "Customers",
-        "schema_name": "sales"
+        "schema_name": "sales",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -2190,11 +2190,11 @@
       "suffix": "index_fragmentation",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema": "sales",
         "min_fragmentation": 0.0,
         "min_page_count": 1,
-        "limit": 20
+        "limit": 20,
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -2265,11 +2265,11 @@
       "suffix": "index_health",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema": "sales",
         "min_fragmentation": 0.0,
         "min_page_count": 1,
-        "limit": 20
+        "limit": 20,
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -2404,10 +2404,10 @@
       "suffix": "list_objects",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "object_type": "TABLE",
         "schema": "sales",
-        "limit": 20
+        "limit": 20,
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -2497,8 +2497,8 @@
       "suffix": "list_tables",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
-        "schema_name": "sales"
+        "schema_name": "sales",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -2554,8 +2554,8 @@
       "suffix": "open_logical_model",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
-        "schema": "sales"
+        "schema": "sales",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -2621,8 +2621,8 @@
       "suffix": "run_query",
       "classification": "read",
       "args_template": {
-        "arg1": "TEST_DB",
-        "arg2": "SELECT TOP 5 ProductID, ProductName FROM sales.Products ORDER BY ProductID"
+        "arg2": "SELECT TOP 5 ProductID, ProductName FROM sales.Products ORDER BY ProductID",
+        "arg1": "test2"
       },
       "param_names": [
         "arg1",
@@ -2754,8 +2754,8 @@
       "suffix": "show_top_queries",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
-        "view": "summary"
+        "view": "summary",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",
@@ -2825,10 +2825,10 @@
       "suffix": "table_health",
       "classification": "read",
       "args_template": {
-        "database_name": "TEST_DB",
         "schema": "sales",
         "table_name": "Customers",
-        "view": "standard"
+        "view": "standard",
+        "database_name": "test2"
       },
       "param_names": [
         "database_name",

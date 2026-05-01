@@ -1,0 +1,44 @@
+{
+  "tool_name": "db_02_run_query",
+  "tool_suffix": "run_query",
+  "database": "US_UserData",
+  "args": {
+    "instance": 2,
+    "arg1": "US_UserData",
+    "arg2": "SELECT TOP 5 * FROM [dbo].[_ln_155_056fef58-efd6-48d2-94e5-9009d3111549]"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 174.37,
+  "error": null,
+  "captured_at_utc": "2026-05-01T16:47:35.335827+00:00",
+  "result": {
+    "items": [
+      {
+        "GeoFIPS": "AL",
+        "col1": 4374
+      },
+      {
+        "GeoFIPS": "AK",
+        "col1": 1161
+      },
+      {
+        "GeoFIPS": "AZ",
+        "col1": 52412
+      },
+      {
+        "GeoFIPS": "AR",
+        "col1": 4818
+      },
+      {
+        "GeoFIPS": "CA",
+        "col1": 566546
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_items": 5,
+      "total_pages": 1
+    }
+  }
+}

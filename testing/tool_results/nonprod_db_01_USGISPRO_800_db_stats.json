@@ -1,0 +1,21 @@
+{
+  "tool_name": "db_01_db_stats",
+  "tool_suffix": "db_stats",
+  "database": "USGISPRO_800",
+  "args": {
+    "instance": 1,
+    "database": "USGISPRO_800"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 205.1,
+  "error": null,
+  "captured_at_utc": "2026-05-01T16:43:03.856302+00:00",
+  "result": {
+    "DatabaseName": "USGISPRO_800",
+    "TableCount": 271,
+    "ViewCount": 0,
+    "ProcedureCount": 424,
+    "IndexCount": 450,
+    "SchemaCount": 14
+  }
+}

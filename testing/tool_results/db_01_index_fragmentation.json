@@ -1,21 +1,23 @@
 {
   "tool_name": "db_01_index_fragmentation",
+  "tool_suffix": "index_fragmentation",
+  "instance": "db_01",
   "args": {
-    "database_name": "TEST_DB",
     "schema": "sales",
     "min_fragmentation": 0.0,
     "min_page_count": 1,
-    "limit": 20
+    "limit": 20,
+    "database_name": "test1"
   },
   "status": "SUCCESS",
-  "duration_ms": 21.74,
-  "captured_at_utc": "2026-04-14T05:14:41.790554+00:00",
+  "duration_ms": 15.48,
+  "captured_at_utc": "2026-05-01T13:14:16.652355+00:00",
   "result": {
     "items": [
       {
         "schema_name": "sales",
         "table_name": "Customers",
-        "index_name": "PK__Customer__A4AE64B813226899",
+        "index_name": "PK__Customer__A4AE64B879111742",
         "avg_fragmentation_in_percent": 0.0,
         "page_count": 1,
         "index_type": "CLUSTERED"
@@ -23,7 +25,7 @@
       {
         "schema_name": "sales",
         "table_name": "Customers",
-        "index_name": "UQ__Customer__A9D10534C5579933",
+        "index_name": "UQ__Customer__A9D1053411D48D5B",
         "avg_fragmentation_in_percent": 0.0,
         "page_count": 1,
         "index_type": "NONCLUSTERED"
@@ -39,7 +41,7 @@
       {
         "schema_name": "sales",
         "table_name": "Products",
-        "index_name": "PK__Products__B40CC6EDB8EA1A55",
+        "index_name": "PK__Products__B40CC6EDBDC7B32C",
         "avg_fragmentation_in_percent": 0.0,
         "page_count": 1,
         "index_type": "CLUSTERED"
@@ -47,7 +49,7 @@
       {
         "schema_name": "sales",
         "table_name": "Orders",
-        "index_name": "PK__Orders__C3905BAF474E85FE",
+        "index_name": "PK__Orders__C3905BAF38862ECA",
         "avg_fragmentation_in_percent": 0.0,
         "page_count": 1,
         "index_type": "CLUSTERED"
@@ -71,7 +73,7 @@
       {
         "schema_name": "sales",
         "table_name": "OrderDetails",
-        "index_name": "PK__OrderDet__D3B9D30CE3AA9D98",
+        "index_name": "PK__OrderDet__D3B9D30CBB43CBF9",
         "avg_fragmentation_in_percent": 0.0,
         "page_count": 1,
         "index_type": "CLUSTERED"

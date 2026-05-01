@@ -1,0 +1,24 @@
+{
+  "suffix": "show_top_queries",
+  "status": "SUCCESS",
+  "tools": [
+    {
+      "tool_name": "db_01_show_top_queries",
+      "instance": "db_01",
+      "status": "SUCCESS",
+      "duration_ms": 25.91,
+      "result_file": "testing/tool_results/db_01_show_top_queries.json",
+      "error": null
+    },
+    {
+      "tool_name": "db_02_show_top_queries",
+      "instance": "db_02",
+      "status": "SUCCESS",
+      "duration_ms": 25.57,
+      "result_file": "testing/tool_results/db_02_show_top_queries.json",
+      "error": null
+    }
+  ],
+  "validation_errors": [],
+  "captured_at_utc": "2026-05-01T13:14:16.927979+00:00"
+}

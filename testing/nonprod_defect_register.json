@@ -1,0 +1,46 @@
+[
+  {
+    "id": "DEF-001",
+    "tool_name": "db_01_explain_query",
+    "tool_suffix": "explain_query",
+    "database": "USGISPRO_800",
+    "symptom": "Error calling tool 'db_01_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'USGISPRO_800'. (262) (SQLExecDirectW)\")",
+    "root_cause_file": "unknown",
+    "root_cause_function": "explain_query",
+    "status": "open",
+    "detected_at_utc": "2026-05-01T16:55:23.535646+00:00"
+  },
+  {
+    "id": "DEF-002",
+    "tool_name": "db_01_explain_query",
+    "tool_suffix": "explain_query",
+    "database": "US_RT_User_800",
+    "symptom": "Error calling tool 'db_01_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'US_RT_User_800'. (262) (SQLExecDirectW)\")",
+    "root_cause_file": "unknown",
+    "root_cause_function": "explain_query",
+    "status": "open",
+    "detected_at_utc": "2026-05-01T16:55:24.200402+00:00"
+  },
+  {
+    "id": "DEF-003",
+    "tool_name": "db_02_explain_query",
+    "tool_suffix": "explain_query",
+    "database": "ListGateway",
+    "symptom": "Error calling tool 'db_02_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'ListGateway'. (262) (SQLExecDirectW)\")",
+    "root_cause_file": "unknown",
+    "root_cause_function": "explain_query",
+    "status": "open",
+    "detected_at_utc": "2026-05-01T16:55:24.876274+00:00"
+  },
+  {
+    "id": "DEF-004",
+    "tool_name": "db_02_explain_query",
+    "tool_suffix": "explain_query",
+    "database": "US_UserData",
+    "symptom": "Error calling tool 'db_02_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'US_UserData'. (262) (SQLExecDirectW)\")",
+    "root_cause_file": "unknown",
+    "root_cause_function": "explain_query",
+    "status": "open",
+    "detected_at_utc": "2026-05-01T16:55:25.495680+00:00"
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "suffix": "index_health",
+  "status": "SUCCESS",
+  "tools": [
+    {
+      "tool_name": "db_01_index_health",
+      "instance": "db_01",
+      "status": "SUCCESS",
+      "duration_ms": 12.26,
+      "result_file": "testing/tool_results/db_01_index_health.json",
+      "error": null
+    },
+    {
+      "tool_name": "db_02_index_health",
+      "instance": "db_02",
+      "status": "SUCCESS",
+      "duration_ms": 15.13,
+      "result_file": "testing/tool_results/db_02_index_health.json",
+      "error": null
+    }
+  ],
+  "validation_errors": [],
+  "captured_at_utc": "2026-05-01T13:14:16.710292+00:00"
+}

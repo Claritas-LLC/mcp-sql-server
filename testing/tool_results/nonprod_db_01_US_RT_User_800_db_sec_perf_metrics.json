@@ -1,0 +1,18 @@
+{
+  "tool_name": "db_01_db_sec_perf_metrics",
+  "tool_suffix": "db_sec_perf_metrics",
+  "database": "US_RT_User_800",
+  "args": {
+    "instance": 1,
+    "database_name": "US_RT_User_800"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 286.93,
+  "error": null,
+  "captured_at_utc": "2026-05-01T14:47:40.840560+00:00",
+  "result": {
+    "user_count": 8,
+    "open_transactions": 0,
+    "data_size_mb": 7098
+  }
+}

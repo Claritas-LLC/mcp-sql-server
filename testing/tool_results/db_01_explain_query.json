@@ -1,14 +1,16 @@
 {
   "tool_name": "db_01_explain_query",
+  "tool_suffix": "explain_query",
+  "instance": "db_01",
   "args": {
-    "database_name": "TEST_DB",
-    "sql": "SELECT TOP 5 * FROM sales.Customers"
+    "sql": "SELECT TOP 5 * FROM sales.Customers",
+    "database_name": "test1"
   },
   "status": "SUCCESS",
-  "duration_ms": 26.91,
-  "captured_at_utc": "2026-04-14T05:14:41.723606+00:00",
+  "duration_ms": 17.01,
+  "captured_at_utc": "2026-05-01T13:14:17.020397+00:00",
   "result": {
-    "database": "TEST_DB",
+    "database": "test1",
     "plan": [
       {
         "StmtText": "SELECT TOP 5 * FROM sales.Customers",
@@ -44,27 +46,27 @@
         "EstimateCPU": 4.999999987376214e-07,
         "AvgRowSize": 283,
         "TotalSubtreeCost": 0.003287999890744686,
-        "OutputList": "[TEST_DB].[sales].[Customers].[CustomerID], [TEST_DB].[sales].[Customers].[FirstName], [TEST_DB].[sales].[Customers].[LastName], [TEST_DB].[sales].[Customers].[Email], [TEST_DB].[sales].[Customers].[City], [TEST_DB].[sales].[Customers].[State], [TEST_DB].[sales].[Customers].[CreatedDate]",
+        "OutputList": "[test1].[sales].[Customers].[CustomerID], [test1].[sales].[Customers].[FirstName], [test1].[sales].[Customers].[LastName], [test1].[sales].[Customers].[Email], [test1].[sales].[Customers].[City], [test1].[sales].[Customers].[State], [test1].[sales].[Customers].[CreatedDate]",
         "Warnings": null,
         "Type": "PLAN_ROW",
         "Parallel": false,
         "EstimateExecutions": 1.0
       },
       {
-        "StmtText": "       |--Clustered Index Scan(OBJECT:([TEST_DB].[sales].[Customers].[PK__Customer__A4AE64B813226899]))",
+        "StmtText": "       |--Clustered Index Scan(OBJECT:([test1].[sales].[Customers].[PK__Customer__A4AE64B879111742]))",
         "StmtId": 1,
         "NodeId": 3,
         "Parent": 2,
         "PhysicalOp": "Clustered Index Scan",
         "LogicalOp": "Clustered Index Scan",
-        "Argument": "OBJECT:([TEST_DB].[sales].[Customers].[PK__Customer__A4AE64B813226899])",
-        "DefinedValues": "[TEST_DB].[sales].[Customers].[CustomerID], [TEST_DB].[sales].[Customers].[FirstName], [TEST_DB].[sales].[Customers].[LastName], [TEST_DB].[sales].[Customers].[Email], [TEST_DB].[sales].[Customers].[City], [TEST_DB].[sales].[Customers].[State], [TEST_DB].[sales].[Customers].[CreatedDate]",
+        "Argument": "OBJECT:([test1].[sales].[Customers].[PK__Customer__A4AE64B879111742])",
+        "DefinedValues": "[test1].[sales].[Customers].[CustomerID], [test1].[sales].[Customers].[FirstName], [test1].[sales].[Customers].[LastName], [test1].[sales].[Customers].[Email], [test1].[sales].[Customers].[City], [test1].[sales].[Customers].[State], [test1].[sales].[Customers].[CreatedDate]",
         "EstimateRows": 5.0,
         "EstimateIO": 0.0031250000465661287,
         "EstimateCPU": 0.00016250000044237822,
         "AvgRowSize": 283,
         "TotalSubtreeCost": 0.0032875000033527613,
-        "OutputList": "[TEST_DB].[sales].[Customers].[CustomerID], [TEST_DB].[sales].[Customers].[FirstName], [TEST_DB].[sales].[Customers].[LastName], [TEST_DB].[sales].[Customers].[Email], [TEST_DB].[sales].[Customers].[City], [TEST_DB].[sales].[Customers].[State], [TEST_DB].[sales].[Customers].[CreatedDate]",
+        "OutputList": "[test1].[sales].[Customers].[CustomerID], [test1].[sales].[Customers].[FirstName], [test1].[sales].[Customers].[LastName], [test1].[sales].[Customers].[Email], [test1].[sales].[Customers].[City], [test1].[sales].[Customers].[State], [test1].[sales].[Customers].[CreatedDate]",
         "Warnings": null,
         "Type": "PLAN_ROW",
         "Parallel": false,

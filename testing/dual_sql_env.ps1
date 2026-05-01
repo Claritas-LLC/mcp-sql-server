@@ -1,5 +1,5 @@
 param(
-    [switch]$WriteMode = $true
+    [bool]$WriteMode = $true
 )
 
 $ErrorActionPreference = 'Stop'
@@ -8,19 +8,21 @@ $env:DB_01_SERVER = '127.0.0.1'
 $env:DB_01_PORT = '14331'
 $env:DB_01_USER = 'sa'
 $env:DB_01_PASSWORD = 'McpTestPassword123!'
-$env:DB_01_NAME = 'TEST_DB'
+$env:DB_01_NAME = 'test1'
 $env:DB_01_DRIVER = 'ODBC Driver 17 for SQL Server'
 $env:DB_01_ENCRYPT = 'no'
 $env:DB_01_TRUST_CERT = 'yes'
+$env:DB_01_POOL_SIZE = '4'
 
 $env:DB_02_SERVER = '127.0.0.1'
 $env:DB_02_PORT = '14332'
 $env:DB_02_USER = 'sa'
 $env:DB_02_PASSWORD = 'McpTestPassword123!'
-$env:DB_02_NAME = 'TEST_DB'
+$env:DB_02_NAME = 'test2'
 $env:DB_02_DRIVER = 'ODBC Driver 17 for SQL Server'
 $env:DB_02_ENCRYPT = 'no'
 $env:DB_02_TRUST_CERT = 'yes'
+$env:DB_02_POOL_SIZE = '4'
 
 $env:MCP_TRANSPORT = 'http'
 $env:MCP_HOST = '127.0.0.1'
