@@ -4,7 +4,7 @@ version: 1.0
 date_created: 2026-05-01
 last_updated: 2026-05-01
 owner: QA Engineering
-status: 'In progress'
+status: 'Blocked (pending DBA SHOWPLAN grants)'
 tags: [process, qa, testing, read-only, non-production, dual-instance]
 ---
 
@@ -13,6 +13,14 @@ tags: [process, qa, testing, read-only, non-production, dual-instance]
 ![Status: In progress](https://img.shields.io/badge/status-In%20progress-yellow)
 
 This plan defines a deterministic, serial workflow to validate all 38 read-only MCP tools across two non-production SQL Server instances and four target databases. Credentials and server addresses are loaded from the repository `.env` file. Each tool variant is executed per database, artifacts are immediately reviewed, and all discovered defects are remediated before the sequence advances. The plan succeeds when every artifact contains zero error fields and the final defect register is empty.
+
+## Current Execution Snapshot (2026-05-01)
+
+- Harness resumed successfully using existing artifacts and completed a full 70-unit audit pass.
+- Current totals: **66 passed**, **4 failed** (`explain_query` on all 4 databases).
+- Remaining open defects are permission-related only: `SHOWPLAN permission denied` (SQL error 262).
+- No open code defects were observed in this run; all non-`explain_query` read-only suffixes are green.
+- Next unblock action is DBA grant of `SHOWPLAN` to `mcp_readonly` on `USGISPRO_800`, `US_RT_User_800`, `ListGateway`, and `US_UserData`, followed by targeted rerun of `explain_query`.
 
 **Execution Matrix at a glance:**
 
