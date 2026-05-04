@@ -9,3 +9,6 @@ venv/
 *.log
 
 logs/
+
+# Kiro IDE workspace settings
+.kiro/
