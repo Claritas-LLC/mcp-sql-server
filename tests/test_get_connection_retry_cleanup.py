@@ -10,6 +10,12 @@ class _FakeConn:
         self.autocommit = False
         self.closed = False
 
+    def cursor(self):
+        return self
+
+    def execute(self, *_args, **_kwargs):
+        return None
+
     def close(self):
         self.closed = True
 
@@ -20,22 +26,20 @@ class _AlwaysFailPool:
 
 
 class TestGetConnectionRetryCleanup(unittest.TestCase):
-    def test_replacement_connection_closed_when_scope_reset_fails(self):
+    def test_pool_exhaustion_uses_instance_default_database(self):
         replacement_conn = _FakeConn()
 
         with patch.object(server, "validate_instance"), \
+            patch.object(server, "_instance_connection_database", return_value="test1"), \
             patch.object(server, "_CONN_POOLS", {1: _AlwaysFailPool()}), \
             patch.object(server, "_CONN_POOL_LOCKS", {1: Lock()}), \
-            patch.object(server, "_connection_string", return_value="DRIVER=x;"), \
-            patch.object(server.pyodbc, "connect", return_value=replacement_conn), \
-            patch.object(server, "_ensure_connection_database_scope", side_effect=[Exception("first scope fail"), Exception("second scope fail")]), \
-            patch.object(server.logger, "warning") as mock_warning:
-            with self.assertRaises(Exception):
-                server.get_connection(database="master", instance=1)
+            patch.object(server, "_connection_string", return_value="DRIVER=x;DATABASE=test1;") as mock_connection_string, \
+            patch.object(server.pyodbc, "connect", return_value=replacement_conn):
+            pooled = server.get_connection(database="master", instance=1)
 
-        self.assertTrue(replacement_conn.closed)
+        self.assertIsInstance(pooled, server.PooledConnection)
         self.assertTrue(replacement_conn.autocommit)
-        self.assertTrue(any("Failed scope reset on replacement pooled connection" in str(call.args[0]) for call in mock_warning.call_args_list))
+        mock_connection_string.assert_called_once_with("test1", 1)
 
 
 if __name__ == "__main__":

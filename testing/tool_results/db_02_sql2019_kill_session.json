@@ -1,0 +1,10 @@
+{
+  "tool_name": "db_02_sql2019_kill_session",
+  "args": {},
+  "status": "FAILED",
+  "duration_ms": 324.48,
+  "captured_at_utc": "2026-04-23T10:04:20.506138+00:00",
+  "result": {
+    "error": "Error calling tool 'db_02_sql2019_kill_session': Write operations are disabled. Set MCP_ALLOW_WRITE=true and MCP_CONFIRM_WRITE=true."
+  }
+}

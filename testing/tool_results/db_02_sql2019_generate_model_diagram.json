@@ -1,0 +1,22 @@
+{
+  "tool_name": "db_02_sql2019_generate_model_diagram",
+  "args": {
+    "database_name": "TEST_DB"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 13.45,
+  "captured_at_utc": "2026-04-23T10:04:19.741054+00:00",
+  "result": {
+    "status": "ready",
+    "tool_name": "generate_prefab_ui",
+    "instructions": "\nGenerate a Prefab Python UI dashboard for the logical data model.\n\nABSOLUTE REQUIREMENTS - YOUR RESPONSE MUST FOLLOW THESE EXACTLY:\n1. Output ONLY valid Python code - no markdown, no backticks, no explanations\n2. NO ```python blocks, NO conversational text before or after code\n3. Start immediately with the import statements\n4. End with the last closing parenthesis - nothing after\n5. Use ONLY \"with\" syntax for containers (Column, Row, Card, CardContent)\n\nAvailable data variables (use these exact names):\n- database_name (string)\n- server (string)\n- table_count (integer)\n- foreign_key_count (integer)\n- instance (integer)\n- timestamp (string)\n\nRequired imports at the very top:\nfrom prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardContent\nfrom prefab_ui.components.charts import BarChart, ChartSeries\n\nComplete working template - replace values with actual data:\n\nfrom prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardContent\nfrom prefab_ui.components.charts import BarChart, ChartSeries\n\nwith Column(gap=6, css_class=\"p-8\"):\n    Heading(content=\"Data Model - \" + database_name)\n    Text(\"Server: \" + server)\n    with Row(gap=4):\n        with Card():\n            with CardContent():\n                Heading(content=\"Tables\")\n                Text(str(table_count))\n        with Card():\n            with CardContent():\n                Heading(content=\"Foreign Keys\")\n                Text(str(foreign_key_count))\n    BarChart(\n        title=\"Schema Overview\",\n        series=[ChartSeries(name=\"Tables\", data=[table_count, foreign_key_count])]\n    )\n    Text(\"Schema analysis and recommendations here\")\n",
+    "data": {
+      "database_name": "TEST_DB",
+      "server": "localhost",
+      "table_count": 2,
+      "foreign_key_count": 1,
+      "instance": 2,
+      "timestamp": "2026-04-23T10:04:19.740319+00:00"
+    }
+  }
+}

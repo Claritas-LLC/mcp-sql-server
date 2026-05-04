@@ -1,0 +1,64 @@
+{
+  "tool_name": "db_01_get_schema",
+  "tool_suffix": "get_schema",
+  "database": "US_RT_User_800",
+  "args": {
+    "instance": 1,
+    "database_name": "US_RT_User_800",
+    "schema_name": "dbo",
+    "table_name": "000D6C78-5784-4A7F-8C31-3DEEF4457529"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 282.56,
+  "error": null,
+  "captured_at_utc": "2026-05-01T16:47:33.230366+00:00",
+  "result": {
+    "database": "US_RT_User_800",
+    "schema": "dbo",
+    "table": "000D6C78-5784-4A7F-8C31-3DEEF4457529",
+    "columns": [
+      {
+        "COLUMN_NAME": "GEOABBR",
+        "ORDINAL_POSITION": 1,
+        "DATA_TYPE": "varchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 20,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "14082",
+        "ORDINAL_POSITION": 2,
+        "DATA_TYPE": "varchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 50,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      },
+      {
+        "COLUMN_NAME": "14089",
+        "ORDINAL_POSITION": 3,
+        "DATA_TYPE": "varchar",
+        "IS_NULLABLE": "YES",
+        "CHARACTER_MAXIMUM_LENGTH": 50,
+        "NUMERIC_PRECISION": null,
+        "NUMERIC_SCALE": null,
+        "COLUMN_DEFAULT": null
+      }
+    ],
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.columns": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 3,
+          "total_pages": 1
+        }
+      }
+    }
+  }
+}

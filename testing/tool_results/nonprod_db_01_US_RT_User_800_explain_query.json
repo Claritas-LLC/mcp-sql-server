@@ -1,0 +1,79 @@
+{
+  "tool_name": "db_01_explain_query",
+  "tool_suffix": "explain_query",
+  "database": "US_RT_User_800",
+  "args": {
+    "instance": 1,
+    "database_name": "US_RT_User_800",
+    "sql": "SELECT TOP 5 * FROM [dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529]"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 351.66,
+  "error": null,
+  "captured_at_utc": "2026-05-02T08:20:18.838865+00:00",
+  "result": {
+    "database": "US_RT_User_800",
+    "plan": [
+      {
+        "StmtText": "SELECT TOP 5 * FROM [dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529]",
+        "StmtId": 1,
+        "NodeId": 1,
+        "Parent": 0,
+        "PhysicalOp": null,
+        "LogicalOp": null,
+        "Argument": "1",
+        "DefinedValues": null,
+        "EstimateRows": 1.0,
+        "EstimateIO": null,
+        "EstimateCPU": null,
+        "AvgRowSize": null,
+        "TotalSubtreeCost": 0.0032832000870257616,
+        "OutputList": null,
+        "Warnings": null,
+        "Type": "SELECT",
+        "Parallel": false,
+        "EstimateExecutions": null
+      },
+      {
+        "StmtText": "  |--Top(TOP EXPRESSION:((5)))",
+        "StmtId": 1,
+        "NodeId": 2,
+        "Parent": 1,
+        "PhysicalOp": "Top",
+        "LogicalOp": "Top",
+        "Argument": "TOP EXPRESSION:((5))",
+        "DefinedValues": null,
+        "EstimateRows": 1.0,
+        "EstimateIO": 0.0,
+        "EstimateCPU": 1.0000000116860974e-07,
+        "AvgRowSize": 75,
+        "TotalSubtreeCost": 0.0032832000870257616,
+        "OutputList": "[US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529].[GEOABBR], [US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529].[14082], [US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529].[14089]",
+        "Warnings": null,
+        "Type": "PLAN_ROW",
+        "Parallel": false,
+        "EstimateExecutions": 1.0
+      },
+      {
+        "StmtText": "       |--Table Scan(OBJECT:([US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529]))",
+        "StmtId": 1,
+        "NodeId": 3,
+        "Parent": 2,
+        "PhysicalOp": "Table Scan",
+        "LogicalOp": "Table Scan",
+        "Argument": "OBJECT:([US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529])",
+        "DefinedValues": "[US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529].[GEOABBR], [US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529].[14082], [US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529].[14089]",
+        "EstimateRows": 1.0,
+        "EstimateIO": 0.003203500062227249,
+        "EstimateCPU": 7.960000220919028e-05,
+        "AvgRowSize": 75,
+        "TotalSubtreeCost": 0.0032830999698489904,
+        "OutputList": "[US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529].[GEOABBR], [US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529].[14082], [US_RT_User_800].[dbo].[000D6C78-5784-4A7F-8C31-3DEEF4457529].[14089]",
+        "Warnings": null,
+        "Type": "PLAN_ROW",
+        "Parallel": false,
+        "EstimateExecutions": 1.0
+      }
+    ]
+  }
+}

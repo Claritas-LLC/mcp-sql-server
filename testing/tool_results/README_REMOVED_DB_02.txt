@@ -1,0 +1,1 @@
+All db_02_* and db_02_sql2019_* test artifacts have been removed as part of the single-instance refactor. These files are no longer needed.

@@ -1,0 +1,46 @@
+{
+  "tool_name": "db_02_table_health",
+  "tool_suffix": "table_health",
+  "database": "US_UserData",
+  "args": {
+    "instance": 2,
+    "database_name": "US_UserData",
+    "schema": "dbo",
+    "table_name": "_ln_155_056fef58-efd6-48d2-94e5-9009d3111549",
+    "view": "summary"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 2000.13,
+  "error": null,
+  "captured_at_utc": "2026-05-01T16:43:03.640865+00:00",
+  "result": {
+    "table_info": {
+      "TableName": "_ln_155_056fef58-efd6-48d2-94e5-9009d3111549",
+      "SchemaName": "dbo",
+      "RowCounts": 51,
+      "TotalSpaceKB": 72,
+      "UsedSpaceKB": 16,
+      "UnusedSpaceKB": 56
+    },
+    "health_summary": {
+      "indexes_count": 0,
+      "foreign_keys_count": 0,
+      "statistics_count": 0,
+      "constraint_issues_count": 0,
+      "recommendations_count": 0
+    },
+    "recommendations": [],
+    "_pagination": {
+      "page": 1,
+      "page_size": 10,
+      "lists": {
+        "root.recommendations": {
+          "page": 1,
+          "page_size": 10,
+          "total_items": 0,
+          "total_pages": 1
+        }
+      }
+    }
+  }
+}

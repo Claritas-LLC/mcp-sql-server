@@ -1,14 +1,16 @@
 {
   "tool_name": "db_02_table_health",
+  "tool_suffix": "table_health",
+  "instance": "db_02",
   "args": {
-    "database_name": "TEST_DB",
     "schema": "sales",
     "table_name": "Customers",
-    "view": "standard"
+    "view": "standard",
+    "database_name": "test2"
   },
   "status": "SUCCESS",
-  "duration_ms": 107.66,
-  "captured_at_utc": "2026-04-14T05:14:45.591004+00:00",
+  "duration_ms": 33.62,
+  "captured_at_utc": "2026-05-01T13:14:16.788271+00:00",
   "result": {
     "table_info": {
       "TableName": "Customers",
@@ -91,13 +93,13 @@
         "is_disabled": false
       },
       {
-        "IndexName": "PK__Customer__A4AE64B8CC382215",
+        "IndexName": "PK__Customer__A4AE64B883602CF3",
         "IndexType": "CLUSTERED",
         "IndexSizeMB": "0.0156",
         "is_disabled": false
       },
       {
-        "IndexName": "UQ__Customer__A9D10534F6CC4A44",
+        "IndexName": "UQ__Customer__A9D105342ED200CB",
         "IndexType": "NONCLUSTERED",
         "IndexSizeMB": "0.0156",
         "is_disabled": false
@@ -105,12 +107,12 @@
     ],
     "constraints": [
       {
-        "CONSTRAINT_NAME": "PK__Customer__A4AE64B8CC382215",
+        "CONSTRAINT_NAME": "PK__Customer__A4AE64B883602CF3",
         "CONSTRAINT_TYPE": "PRIMARY KEY",
         "COLUMN_NAME": "CustomerID"
       },
       {
-        "CONSTRAINT_NAME": "UQ__Customer__A9D10534F6CC4A44",
+        "CONSTRAINT_NAME": "UQ__Customer__A9D105342ED200CB",
         "CONSTRAINT_TYPE": "UNIQUE",
         "COLUMN_NAME": "Email"
       }
@@ -135,15 +137,15 @@
       },
       {
         "ColumnName": "CustomerID",
-        "StatsName": "PK__Customer__A4AE64B8CC382215",
-        "last_updated": "2026-04-14T04:55:46.933333",
+        "StatsName": "PK__Customer__A4AE64B883602CF3",
+        "last_updated": "2026-05-01T13:06:36.810000",
         "rows": 5,
         "rows_sampled": 5,
         "modification_counter": 0
       },
       {
         "ColumnName": "Email",
-        "StatsName": "UQ__Customer__A9D10534F6CC4A44",
+        "StatsName": "UQ__Customer__A9D105342ED200CB",
         "last_updated": null,
         "rows": null,
         "rows_sampled": null,

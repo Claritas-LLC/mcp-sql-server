@@ -1,0 +1,1 @@
+REMOVED: This script was used for dual SQL instance teardown and is no longer needed after single-instance refactor.

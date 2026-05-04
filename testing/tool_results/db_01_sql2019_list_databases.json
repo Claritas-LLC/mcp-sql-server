@@ -1,0 +1,22 @@
+{
+  "tool_name": "db_01_sql2019_list_databases",
+  "args": {},
+  "status": "SUCCESS",
+  "duration_ms": 9.24,
+  "captured_at_utc": "2026-04-23T10:04:09.494226+00:00",
+  "result": {
+    "items": [
+      "master",
+      "model",
+      "msdb",
+      "tempdb",
+      "TEST_DB"
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_items": 5,
+      "total_pages": 1
+    }
+  }
+}

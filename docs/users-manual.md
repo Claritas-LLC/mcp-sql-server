@@ -247,10 +247,13 @@ Example 4: Read query execution
 
 Example 5: Data model analysis
 
+`view` is one of `"summary"`, `"standard"`, or `"full"`. Omit `schema` or set it to `null` to include all schemas. For instance 1 (`db_01_*`), `instance` defaults to `1` if omitted.
+
 ```json
 {
   "tool": "db_01_analyze_logical_data_model",
   "args": {
+    "instance": 1,
     "database_name": "USGISPRO_800",
     "schema": "dbo",
     "view": "summary"
@@ -258,41 +261,39 @@ Example 5: Data model analysis
 }
 ```
 
-Example 5b: Data model analysis with email delivery
+Example 5b: Full-detail view with pagination
+
+Large databases can produce large payloads. Use `page` and `page_size` with `view: "full"` as needed.
 
 ```json
 {
   "tool": "db_01_analyze_logical_data_model",
   "args": {
+    "instance": 1,
     "database_name": "USGISPRO_800",
     "schema": "dbo",
-    "view": "summary",
-    "email_recipient": "recipient@example.com"
+    "view": "full",
+    "page": 1,
+    "page_size": 10
   }
 }
 ```
 
-When `email_recipient` is provided, the analysis report is sent as an HTML email via Office 365. If email sending fails, the analysis is returned in JSON format. Without `email_recipient`, the tool returns the analysis in JSON format directly.
-
-**Background Task Support**: The `analyze_logical_data_model` tool supports background task execution for long-running analyses on large databases. When run as a background task, the tool returns a task ID immediately and provides progress updates. To use background mode, the MCP client must request task execution. The tool will run asynchronously and report progress through stages: database connection, analysis, report generation, and email sending (if applicable).
-
-Example 5c: Data model analysis with background task (if supported by MCP client)
+Example 5c: Same logical call with `view: "full"` (no pagination override)
 
 ```json
 {
   "tool": "db_01_analyze_logical_data_model",
   "args": {
+    "instance": 1,
     "database_name": "USGISPRO_800",
     "schema": "dbo",
     "view": "full"
-  },
-  "options": {
-    "task": true
   }
 }
 ```
 
-When run as a background task, the client receives a task ID and can poll for results. Progress is reported at key stages of the analysis process.
+Long-running scans: adjust server timeout via `MCP_STATEMENT_TIMEOUT_MS` in `.env` if queries exceed the default. Some MCP clients also impose their own request timeout; raising that limit is separate from anything passed in tool `args`. This server does **not** implement email delivery from this tool, MCP `tools/call` `options.task` flags, or in-server background jobs with task IDs for this tool—the invocation shape is always the tool name plus its declared arguments (`instance`, `database_name`, `schema`, `view`, `page`, `page_size`).
 
 Example 6: Sessions monitor dashboard (returns URL)
 

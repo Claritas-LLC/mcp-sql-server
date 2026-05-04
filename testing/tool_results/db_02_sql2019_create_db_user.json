@@ -1,0 +1,12 @@
+{
+  "tool_name": "db_02_sql2019_create_db_user",
+  "args": {
+    "database_name": "TEST_DB"
+  },
+  "status": "FAILED",
+  "duration_ms": 314.01,
+  "captured_at_utc": "2026-04-23T10:04:16.956128+00:00",
+  "result": {
+    "error": "Error calling tool 'db_02_sql2019_create_db_user': Write operations are disabled. Set MCP_ALLOW_WRITE=true and MCP_CONFIRM_WRITE=true."
+  }
+}

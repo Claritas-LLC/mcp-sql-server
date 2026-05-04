@@ -1,0 +1,16 @@
+{
+  "tool_name": "db_02_generate_ddl",
+  "tool_suffix": "generate_ddl",
+  "database": "US_UserData",
+  "args": {
+    "instance": 2,
+    "database_name": "US_UserData",
+    "schema_name": "dbo",
+    "table_name": "_ln_155_056fef58-efd6-48d2-94e5-9009d3111549"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 268.0,
+  "error": null,
+  "captured_at_utc": "2026-05-01T14:47:50.748482+00:00",
+  "result": "CREATE TABLE [dbo]. [_ln_155_056fef58-efd6-48d2-94e5-9009d3111549] (\n    [GeoFIPS] VARCHAR(100),\n    [col1] BIGINT\n);"
+}

@@ -1,0 +1,83 @@
+{
+  "tool_name": "db_02_list_tables",
+  "tool_suffix": "list_tables",
+  "database": "ListGateway",
+  "args": {
+    "instance": 2,
+    "database_name": "ListGateway"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 0,
+  "error": null,
+  "captured_at_utc": "2026-05-02T08:20:15.481239+00:00",
+  "result": {
+    "items": [
+      {
+        "schema_name": "dbo",
+        "table_name": "bb_202101_bg",
+        "create_date": "2021-04-05 11:51:25.800",
+        "modify_date": "2021-04-05 11:57:51.967"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "bb_202101_cd",
+        "create_date": "2021-04-05 11:51:26.000",
+        "modify_date": "2021-04-05 11:57:52.007"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "bb_202101_co",
+        "create_date": "2021-04-05 11:51:26.047",
+        "modify_date": "2021-04-05 11:57:52.140"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "bb_202101_ct",
+        "create_date": "2021-04-05 11:51:26.110",
+        "modify_date": "2021-04-05 11:57:52.553"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "bb_202101_dma",
+        "create_date": "2021-04-05 11:51:26.173",
+        "modify_date": "2021-04-05 11:57:52.683"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "bb_202101_mmsa",
+        "create_date": "2021-04-05 11:51:58.393",
+        "modify_date": "2021-04-05 11:57:52.727"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "bb_202101_st",
+        "create_date": "2021-04-05 11:51:58.590",
+        "modify_date": "2021-04-05 11:57:52.760"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "bb_202101_zc",
+        "create_date": "2021-04-05 11:51:58.670",
+        "modify_date": "2021-04-05 11:57:53.017"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "bb_202107_bg",
+        "create_date": "2021-09-16 12:46:46.927",
+        "modify_date": "2021-09-16 13:14:58.173"
+      },
+      {
+        "schema_name": "dbo",
+        "table_name": "bb_202107_cd",
+        "create_date": "2021-09-16 12:46:47.400",
+        "modify_date": "2021-09-16 13:14:58.240"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total_items": 216,
+      "total_pages": 22
+    }
+  }
+}

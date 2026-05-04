@@ -1,16 +1,18 @@
 {
   "tool_name": "db_02_list_databases",
+  "tool_suffix": "list_databases",
+  "instance": "db_02",
   "args": {},
   "status": "SUCCESS",
-  "duration_ms": 254.07,
-  "captured_at_utc": "2026-04-14T05:14:44.983311+00:00",
+  "duration_ms": 8.96,
+  "captured_at_utc": "2026-05-01T13:14:16.456699+00:00",
   "result": {
     "items": [
       "master",
       "model",
       "msdb",
       "tempdb",
-      "TEST_DB"
+      "test2"
     ],
     "pagination": {
       "page": 1,

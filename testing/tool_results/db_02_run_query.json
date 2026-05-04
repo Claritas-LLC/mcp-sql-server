@@ -1,12 +1,14 @@
 {
   "tool_name": "db_02_run_query",
+  "tool_suffix": "run_query",
+  "instance": "db_02",
   "args": {
-    "arg1": "TEST_DB",
-    "arg2": "SELECT TOP 5 ProductID, ProductName FROM sales.Products ORDER BY ProductID"
+    "arg2": "SELECT TOP 5 ProductID, ProductName FROM sales.Products ORDER BY ProductID",
+    "arg1": "test2"
   },
   "status": "SUCCESS",
-  "duration_ms": 19.1,
-  "captured_at_utc": "2026-04-14T05:14:45.298937+00:00",
+  "duration_ms": 6.4,
+  "captured_at_utc": "2026-05-01T13:14:16.568724+00:00",
   "result": {
     "items": [
       {

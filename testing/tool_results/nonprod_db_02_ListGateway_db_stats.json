@@ -1,0 +1,21 @@
+{
+  "tool_name": "db_02_db_stats",
+  "tool_suffix": "db_stats",
+  "database": "ListGateway",
+  "args": {
+    "instance": 2,
+    "database": "ListGateway"
+  },
+  "status": "SUCCESS",
+  "duration_ms": 946.9,
+  "error": null,
+  "captured_at_utc": "2026-05-01T16:46:12.692951+00:00",
+  "result": {
+    "DatabaseName": "ListGateway",
+    "TableCount": 216,
+    "ViewCount": 0,
+    "ProcedureCount": 0,
+    "IndexCount": 332,
+    "SchemaCount": 14
+  }
+}

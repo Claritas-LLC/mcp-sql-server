@@ -1,0 +1,19 @@
+{
+  "tool_name": "db_02_ping",
+  "tool_suffix": "ping",
+  "database": "N/A",
+  "args": {
+    "instance": 2
+  },
+  "status": "SUCCESS",
+  "duration_ms": 636.63,
+  "error": null,
+  "captured_at_utc": "2026-05-02T08:19:44.330654+00:00",
+  "result": {
+    "status": "ok",
+    "database": "master",
+    "server": "10.125.1.8",
+    "result": 1,
+    "timestamp": "2026-05-02T08:19:44.329943+00:00"
+  }
+}

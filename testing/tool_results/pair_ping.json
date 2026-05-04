@@ -1,0 +1,24 @@
+{
+  "suffix": "ping",
+  "status": "SUCCESS",
+  "tools": [
+    {
+      "tool_name": "db_01_ping",
+      "instance": "db_01",
+      "status": "SUCCESS",
+      "duration_ms": 417.98,
+      "result_file": "testing/tool_results/db_01_ping.json",
+      "error": null
+    },
+    {
+      "tool_name": "db_02_ping",
+      "instance": "db_02",
+      "status": "SUCCESS",
+      "duration_ms": 37.99,
+      "result_file": "testing/tool_results/db_02_ping.json",
+      "error": null
+    }
+  ],
+  "validation_errors": [],
+  "captured_at_utc": "2026-05-01T13:14:16.430954+00:00"
+}
