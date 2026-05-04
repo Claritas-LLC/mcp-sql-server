@@ -1,10 +1,10 @@
 ---
 goal: Execute all read-only MCP tools against non-production SQL Server instances, capture and review per-tool artifacts, and remediate all errors until zero defects remain
-version: 1.0
+version: 1.1
 date_created: 2026-05-01
-last_updated: 2026-05-01
+last_updated: 2026-05-04
 owner: QA Engineering
-status: 'Blocked (pending DBA SHOWPLAN grants)'
+status: 'In progress'
 tags: [process, qa, testing, read-only, non-production, dual-instance]
 ---
 
@@ -12,15 +12,9 @@ tags: [process, qa, testing, read-only, non-production, dual-instance]
 
 ![Status: In progress](https://img.shields.io/badge/status-In%20progress-yellow)
 
-This plan defines a deterministic, serial workflow to validate all 38 read-only MCP tools across two non-production SQL Server instances and four target databases. Credentials and server addresses are loaded from the repository `.env` file. Each tool variant is executed per database, artifacts are immediately reviewed, and all discovered defects are remediated before the sequence advances. The plan succeeds when every artifact contains zero error fields and the final defect register is empty.
+This plan defines a deterministic, serial workflow to validate all read-only MCP tools across two non-production SQL Server instances and four target databases. Credentials and server addresses are loaded from the repository `.env` file. Each tool variant is executed per database, artifacts are immediately reviewed, and all discovered defects are remediated before the sequence advances. The plan succeeds when every artifact contains zero error fields and the final defect register is empty.
 
-## Current Execution Snapshot (2026-05-01)
-
-- Harness resumed successfully using existing artifacts and completed a full 70-unit audit pass.
-- Current totals: **66 passed**, **4 failed** (`explain_query` on all 4 databases).
-- Remaining open defects are permission-related only: `SHOWPLAN permission denied` (SQL error 262).
-- No open code defects were observed in this run; all non-`explain_query` read-only suffixes are green.
-- Next unblock action is DBA grant of `SHOWPLAN` to `mcp_readonly` on `USGISPRO_800`, `US_RT_User_800`, `ListGateway`, and `US_UserData`, followed by targeted rerun of `explain_query`.
+**v1.1 changes (2026-05-04):** Added three previously missing tool suffixes to the QA scope — `list_registered_tools`, `generate_sessions_dashboard`, and `open_logical_model_viewer` (alias for `open_logical_model`). Added TASK-005b (tool registration verification) to Phase 1, TASK-015b (`generate_sessions_dashboard`) and TASK-015c (`list_registered_tools`) to Phase 3. Updated execution counts from 70 to 78 units. Corrected `open_logical_model` task to note both the matrix canonical name and the users-manual alias and require live registration verification.
 
 **Execution Matrix at a glance:**
 
@@ -29,17 +23,19 @@ This plan defines a deterministic, serial workflow to validate all 38 read-only 
 | 1 | `db_01_*` | `10.125.1.7:1433` | `USGISPRO_800`, `US_RT_User_800` |
 | 2 | `db_02_*` | `10.125.1.8:1433` | `ListGateway`, `US_UserData` |
 
-- **Total suffix pairs:** 19 (38 tools)
-- **Total execution units:** 70 (16 database-scoped suffixes × 4 databases + 3 instance-scoped suffixes × 2 instances)
+- **Total suffix pairs:** 22 (44 tools across both instances)
+- **Total execution units:** 78 (16 database-scoped suffixes × 4 databases + 6 instance-scoped suffixes × 2 instances)
+- **Instance-scoped suffixes (6):** `ping`, `list_databases`, `server_info_mcp`, `generate_sessions_dashboard`, `list_registered_tools`, `open_logical_model_viewer`
 - **Write mode:** disabled (`MCP_ALLOW_WRITE=false` enforced throughout)
 
 ---
 
 ## 1. Requirements & Constraints
 
-- **REQ-001**: Execute all 19 read-only suffix pairs in the deterministic order defined in `testing/run_all_tools_dual_http.py` `PAIR_ORDER` dictionary.
+- **REQ-001**: Execute all 22 read-only suffix pairs in the deterministic order defined in `testing/run_all_tools_dual_http.py` `PAIR_ORDER` dictionary. The 22 suffixes comprise 16 database-scoped and 6 instance-scoped suffixes.
 - **REQ-002**: For each database-scoped suffix (16 suffixes), run the tool against all four target databases: `USGISPRO_800` and `US_RT_User_800` on Instance 1, `ListGateway` and `US_UserData` on Instance 2.
-- **REQ-003**: For instance-scoped suffixes that do not accept a `database_name` parameter (`ping`, `list_databases`, `server_info_mcp`), execute once per instance (2 executions per suffix).
+- **REQ-003**: For instance-scoped suffixes that do not accept a `database_name` parameter (`ping`, `list_databases`, `server_info_mcp`, `generate_sessions_dashboard`, `list_registered_tools`, `open_logical_model_viewer`), execute once per instance (2 executions per suffix).
+- **REQ-003a**: Before executing any other tool, call `db_01_list_registered_tools` and `db_02_list_registered_tools` and confirm that all 22 read-only suffixes targeted by this plan are present in the response. Any suffix absent from the live registration must be logged as a defect in `testing/nonprod_defect_register.json` before the run proceeds.
 - **REQ-004**: Load all connection parameters exclusively from `.env`. Do not hard-code passwords or server addresses in any test artifact or script.
 - **REQ-005**: Persist a dedicated artifact JSON file for every single execution unit immediately after the call completes, before advancing to the next unit.
 - **REQ-006**: Read and validate the content of each artifact before advancing to the next suffix. If the artifact contains an error, halt the sequence, log the defect, fix the root cause, rerun the failed unit, reread the artifact, and only then continue.
@@ -76,6 +72,7 @@ This plan defines a deterministic, serial workflow to validate all 38 read-only 
 | TASK-003 | Confirm read-only mode: call `db_01_ping` via MCP JSON-RPC and inspect the server response for `allow_write: false` or absence of write capabilities. If write mode is unexpectedly active, stop immediately and investigate the `.env` value `MCP_ALLOW_WRITE`. | | |
 | TASK-004 | Verify `.env` is correctly loaded: confirm `DB_01_SERVER=10.125.1.7`, `DB_02_SERVER=10.125.1.8`, `DB_01_USER=mcp_readonly`, `DB_02_USER=mcp_readonly`, and `MCP_ALLOW_WRITE=false` are present using `Get-Content .env \| Select-String "DB_01_SERVER\|DB_02_SERVER\|MCP_ALLOW_WRITE"`. | | |
 | TASK-005 | Confirm SQL connectivity to both instances by calling `db_01_ping` and `db_02_ping` via MCP HTTP; persist responses to `testing/tool_results/nonprod_preflight_ping_i1.json` and `testing/tool_results/nonprod_preflight_ping_i2.json`. Abort if either returns an error. | | |
+| TASK-005b | **Tool registration verification** — Call `db_01_list_registered_tools` and `db_02_list_registered_tools` with `as_json=true`. Persist responses to `testing/tool_results/nonprod_db_01_list_registered_tools_preflight.json` and `testing/tool_results/nonprod_db_02_list_registered_tools_preflight.json`. Read both artifacts and confirm all 22 read-only suffixes targeted by this plan are present in each instance's tool list: `ping`, `list_databases`, `server_info_mcp`, `generate_sessions_dashboard`, `list_registered_tools`, `open_logical_model_viewer` (or `open_logical_model`), `list_tables`, `get_schema`, `execute_query`, `run_query`, `list_objects`, `index_fragmentation`, `index_health`, `table_health`, `db_stats`, `show_top_queries`, `check_fragmentation`, `db_sec_perf_metrics`, `explain_query`, `analyze_logical_data_model`, `generate_ddl`. Log any missing suffix as a defect in `testing/nonprod_defect_register.json` with `category: registration_gap` before proceeding. | | |
 | TASK-006 | Create `testing/nonprod_defect_register.json` with initial content `[]` and `testing/nonprod_execution_log.jsonl` as an empty file to receive one JSON-lines entry per execution unit. | | |
 
 ### Implementation Phase 2
@@ -100,7 +97,9 @@ This plan defines a deterministic, serial workflow to validate all 38 read-only 
 | TASK-013 | Call `db_01_ping` and `db_02_ping` via MCP JSON-RPC with no arguments. Persist responses to `testing/tool_results/nonprod_db_01_ping.json` and `testing/tool_results/nonprod_db_02_ping.json`. Read both files; confirm neither contains an `error` field. | | |
 | TASK-014 | Call `db_01_list_databases` and `db_02_list_databases` via MCP JSON-RPC with no arguments. Persist to `testing/tool_results/nonprod_db_01_list_databases.json` and `testing/tool_results/nonprod_db_02_list_databases.json`. Read both; confirm database count is non-zero and no `error` field is present. | | |
 | TASK-015 | Call `db_01_server_info_mcp` and `db_02_server_info_mcp` via MCP JSON-RPC with no arguments. Persist to `testing/tool_results/nonprod_db_01_server_info_mcp.json` and `testing/tool_results/nonprod_db_02_server_info_mcp.json`. Read both; confirm SQL Server version string is present and no `error` field. | | |
-| TASK-016 | Append three JSON-lines entries to `testing/nonprod_execution_log.jsonl` (one per suffix) recording `suffix`, `scope`, `instance_1_status`, `instance_2_status`, and `timestamp_utc`. | | |
+| TASK-015b | **Suffix: `generate_sessions_dashboard`** — Call `db_01_generate_sessions_dashboard` and `db_02_generate_sessions_dashboard` via MCP JSON-RPC with no arguments. Persist to `testing/tool_results/nonprod_db_01_generate_sessions_dashboard.json` and `testing/tool_results/nonprod_db_02_generate_sessions_dashboard.json`. Read both; confirm a `sessions_monitor_url` field is present and no `error` field. The URL itself does not need to be reachable during this test; presence of the field confirms the tool is registered and responding correctly. | | |
+| TASK-015c | **Suffix: `list_registered_tools`** — Call `db_01_list_registered_tools` and `db_02_list_registered_tools` with `as_json=true`. Persist to `testing/tool_results/nonprod_db_01_list_registered_tools.json` and `testing/tool_results/nonprod_db_02_list_registered_tools.json`. Read both; confirm `tool_count` is non-zero, the `tools` array is present, and no `error` field. Cross-check that the tool count matches or exceeds the count observed in TASK-005b. | | |
+| TASK-016 | Append six JSON-lines entries to `testing/nonprod_execution_log.jsonl` (one per instance-scoped suffix: `ping`, `list_databases`, `server_info_mcp`, `generate_sessions_dashboard`, `list_registered_tools`, `open_logical_model_viewer`) recording `suffix`, `scope`, `instance_1_status`, `instance_2_status`, and `timestamp_utc`. | | |
 
 ### Implementation Phase 4
 
@@ -122,9 +121,9 @@ This plan defines a deterministic, serial workflow to validate all 38 read-only 
 | TASK-028 | **Suffix: `db_sec_perf_metrics` (order 15)** — Call `db_0N_db_sec_perf_metrics` with `database_name=<target_db>`. Persist four artifacts. Read each; confirm security or permissions section is present and no `error` field. | | |
 | TASK-029 | **Suffix: `explain_query` (order 16)** — Call `db_0N_explain_query` with `sql=<TOP 5 SELECT sql>` and `database_name=<target_db>`. Persist four artifacts. Read each; confirm execution plan XML or text is returned and no `error` field. | | |
 | TASK-030 | **Suffix: `analyze_logical_data_model` (order 17)** — Call `db_0N_analyze_logical_data_model` with `schema=<discovered_schema>`, `view=summary`, and `database_name=<target_db>`. Persist four artifacts. Read each; confirm relationships or table list is returned and no `error` field. | | |
-| TASK-031 | **Suffix: `open_logical_model` (order 18)** — Call `db_0N_open_logical_model` with `schema=<discovered_schema>` and `database_name=<target_db>`. Persist four artifacts. Read each; confirm model structure is returned and no `error` field. | | |
+| TASK-031 | **Suffix: `open_logical_model` / `open_logical_model_viewer` (order 18)** — The tool matrix registers this suffix as `open_logical_model`; the users manual also documents it as `open_logical_model_viewer`. Before executing, confirm the live registered name via the TASK-005b artifact: use whichever name is present in the registration response. Call `db_0N_open_logical_model` (or `db_0N_open_logical_model_viewer` if that is the registered name) with `schema=<discovered_schema>` and `database_name=<target_db>`. Persist four artifacts to `testing/tool_results/nonprod_<prefix>_<db>_open_logical_model.json`. Read each; confirm HTML model content or a report URL is returned and no `error` field. If both names are registered, test both and persist separate artifacts. | | |
 | TASK-032 | **Suffix: `generate_ddl` (order 19)** — Call `db_0N_generate_ddl` with `schema_name=<discovered_schema>`, `table_name=<discovered_table>`, and `database_name=<target_db>`. Persist four artifacts. Read each; confirm `CREATE TABLE` DDL text is returned and no `error` field. | | |
-| TASK-033 | After all 16 suffix groups complete, run a bulk artifact audit: read every `testing/tool_results/nonprod_*.json` file, count total artifacts, confirm count equals 70 (16 suffixes × 4 executions + 3 suffixes × 2 executions), and confirm zero files contain an `error` key at the top level. Record the audit result in `testing/nonprod_execution_log.jsonl`. | | |
+| TASK-033 | After all suffix groups complete, run a bulk artifact audit: read every `testing/tool_results/nonprod_*.json` file, count total artifacts, confirm count equals 78 (16 database-scoped suffixes × 4 executions + 6 instance-scoped suffixes × 2 executions), and confirm zero files contain an `error` key at the top level. Record the audit result in `testing/nonprod_execution_log.jsonl`. | | |
 
 ### Implementation Phase 5
 
@@ -136,7 +135,7 @@ This plan defines a deterministic, serial workflow to validate all 38 read-only 
 | TASK-035 | **Args template defects**: Update `testing/nonprod_args_templates.json` for any database where the discovered schema or table name was incorrect or where the SQL statement failed. Re-run the failed execution unit using the corrected template and reread the artifact. Mark defect `resolved` only after artifact is clean. | | |
 | TASK-036 | **Server logic defects**: Apply minimal targeted fixes to `mcp_sqlserver/server.py`. Run `pytest tests/test_execute_in_database.py tests/test_run_query_internal.py -q` after each change to confirm no regression. Rebuild the Docker image with `docker build --no-cache -t harryvaldez/mcp-sql-server:latest .`, restart the container, and re-run the failed execution unit. | | |
 | TASK-037 | **Permission defects**: For any `mcp_readonly` login that lacks `CONNECT` or `VIEW DATABASE STATE` on the target database, document the required grant statement in `testing/nonprod_defect_register.json` under a `remediation_sql` field, obtain DBA approval, and retest after the grant is applied. | | |
-| TASK-038 | After all targeted fixes are applied, re-run the full Phase 4 artifact audit from TASK-033. Confirm total artifact count is still 70 and zero files contain an `error` key. If new errors appear, add them to `testing/nonprod_defect_register.json` and repeat the remediation loop from TASK-034. | | |
+| TASK-038 | After all targeted fixes are applied, re-run the full Phase 4 artifact audit from TASK-033. Confirm total artifact count is still 78 and zero files contain an `error` key. If new errors appear, add them to `testing/nonprod_defect_register.json` and repeat the remediation loop from TASK-034. | | |
 | TASK-039 | Confirm `testing/nonprod_defect_register.json` contains zero entries with `status: open` before proceeding to Phase 6. | | |
 
 ### Implementation Phase 6
@@ -148,7 +147,7 @@ This plan defines a deterministic, serial workflow to validate all 38 read-only 
 | TASK-040 | Generate `testing/nonprod_test_report.md` with: (a) run date and MCP server version; (b) execution matrix table (instance, prefix, database, suffix count, passed, failed); (c) total execution units attempted, passed, and failed; (d) link table to every artifact file; (e) defect summary with counts by category and resolution. | | |
 | TASK-041 | Include in `testing/nonprod_test_report.md` representative data excerpts from each of the four databases: at minimum `list_tables` row count, `get_schema` first column definition, and `execute_query` first returned row (redact PII if present). | | |
 | TASK-042 | Add a reproducibility block to `testing/nonprod_test_report.md` listing the exact MCP server image tag, `.env` variables used (excluding passwords), and the MCP JSON-RPC invocation pattern used for tool calls. | | |
-| TASK-043 | Append a final summary entry to `testing/nonprod_execution_log.jsonl` with fields: `event=final_summary`, `total_units=70`, `passed=<N>`, `failed=0`, `open_defects=0`, `timestamp_utc=<ISO8601>`. | | |
+| TASK-043 | Append a final summary entry to `testing/nonprod_execution_log.jsonl` with fields: `event=final_summary`, `total_units=78`, `passed=<N>`, `failed=0`, `open_defects=0`, `timestamp_utc=<ISO8601>`. | | |
 | TASK-044 | Confirm the MCP server container is still running and responsive (`db_01_ping` returns success) after all testing, to confirm the container was not degraded during the run. | | |
 
 ---
@@ -176,12 +175,12 @@ This plan defines a deterministic, serial workflow to validate all 38 read-only 
 ## 5. Files
 
 - **FILE-001**: [.env](.env) — Source of all connection parameters; read-only during this plan, never modified.
-- **FILE-002**: [testing/tool_matrix.json](testing/tool_matrix.json) — Authoritative tool inventory; read-only reference.
+- **FILE-002**: [testing/tool_matrix.json](testing/tool_matrix.json) — Authoritative tool inventory; read-only reference. Note: `generate_sessions_dashboard`, `list_registered_tools`, and `open_logical_model_viewer` are not yet in the matrix (added in v1.1 scope); verify live registration via TASK-005b.
 - **FILE-003**: [testing/run_all_tools_dual_http.py](testing/run_all_tools_dual_http.py) — Reference for `PAIR_ORDER` and tool invocation patterns.
 - **FILE-004**: `testing/nonprod_args_templates.json` — Created in TASK-011; per-database args templates with discovered schema/table names.
 - **FILE-005**: `testing/nonprod_defect_register.json` — Created in TASK-006; accumulates all defects with status tracking.
 - **FILE-006**: `testing/nonprod_execution_log.jsonl` — Created in TASK-006; append-only execution event log.
-- **FILE-007**: `testing/tool_results/nonprod_*.json` — 70 per-execution-unit artifact files created throughout Phases 3 and 4.
+- **FILE-007**: `testing/tool_results/nonprod_*.json` — 78 per-execution-unit artifact files created throughout Phases 3 and 4.
 - **FILE-008**: `testing/nonprod_test_report.md` — Created in TASK-040; final human-readable summary report.
 - **FILE-009**: [mcp_sqlserver/server.py](mcp_sqlserver/server.py) — Modified only if Phase 5 logic defects are identified.
 
@@ -192,7 +191,8 @@ This plan defines a deterministic, serial workflow to validate all 38 read-only 
 - **TEST-001**: Pre-flight ping both instances before any tool execution (TASK-005). Failure aborts the entire run.
 - **TEST-002**: Schema discovery validation per database (TASK-009–TASK-012). Failure triggers a fallback to `INFORMATION_SCHEMA` queries before any database-scoped tool runs.
 - **TEST-003**: Per-artifact immediate read-and-validate after every execution unit (TASK-013 through TASK-032). Failure triggers the TASK-034 remediation loop before the next suffix advances.
-- **TEST-004**: Bulk artifact count audit after all Phase 4 suffixes complete (TASK-033). Expected count: 70 artifacts, 0 errors.
+- **TEST-004**: Bulk artifact count audit after all Phase 4 suffixes complete (TASK-033). Expected count: 78 artifacts, 0 errors.
+- **TEST-004a**: Tool registration check (TASK-005b). All 22 read-only suffixes must appear in the live `list_registered_tools` response for both instances before any tool execution begins. Missing registrations are logged as `category: registration_gap` defects.
 - **TEST-005**: Full regression suite `pytest tests/test_execute_in_database.py tests/test_run_query_internal.py tests/test_get_connection_retry_cleanup.py -q` after any `server.py` change in TASK-036. Expected: 10 passed, 0 failed.
 - **TEST-006**: Final ping health check after all testing (TASK-044). Confirms container integrity post-run.
 
@@ -203,8 +203,9 @@ This plan defines a deterministic, serial workflow to validate all 38 read-only 
 - **RISK-001**: The `mcp_readonly` user may lack permissions on one or more of the four target databases. Mitigation: TASK-003 preflight checks connectivity; TASK-037 documents required grants and escalates to DBA.
 - **RISK-002**: Real database schemas may use only `dbo` or system schemas with no user tables discoverable by the standard filter. Mitigation: TASK-012 defines a fallback to `INFORMATION_SCHEMA.TABLES` queries and documents the gap in the defect register.
 - **RISK-003**: `show_top_queries` and `explain_query` may fail if Query Store is not enabled on the target databases. Mitigation: empty result set is treated as a pass; only an `error` field in the artifact triggers a defect entry.
-- **RISK-004**: `analyze_logical_data_model` and `open_logical_model` may time out on large schemas. Mitigation: `MCP_STATEMENT_TIMEOUT_MS=120000` is already set; if timeout occurs, log as a defect and reduce scope via `page_size` parameter.
+- **RISK-004**: `analyze_logical_data_model`, `open_logical_model` / `open_logical_model_viewer`, and `generate_sessions_dashboard` may time out on large schemas or under load. Mitigation: `MCP_STATEMENT_TIMEOUT_MS=120000` is already set; if timeout occurs, log as a defect and reduce scope via `page_size` parameter. For `generate_sessions_dashboard`, a URL response with no data fetch is expected so timeout risk is low.
 - **RISK-005**: Docker container networking may not route to `10.125.1.7` or `10.125.1.8` depending on Docker Desktop mode on Windows. Mitigation: TASK-001 verifies container is up; TASK-005 verifies actual SQL reachability before the run starts.
+- **RISK-006**: `list_registered_tools`, `generate_sessions_dashboard`, and `open_logical_model_viewer` are not yet in `testing/tool_matrix.json`. If these suffixes are not registered on the live server, TASK-005b will catch the gap and log a `registration_gap` defect before any execution proceeds. Mitigation: resolve registration gaps in Phase 5 TASK-036 before re-running affected units.
 - **ASSUMPTION-001**: Both non-production SQL Server instances at `10.125.1.7:1433` and `10.125.1.8:1433` are online and accessible from the Docker container network at plan execution time.
 - **ASSUMPTION-002**: `mcp_readonly` is a SQL authentication login (not Windows auth), matching the `.env` values `DB_01_USER=mcp_readonly` and `DB_02_USER=mcp_readonly`.
 - **ASSUMPTION-003**: The four specified databases (`USGISPRO_800`, `US_RT_User_800`, `ListGateway`, `US_UserData`) already exist on their respective instances and contain at least one user table.
@@ -219,4 +220,4 @@ This plan defines a deterministic, serial workflow to validate all 38 read-only 
 - [testing/tool_matrix.json](testing/tool_matrix.json) — Authoritative tool inventory with classification and args templates.
 - [testing/run_all_tools_dual_http.py](testing/run_all_tools_dual_http.py) — Reference serial execution harness and `PAIR_ORDER` dictionary.
 - [testing/TEST_REPORT.md](testing/TEST_REPORT.md) — Most recent test-container validation report (May 1, 2026, 50/50 passed).
-- [USERS_GUIDE.md](USERS_GUIDE.md) — MCP tool reference including parameter schemas for all 19 read-only tool suffixes.
+- [USERS_GUIDE.md](USERS_GUIDE.md) — MCP tool reference including parameter schemas for all 22 read-only tool suffixes covered by this plan.

@@ -1,46 +1,27 @@
 [
   {
     "id": "DEF-001",
-    "tool_name": "db_01_explain_query",
-    "tool_suffix": "explain_query",
-    "database": "USGISPRO_800",
-    "symptom": "Error calling tool 'db_01_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'USGISPRO_800'. (262) (SQLExecDirectW)\")",
-    "root_cause_file": "unknown",
-    "root_cause_function": "explain_query",
+    "suffix": "generate_sessions_dashboard",
+    "category": "registration_gap",
+    "description": "generate_sessions_dashboard is not exposed as a Kiro MCP tool via the db_01_*/db_02_* prefix pattern. It is available as an HTTP endpoint on the server but not registered in the MCP tool list accessible to this client.",
     "status": "open",
-    "detected_at_utc": "2026-05-01T16:55:23.535646+00:00"
+    "discovered_at": "2026-05-04T16:30:00Z"
   },
   {
     "id": "DEF-002",
-    "tool_name": "db_01_explain_query",
-    "tool_suffix": "explain_query",
-    "database": "US_RT_User_800",
-    "symptom": "Error calling tool 'db_01_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'US_RT_User_800'. (262) (SQLExecDirectW)\")",
-    "root_cause_file": "unknown",
-    "root_cause_function": "explain_query",
+    "suffix": "list_registered_tools",
+    "category": "registration_gap",
+    "description": "list_registered_tools is not exposed as a Kiro MCP tool via the db_01_*/db_02_* prefix pattern. It is available as an HTTP endpoint on the server but not registered in the MCP tool list accessible to this client.",
     "status": "open",
-    "detected_at_utc": "2026-05-01T16:55:24.200402+00:00"
+    "discovered_at": "2026-05-04T16:30:00Z"
   },
   {
     "id": "DEF-003",
-    "tool_name": "db_02_explain_query",
-    "tool_suffix": "explain_query",
-    "database": "ListGateway",
-    "symptom": "Error calling tool 'db_02_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'ListGateway'. (262) (SQLExecDirectW)\")",
-    "root_cause_file": "unknown",
-    "root_cause_function": "explain_query",
-    "status": "open",
-    "detected_at_utc": "2026-05-01T16:55:24.876274+00:00"
-  },
-  {
-    "id": "DEF-004",
-    "tool_name": "db_02_explain_query",
-    "tool_suffix": "explain_query",
-    "database": "US_UserData",
-    "symptom": "Error calling tool 'db_02_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'US_UserData'. (262) (SQLExecDirectW)\")",
-    "root_cause_file": "unknown",
-    "root_cause_function": "explain_query",
-    "status": "open",
-    "detected_at_utc": "2026-05-01T16:55:25.495680+00:00"
+    "suffix": "open_logical_model_viewer",
+    "category": "registration_gap",
+    "description": "open_logical_model_viewer alias is not separately registered. The canonical tool open_logical_model is registered and will be tested instead.",
+    "status": "resolved",
+    "resolution": "Using canonical open_logical_model suffix which is registered as db_01_open_logical_model and db_02_open_logical_model.",
+    "resolved_at": "2026-05-04T16:30:00Z"
   }
 ]

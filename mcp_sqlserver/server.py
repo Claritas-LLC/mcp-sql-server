@@ -696,7 +696,13 @@ def _instance_connection_database(instance: int) -> str:
 
 
 def get_connection(database: str | None = None, instance: int = 1) -> Union[pyodbc.Connection, 'PooledConnection']:
+    """Return a pooled ODBC connection for *instance* anchored to the configured default database.
+
+    The *database* argument is accepted for API compatibility but intentionally ignored so pools
+    stay instance-scoped; use ``_execute_in_database`` to run SQL in another database.
+    """
     validate_instance(instance)
+    _ = database  # pooling is per-instance; target DB is `_execute_in_database`
     connection_database = _instance_connection_database(instance)
     pool = _CONN_POOLS.get(instance)
     pool_lock = _CONN_POOL_LOCKS.get(instance)
@@ -1156,6 +1162,7 @@ def _build_scoped_exec_sql(
     sql: str,
     params: Sequence[Any] | None = None,
 ) -> tuple[str, tuple[Any, ...] | None]:
+    database_name = database_name.strip()
     _validate_identifier(database_name, "database")
     normalized_params = tuple(params) if params is not None else tuple()
     rewritten_sql, param_names = _replace_positional_sql_params(sql)
@@ -1182,8 +1189,22 @@ def _execute_in_database(
     database_name: str,
     sql: str,
     params: list[Any] | tuple[Any, ...] | None = None,
+    *,
+    pooled_instance_default_db: str | None = None,
 ) -> None:
-    scoped_sql, scoped_params = _build_scoped_exec_sql(database_name, sql, params)
+    """Run *sql* in *database_name* without changing pooled session catalog.
+
+    When *database_name* matches *pooled_instance_default_db* (the database the
+    instance pool attaches to per ``get_connection``), execute *sql* directly on
+    the cursor. Otherwise use ``EXEC [<db>].sys.sp_executesql`` (TASK-009 / dual-
+    instance database-scope refactor).
+    """
+    target_db = database_name.strip()
+    _validate_identifier(target_db, "database")
+    if pooled_instance_default_db is not None and target_db.casefold() == pooled_instance_default_db.strip().casefold():
+        _execute_safe(cur, sql, params)
+        return
+    scoped_sql, scoped_params = _build_scoped_exec_sql(target_db, sql, params)
     _execute_safe(cur, scoped_sql, scoped_params)
 
 
@@ -1262,7 +1283,7 @@ def db_sql2019_ping(instance: int = 1) -> dict[str, Any]:
 def db_sql2019_list_databases(instance: int = 1, page: int = 1, page_size: int = DEFAULT_TOOL_PAGE_SIZE) -> dict[str, Any]:
     """List online databases visible to the current login."""
     validate_instance(instance)
-    conn = get_connection("master", instance=instance)
+    conn = get_connection(instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(
@@ -1307,10 +1328,9 @@ def db_sql2019_list_tables(
         sql += " ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME"
 
         default_database = _instance_connection_database(instance)
-        if db_name_str and db_name_str != default_database:
-            _execute_in_database(cur, db_name_str, sql, params)
-        else:
-            _execute_safe(cur, sql, params)
+        _execute_in_database(
+            cur, db_name_str, sql, params, pooled_instance_default_db=default_database
+        )
         rows = cur.fetchall()
         items = [
             {
@@ -1361,10 +1381,9 @@ def db_sql2019_get_schema(
             """
         params = [schema_name, table_name]
         default_database = _instance_connection_database(instance)
-        if db_name_str and db_name_str != default_database:
-            _execute_in_database(cur, db_name_str, sql, params)
-        else:
-            _execute_safe(cur, sql, params)
+        _execute_in_database(
+            cur, db_name_str, sql, params, pooled_instance_default_db=default_database
+        )
         rows = cur.fetchall()
         columns = [
             {
@@ -1435,12 +1454,14 @@ def _run_query_internal(
     conn = get_connection(instance=instance)
     try:
         cur = conn.cursor()
-        target_database = db_name_str if isinstance(db_name_str, str) and db_name_str.strip() else None
         default_database = _instance_connection_database(instance)
-        if target_database and target_database != default_database:
-            _execute_in_database(cur, target_database, sql, params)
-        else:
+        target_database = db_name_str if isinstance(db_name_str, str) and db_name_str.strip() else ""
+        if not target_database.strip():
             _execute_safe(cur, sql, params)
+        else:
+            _execute_in_database(
+                cur, target_database, sql, params, pooled_instance_default_db=default_database
+            )
         try:
             rows = _fetch_limited(cur, row_cap)
             return _rows_to_dicts(cur, rows)
@@ -1534,8 +1555,12 @@ def db_sql2019_list_objects(
         requested_page, requested_page_size = _normalize_tool_pagination(page, page_size)
         max_items = max(1, limit)
 
+        pooled_default_database = _instance_connection_database(instance)
+
         def _execute_for_db(sql: str, params: list[Any] | None = None) -> None:
-            _execute_in_database(cur, db_name_str, sql, params)
+            _execute_in_database(
+                cur, db_name_str, sql, params, pooled_instance_default_db=pooled_default_database
+            )
 
         def _build_table_scope_sql(schema_col: str, table_col: str) -> tuple[str, list[Any]]:
             if not SETTINGS.table_scope_enforced:
@@ -1828,7 +1853,13 @@ def _get_index_fragmentation_data(
             params.append(schema)
         sql += " ORDER BY ips.avg_fragmentation_in_percent DESC"
 
-        _execute_in_database(cur, db_name_str, sql, params)
+        _execute_in_database(
+            cur,
+            db_name_str,
+            sql,
+            params,
+            pooled_instance_default_db=_instance_connection_database(instance),
+        )
         return _rows_to_dicts(cur, cur.fetchall())
     finally:
         conn.close()
@@ -1915,8 +1946,12 @@ def db_sql2019_analyze_table_health(
     try:
         cur = conn.cursor()
 
+        pooled_default_database = _instance_connection_database(instance)
+
         def _execute_for_db(sql: str, params: list[Any] | None = None) -> None:
-            _execute_in_database(cur, db_name_str, sql, params)
+            _execute_in_database(
+                cur, db_name_str, sql, params, pooled_instance_default_db=pooled_default_database
+            )
 
         # Table info
         _execute_for_db(
@@ -2141,6 +2176,8 @@ def db_sql2019_db_stats(instance: int = 1, database: str | None = None) -> dict[
                 (SELECT COUNT(*) FROM sys.indexes WHERE name IS NOT NULL) AS IndexCount,
                 (SELECT COUNT(*) FROM sys.schemas) AS SchemaCount
             """,
+            None,
+            pooled_instance_default_db=_instance_connection_database(instance),
         )
         row = cur.fetchone()
         if not row:
@@ -2164,7 +2201,7 @@ def db_sql2019_server_info_mcp(
 ) -> dict[str, Any]:
     """Get SQL Server and MCP runtime information."""
     validate_instance(instance)
-    conn = get_connection("master", instance=instance)
+    conn = get_connection(instance=instance)
     try:
         cur = conn.cursor()
         _execute_safe(
@@ -2202,7 +2239,9 @@ def db_sql2019_server_info_mcp(
         conn.close()
 
 
-def _fetch_relationships(cur: pyodbc.Cursor, database: str) -> list[dict[str, Any]]:
+def _fetch_relationships(
+    cur: pyodbc.Cursor, database: str, *, pooled_instance_default_db: str | None = None
+) -> list[dict[str, Any]]:
     sql = """
     SELECT
         fk.name AS constraint_name,
@@ -2217,7 +2256,13 @@ def _fetch_relationships(cur: pyodbc.Cursor, database: str) -> list[dict[str, An
     INNER JOIN sys.columns AS pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
     INNER JOIN sys.columns AS rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
     """
-    _execute_in_database(cur, database, sql)
+    _execute_in_database(
+        cur,
+        database,
+        sql,
+        None,
+        pooled_instance_default_db=pooled_instance_default_db,
+    )
     return _rows_to_dicts(cur, cur.fetchall())
 
 
@@ -2310,12 +2355,15 @@ def _analyze_logical_data_model_internal(
     validate_instance(instance)
     db_name = database_name or get_instance_config(instance)["db_name"]
     db_name_str = (str(db_name) if not isinstance(db_name, str) else db_name) or _instance_connection_database(instance)
+    pooled_default_database = _instance_connection_database(instance)
     conn = get_connection(instance=instance)
     try:
         cur = conn.cursor()
 
         def _execute_for_db(sql: str, params: list[Any] | None = None) -> None:
-            _execute_in_database(cur, db_name_str, sql, params)
+            _execute_in_database(
+                cur, db_name_str, sql, params, pooled_instance_default_db=pooled_default_database
+            )
         
         # Fetch entities (tables)
         where_sql = ""
@@ -2352,7 +2400,9 @@ def _analyze_logical_data_model_internal(
                 "columns": cols
             })
              
-        relationships = _fetch_relationships(cur, str(db_name) if not isinstance(db_name, str) else db_name)
+        relationships = _fetch_relationships(
+            cur, db_name_str, pooled_instance_default_db=pooled_default_database
+        )
         issues = _analyze_erd_issues(entities, relationships)
         
         return {
@@ -2387,8 +2437,12 @@ def db_sql2019_show_top_queries(
     try:
         cur = conn.cursor()
 
+        pooled_default_database = _instance_connection_database(instance)
+
         def _execute_for_db(sql: str, params: list[Any] | None = None) -> None:
-            _execute_in_database(cur, db_name_str, sql, params)
+            _execute_in_database(
+                cur, db_name_str, sql, params, pooled_instance_default_db=pooled_default_database
+            )
         
         # Check if Query Store is enabled
         _execute_for_db("SELECT actual_state_desc FROM sys.database_query_store_options")
@@ -2488,8 +2542,12 @@ def db_sql2019_db_sec_perf_metrics(
     try:
         cur = conn.cursor()
 
+        pooled_default_database = _instance_connection_database(instance)
+
         def _execute_for_db(sql: str, params: list[Any] | None = None) -> None:
-            _execute_in_database(cur, db_name_str, sql, params)
+            _execute_in_database(
+                cur, db_name_str, sql, params, pooled_instance_default_db=pooled_default_database
+            )
         
         metrics = {}
         # User count
@@ -2611,6 +2669,7 @@ def db_sql2019_generate_ddl(
             ORDER BY ORDINAL_POSITION
             """,
             [schema_name, table_name],
+            pooled_instance_default_db=_instance_connection_database(instance),
         )
         rows = cur.fetchall()
         if not rows:
@@ -2653,9 +2712,9 @@ def db_sql2019_create_db_user(
     safe_ident = str(username).replace("]", "]]")
     safe_password = str(password).replace("'", "''")
 
-    # Create server-level login on master, then database user inside the target DB.
+    # Server-level login (visible from any database), then scoped database user via sp_executesql.
     # Both steps are idempotent so reruns do not hard-fail.
-    conn_master = get_connection("master", instance=instance)
+    conn_master = get_connection(instance=instance)
     try:
         cur = conn_master.cursor()
         exists_login = bool(
@@ -2669,14 +2728,26 @@ def db_sql2019_create_db_user(
     finally:
         conn_master.close()
 
-    conn = get_connection(db_name_str, instance=instance)
+    pooled_default = _instance_connection_database(instance)
+    conn = get_connection(instance=instance)
     try:
         cur = conn.cursor()
-        exists_user = bool(
-            cur.execute("SELECT 1 FROM sys.database_principals WHERE name = ?", (username,)).fetchone()
+        _execute_in_database(
+            cur,
+            db_name_str,
+            "SELECT 1 FROM sys.database_principals WHERE name = ?",
+            [username],
+            pooled_instance_default_db=pooled_default,
         )
+        exists_user = bool(cur.fetchone())
         if not exists_user:
-            _execute_safe(cur, f"CREATE USER [{safe_ident}] FOR LOGIN [{safe_ident}]")
+            _execute_in_database(
+                cur,
+                db_name_str,
+                f"CREATE USER [{safe_ident}] FOR LOGIN [{safe_ident}]",
+                None,
+                pooled_instance_default_db=pooled_default,
+            )
         return {"status": "success", "username": username, "database": db_name}
     finally:
         conn.close()
@@ -2697,18 +2768,30 @@ def db_sql2019_drop_db_user(
 
     safe_ident = str(username).replace("]", "]]")
 
-    conn = get_connection(db_name_str, instance=instance)
+    pooled_default = _instance_connection_database(instance)
+    conn = get_connection(instance=instance)
     try:
         cur = conn.cursor()
-        exists_user = bool(
-            cur.execute("SELECT 1 FROM sys.database_principals WHERE name = ?", (username,)).fetchone()
+        _execute_in_database(
+            cur,
+            db_name_str,
+            "SELECT 1 FROM sys.database_principals WHERE name = ?",
+            [username],
+            pooled_instance_default_db=pooled_default,
         )
+        exists_user = bool(cur.fetchone())
         if exists_user:
-            _execute_safe(cur, f"DROP USER [{safe_ident}]")
+            _execute_in_database(
+                cur,
+                db_name_str,
+                f"DROP USER [{safe_ident}]",
+                None,
+                pooled_instance_default_db=pooled_default,
+            )
     finally:
         conn.close()
 
-    conn_master = get_connection("master", instance=instance)
+    conn_master = get_connection(instance=instance)
     try:
         cur = conn_master.cursor()
         exists_login = bool(
@@ -2728,7 +2811,7 @@ def db_sql2019_kill_session(instance: int = 1, session_id: int | None = None) ->
     if session_id is None:
         raise ValueError("session_id is required")
     validate_instance(instance)
-    conn = get_connection("master", instance=instance)
+    conn = get_connection(instance=instance)
     try:
         cur = conn.cursor()
         try:

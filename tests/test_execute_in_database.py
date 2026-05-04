@@ -59,6 +59,23 @@ class TestExecuteInDatabase(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 server._execute_in_database(cur, db, sql)
 
+    def test_execute_in_database_bypasses_scope_when_matches_pooled_default(self):
+        cur = MagicMock()
+        with patch.object(server, "_execute_safe", autospec=True) as mock_safe:
+            server._execute_in_database(
+                cur, "mydb", "SELECT 1", None, pooled_instance_default_db="mydb"
+            )
+        mock_safe.assert_called_once_with(cur, "SELECT 1", None)
+
+    def test_execute_in_database_uses_sp_executesql_when_not_pooled_default(self):
+        cur = MagicMock()
+        with patch.object(server, "_execute_safe", autospec=True) as mock_safe:
+            server._execute_in_database(
+                cur, "otherdb", "SELECT 1", None, pooled_instance_default_db="mydb"
+            )
+        called_sql = mock_safe.call_args[0][1]
+        self.assertIn("sp_executesql", called_sql)
+
 
 if __name__ == "__main__":
     unittest.main()

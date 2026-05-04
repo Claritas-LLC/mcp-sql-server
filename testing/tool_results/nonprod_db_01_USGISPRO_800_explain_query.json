@@ -7,11 +7,73 @@
     "database_name": "USGISPRO_800",
     "sql": "SELECT TOP 5 * FROM [dbo].[Account]"
   },
-  "status": "FAILED",
-  "duration_ms": 639.11,
-  "error": "Error calling tool 'db_01_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'USGISPRO_800'. (262) (SQLExecDirectW)\")",
-  "captured_at_utc": "2026-05-01T16:55:23.529999+00:00",
+  "status": "SUCCESS",
+  "duration_ms": 354.07,
+  "error": null,
+  "captured_at_utc": "2026-05-02T08:20:18.479283+00:00",
   "result": {
-    "error": "Error calling tool 'db_01_explain_query': ('42000', \"[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]SHOWPLAN permission denied in database 'USGISPRO_800'. (262) (SQLExecDirectW)\")"
+    "database": "USGISPRO_800",
+    "plan": [
+      {
+        "StmtText": "SELECT TOP 5 * FROM [dbo].[Account]",
+        "StmtId": 1,
+        "NodeId": 1,
+        "Parent": 0,
+        "PhysicalOp": null,
+        "LogicalOp": null,
+        "Argument": "1",
+        "DefinedValues": null,
+        "EstimateRows": 5.0,
+        "EstimateIO": null,
+        "EstimateCPU": null,
+        "AvgRowSize": null,
+        "TotalSubtreeCost": 0.0034075190778821707,
+        "OutputList": null,
+        "Warnings": null,
+        "Type": "SELECT",
+        "Parallel": false,
+        "EstimateExecutions": null
+      },
+      {
+        "StmtText": "  |--Top(TOP EXPRESSION:((5)))",
+        "StmtId": 1,
+        "NodeId": 2,
+        "Parent": 1,
+        "PhysicalOp": "Top",
+        "LogicalOp": "Top",
+        "Argument": "TOP EXPRESSION:((5))",
+        "DefinedValues": null,
+        "EstimateRows": 5.0,
+        "EstimateIO": 0.0,
+        "EstimateCPU": 4.999999987376214e-07,
+        "AvgRowSize": 595,
+        "TotalSubtreeCost": 0.0034075190778821707,
+        "OutputList": "[USGISPRO_800].[dbo].[Account].[AccountID], [USGISPRO_800].[dbo].[Account].[CompanyID], [USGISPRO_800].[dbo].[Account].[AccountName], [USGISPRO_800].[dbo].[Account].[Title], [USGISPRO_800].[dbo].[Account].[FirstName], [USGISPRO_800].[dbo].[Account].[LastName], [USGISPRO_800].[dbo].[Account].[Password], [USGISPRO_800].[dbo].[Account].[Email], [USGISPRO_800].[dbo].[Account].[Position], [USGISPRO_800].[dbo].[Account].[PhoneNumber], [USGISPRO_800].[dbo].[Account].[ExtensionNumber], [USGISPRO_800].[dbo].[Account].[FaxNumber], [USGISPRO_800].[dbo].[Account].[Status], [USGISPRO_800].[dbo].[Account].[Administrator], [USGISPRO_800].[dbo].[Account].[SystemAdministrator], [USGISPRO_800].[dbo].[Account].[ReadDisclaimer], [USGISPRO_800].[dbo].[Account].[ReadDisclaimerDate], [USGISPRO_800].[dbo].[Account].[PrimaryContact], [USGISPRO_800].[dbo].[Account].[LastLoginDate], [USGISPRO_800].[dbo].[Account].[LoginDate], [USGISPRO_800].[dbo].[Account].[PasswordTries], [USGISPRO_800].[dbo].[Account].[LockoutDate], [USGISPRO_800].[dbo].[Account].[SessionKey], [USGISPRO_800].[dbo].[Account].[ParentAccountID], [USGISPRO_800].[dbo].[Account].[ThirdPartyUserName], [USGISPRO_800].[dbo].[Account].[ThirdPartyPassword], [USGISPRO_800].[dbo].[Account].[CreationDate], [USGISPRO_800].[dbo].[Account].[CreatedBy], [USGISPRO_800].[dbo].[Account].[ModificationDate], [USGISPRO_800].[dbo].[Account].[ModifiedBy]",
+        "Warnings": null,
+        "Type": "PLAN_ROW",
+        "Parallel": false,
+        "EstimateExecutions": 1.0
+      },
+      {
+        "StmtText": "       |--Clustered Index Scan(OBJECT:([USGISPRO_800].[dbo].[Account].[PK_Account]))",
+        "StmtId": 1,
+        "NodeId": 3,
+        "Parent": 2,
+        "PhysicalOp": "Clustered Index Scan",
+        "LogicalOp": "Clustered Index Scan",
+        "Argument": "OBJECT:([USGISPRO_800].[dbo].[Account].[PK_Account])",
+        "DefinedValues": "[USGISPRO_800].[dbo].[Account].[AccountID], [USGISPRO_800].[dbo].[Account].[CompanyID], [USGISPRO_800].[dbo].[Account].[AccountName], [USGISPRO_800].[dbo].[Account].[Title], [USGISPRO_800].[dbo].[Account].[FirstName], [USGISPRO_800].[dbo].[Account].[LastName], [USGISPRO_800].[dbo].[Account].[Password], [USGISPRO_800].[dbo].[Account].[Email], [USGISPRO_800].[dbo].[Account].[Position], [USGISPRO_800].[dbo].[Account].[PhoneNumber], [USGISPRO_800].[dbo].[Account].[ExtensionNumber], [USGISPRO_800].[dbo].[Account].[FaxNumber], [USGISPRO_800].[dbo].[Account].[Status], [USGISPRO_800].[dbo].[Account].[Administrator], [USGISPRO_800].[dbo].[Account].[SystemAdministrator], [USGISPRO_800].[dbo].[Account].[ReadDisclaimer], [USGISPRO_800].[dbo].[Account].[ReadDisclaimerDate], [USGISPRO_800].[dbo].[Account].[PrimaryContact], [USGISPRO_800].[dbo].[Account].[LastLoginDate], [USGISPRO_800].[dbo].[Account].[LoginDate], [USGISPRO_800].[dbo].[Account].[PasswordTries], [USGISPRO_800].[dbo].[Account].[LockoutDate], [USGISPRO_800].[dbo].[Account].[SessionKey], [USGISPRO_800].[dbo].[Account].[ParentAccountID], [USGISPRO_800].[dbo].[Account].[ThirdPartyUserName], [USGISPRO_800].[dbo].[Account].[ThirdPartyPassword], [USGISPRO_800].[dbo].[Account].[CreationDate], [USGISPRO_800].[dbo].[Account].[CreatedBy], [USGISPRO_800].[dbo].[Account].[ModificationDate], [USGISPRO_800].[dbo].[Account].[ModifiedBy]",
+        "EstimateRows": 5.0,
+        "EstimateIO": 0.09868055582046509,
+        "EstimateCPU": 0.0036758999340236187,
+        "AvgRowSize": 595,
+        "TotalSubtreeCost": 0.003407019190490246,
+        "OutputList": "[USGISPRO_800].[dbo].[Account].[AccountID], [USGISPRO_800].[dbo].[Account].[CompanyID], [USGISPRO_800].[dbo].[Account].[AccountName], [USGISPRO_800].[dbo].[Account].[Title], [USGISPRO_800].[dbo].[Account].[FirstName], [USGISPRO_800].[dbo].[Account].[LastName], [USGISPRO_800].[dbo].[Account].[Password], [USGISPRO_800].[dbo].[Account].[Email], [USGISPRO_800].[dbo].[Account].[Position], [USGISPRO_800].[dbo].[Account].[PhoneNumber], [USGISPRO_800].[dbo].[Account].[ExtensionNumber], [USGISPRO_800].[dbo].[Account].[FaxNumber], [USGISPRO_800].[dbo].[Account].[Status], [USGISPRO_800].[dbo].[Account].[Administrator], [USGISPRO_800].[dbo].[Account].[SystemAdministrator], [USGISPRO_800].[dbo].[Account].[ReadDisclaimer], [USGISPRO_800].[dbo].[Account].[ReadDisclaimerDate], [USGISPRO_800].[dbo].[Account].[PrimaryContact], [USGISPRO_800].[dbo].[Account].[LastLoginDate], [USGISPRO_800].[dbo].[Account].[LoginDate], [USGISPRO_800].[dbo].[Account].[PasswordTries], [USGISPRO_800].[dbo].[Account].[LockoutDate], [USGISPRO_800].[dbo].[Account].[SessionKey], [USGISPRO_800].[dbo].[Account].[ParentAccountID], [USGISPRO_800].[dbo].[Account].[ThirdPartyUserName], [USGISPRO_800].[dbo].[Account].[ThirdPartyPassword], [USGISPRO_800].[dbo].[Account].[CreationDate], [USGISPRO_800].[dbo].[Account].[CreatedBy], [USGISPRO_800].[dbo].[Account].[ModificationDate], [USGISPRO_800].[dbo].[Account].[ModifiedBy]",
+        "Warnings": null,
+        "Type": "PLAN_ROW",
+        "Parallel": false,
+        "EstimateExecutions": 1.0
+      }
+    ]
   }
 }
