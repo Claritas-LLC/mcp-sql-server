@@ -2,6 +2,19 @@
 
 Describe what changed and why.
 
+## Requirements Traceability
+
+Implements: Closes #<requirement-issue-number>
+
+Related requirements:
+- #<issue-number>
+
+## Acceptance Criteria Verification
+
+- [ ] Criterion 1 from #<issue-number>
+- [ ] Criterion 2 from #<issue-number>
+- [ ] Criterion 3 from #<issue-number>
+
 ## Type of Change
 
 - [ ] Feature
@@ -29,3 +42,4 @@ List commands executed and outcomes.
 - [ ] Tests updated/added as needed
 - [ ] No secrets added
 - [ ] Backward compatibility considered
+- [ ] Requirement acceptance criteria are satisfied

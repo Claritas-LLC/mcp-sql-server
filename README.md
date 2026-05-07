@@ -82,6 +82,23 @@ See CONTRIBUTING.md for branch, PR, and test expectations.
 - CI runs on pull requests and pushes to master/main.
 - Release tags follow v* (example: v1.2).
 
+## CMMI-Oriented Platform Integration
+
+This repository includes GitHub-native process controls aligned to CMMI implementation patterns:
+
+- Requirements management: requirement issue template and PR traceability sections
+- Configuration management: branch protection, CODEOWNERS, signed commits, and protected release tags
+- Verification and validation: CI checks, PR gates, and traceability check workflow
+- Measurement and analysis: scheduled traceability matrix generation
+- Audit trail: issue/PR history, commit history, and workflow logs retained in GitHub
+
+Artifacts:
+
+- .github/ISSUE_TEMPLATE/requirement.yml
+- .github/workflows/traceability-check.yml
+- .github/workflows/traceability-matrix.yml
+- docs/traceability-matrix.md
+
 ## License
 
 No license file is currently included. Add one before open-source distribution.

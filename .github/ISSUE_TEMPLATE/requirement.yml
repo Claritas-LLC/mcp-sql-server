@@ -1,0 +1,70 @@
+name: Requirement
+description: Document a requirement with acceptance criteria and traceability metadata
+title: "[REQ-YYYY-NNN] "
+labels: [requirement, needs-review]
+body:
+  - type: input
+    id: req-id
+    attributes:
+      label: Requirement ID
+      description: Use format REQ-YYYY-NNN
+      placeholder: REQ-2026-001
+    validations:
+      required: true
+
+  - type: textarea
+    id: statement
+    attributes:
+      label: Requirement statement
+      description: Write a clear, testable requirement statement.
+      placeholder: The system shall...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      value: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+        - [ ] Criterion 3
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Critical
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: input
+    id: source
+    attributes:
+      label: Source
+      description: Stakeholder, regulation, or business driver
+
+  - type: dropdown
+    id: verification
+    attributes:
+      label: Verification method
+      options:
+        - Unit Test
+        - Integration Test
+        - System Test
+        - Manual Review
+        - Inspection
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Reference related requirements/issues with #issue-number
