@@ -1,0 +1,29 @@
+[project]
+name = "mcp-sql-server"
+version = "0.1.0"
+description = "Dual-instance SQL Server 2019 FastMCP service"
+requires-python = ">=3.11"
+dependencies = [
+  "fastmcp>=2.0.0",
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+  "pydantic>=2.8.0",
+  "PyYAML>=6.0.1",
+  "prometheus-client>=0.20.0",
+  "redis>=5.0.7",
+  "pyodbc>=5.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2.0",
+  "ruff>=0.5.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"

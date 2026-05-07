@@ -1,0 +1,26 @@
+instances:
+  - id: primary
+    host: localhost
+    port: 11433
+    database: master
+    auth_secret_ref: secret/sql/instance1
+    encrypt: false
+    trust_server_certificate: true
+    connect_timeout_sec: 10
+    command_timeout_sec: 30
+    pool_min: 1
+    pool_max: 5
+    enabled: true
+
+  - id: secondary
+    host: localhost
+    port: 12433
+    database: master
+    auth_secret_ref: secret/sql/instance2
+    encrypt: false
+    trust_server_certificate: true
+    connect_timeout_sec: 10
+    command_timeout_sec: 30
+    pool_min: 1
+    pool_max: 5
+    enabled: true

@@ -1,14 +1,12 @@
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+.pytest_cache/
+.venv/
+reports/
+evidence/
+
+# local secrets
 .env
-.venv
-env/
-venv/
-.vscode/
-*.log
 
-logs/
-
-# Kiro IDE workspace settings
-.kiro/
+# large binaries
+*.exe

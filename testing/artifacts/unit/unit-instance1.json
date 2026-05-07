@@ -1,0 +1,30 @@
+{
+  "phase": "unit",
+  "instance_number": 1,
+  "instance_id": "primary",
+  "executed_at_utc": "2026-05-06T09:15:30.485553+00:00",
+  "ping": {
+    "accessible": true,
+    "raw_output": "instance_name|hostname|database_version|ip_address|current_system_date\n-------------|--------|----------------|----------|-------------------\n89f64256db79|89f64256db79|15.0.4465.1|172.18.0.3|2026-05-06T09:15:29.1717874\n\n(1 rows affected)\n"
+  },
+  "list_tools": {
+    "tools_count": 4,
+    "tools_preview": [
+      "db_1_sql2019_ping",
+      "db_1_sql2019_list_tools",
+      "db_1_sql2019_list_object",
+      "db_1_sql2019_execute_query"
+    ]
+  },
+  "list_object": {
+    "database_name": "USGISPRO_800",
+    "object_type": "table",
+    "raw_output": "object_name|schema_name|object_type|owning_database\n-----------|-----------|-----------|---------------\nParcel|dbo|USER_TABLE|USGISPRO_800\n\n(1 rows affected)\n"
+  },
+  "execute_query": {
+    "database_name": "master",
+    "sql": "SELECT TOP 10 t.name AS TableName FROM [USGISPRO_800].[sys].[tables] t ORDER BY t.name",
+    "raw_output": "TableName\n---------\nParcel\n\n(1 rows affected)\n"
+  },
+  "status": "passed"
+}

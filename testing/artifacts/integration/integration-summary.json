@@ -1,0 +1,35 @@
+{
+  "phase": "integration",
+  "executed_at_utc": "2026-05-06T09:15:53.602827+00:00",
+  "instances": [
+    {
+      "instance_number": 1,
+      "health_raw": "instance_name\n-------------\n89f64256db79\n\n(1 rows affected)\n"
+    },
+    {
+      "instance_number": 2,
+      "health_raw": "instance_name\n-------------\nbcb507222393\n\n(1 rows affected)\n"
+    }
+  ],
+  "cross_database_queries": [
+    {
+      "instance_number": 1,
+      "database_context": "master",
+      "sql": "SELECT COUNT(*) AS table_count FROM [USGISPRO_800].[sys].[tables]",
+      "result_raw": "table_count\n-----------\n1\n\n(1 rows affected)\n"
+    },
+    {
+      "instance_number": 2,
+      "database_context": "master",
+      "sql": "SELECT COUNT(*) AS table_count FROM [CITYGIS_810].[sys].[tables]",
+      "result_raw": "table_count\n-----------\n1\n\n(1 rows affected)\n"
+    }
+  ],
+  "assertions": {
+    "instance1_accessible": true,
+    "instance2_accessible": true,
+    "instance1_table_count_positive": true,
+    "instance2_table_count_positive": true
+  },
+  "status": "passed"
+}

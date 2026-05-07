@@ -1,0 +1,20 @@
+write_mode_default: deny
+allowed_write_tools:
+  - db_primary_sql2019_exec_proc
+blocked_sql_patterns:
+  - "(?i)\\b(drop|alter|truncate|create)\\b"
+  - "(?i)\\bxp_cmdshell\\b"
+max_result_rows: 5000
+max_query_duration_ms: 15000
+instance_enable_flags:
+  primary: true
+  secondary: true
+tool_enable_flags:
+  top_queries_report: true
+  active_sessions_report: true
+  index_health_report: true
+instance_tool_enable_flags:
+  primary:
+    exec_proc: true
+  secondary:
+    exec_proc: false

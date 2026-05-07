@@ -1,0 +1,7 @@
+blocked_patterns:
+  - "(?i)\\bdrop\\b"
+  - "(?i)\\balter\\b"
+  - "(?i)\\btruncate\\b"
+  - "(?i)\\bcreate\\b"
+  - "(?i)\\bxp_cmdshell\\b"
+  - "(?i)\\bsp_oacreate\\b"

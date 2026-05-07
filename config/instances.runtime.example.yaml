@@ -1,0 +1,26 @@
+instances:
+  - id: primary
+    host: 10.125.1.7
+    port: 1433
+    database: master
+    auth_secret_ref: secret/sql/primary
+    encrypt: true
+    trust_server_certificate: true
+    connect_timeout_sec: 5
+    command_timeout_sec: 30
+    pool_min: 2
+    pool_max: 20
+    enabled: true
+
+  - id: secondary
+    host: 10.125.1.8
+    port: 2433
+    database: master
+    auth_secret_ref: secret/sql/secondary
+    encrypt: true
+    trust_server_certificate: true
+    connect_timeout_sec: 5
+    command_timeout_sec: 30
+    pool_min: 2
+    pool_max: 20
+    enabled: true

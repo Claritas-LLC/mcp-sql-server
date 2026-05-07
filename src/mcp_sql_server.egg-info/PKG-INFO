@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: mcp-sql-server
+Version: 0.1.0
+Summary: Dual-instance SQL Server 2019 FastMCP service
+Requires-Python: >=3.11
+Requires-Dist: fastmcp>=2.0.0
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn>=0.30.0
+Requires-Dist: pydantic>=2.8.0
+Requires-Dist: PyYAML>=6.0.1
+Requires-Dist: prometheus-client>=0.20.0
+Requires-Dist: redis>=5.0.7
+Requires-Dist: pyodbc>=5.1.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.2.0; extra == "dev"
+Requires-Dist: ruff>=0.5.0; extra == "dev"

@@ -1,0 +1,23 @@
+IF DB_ID('USGISPRO_800') IS NULL
+BEGIN
+    CREATE DATABASE [USGISPRO_800];
+END;
+GO
+USE [USGISPRO_800];
+GO
+IF OBJECT_ID('dbo.Parcel','U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Parcel (
+        ParcelID INT IDENTITY(1,1) PRIMARY KEY,
+        ParcelName NVARCHAR(128) NOT NULL,
+        Acres DECIMAL(10,2) NOT NULL,
+        UpdatedUtc DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+END;
+GO
+IF NOT EXISTS (SELECT 1 FROM dbo.Parcel)
+BEGIN
+    INSERT INTO dbo.Parcel (ParcelName, Acres)
+    VALUES ('Parcel-A', 2.50), ('Parcel-B', 3.75), ('Parcel-C', 1.25);
+END;
+GO
