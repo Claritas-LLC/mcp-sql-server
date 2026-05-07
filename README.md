@@ -1,0 +1,87 @@
+# MCP SQL Server
+
+Remote FastMCP server for dual SQL Server 2019 instances with strong read-only controls, rate limiting, and diagnostics.
+
+## What This Repository Provides
+
+- FastMCP + FastAPI service exposing SQL tools over HTTP at /mcp
+- Dual-instance SQL Server 2019 support (primary and secondary)
+- Read-only SQL policy controls with denylist and allowlist config
+- Redis or local rate limiting with per-actor and global limits
+- Security-oriented output handling (sensitive field redaction)
+- Diagnostics endpoints for runtime posture and tool usage
+- Docker runtime and compose files for local and remote operation
+
+## Repository Structure
+
+- src: service runtime, tool registration, middleware, diagnostics
+- config: instance config, policy, and rate-limit settings
+- policy: SQL allowlist and denylist definitions
+- docker: Dockerfile and compose files
+- tests: unit tests
+- testing: integration and operational test harnesses
+- docs: tool catalog, runbooks, and run instructions
+
+## Quick Start (Local)
+
+1. Create and activate a Python 3.11+ virtual environment.
+2. Install dependencies:
+
+```powershell
+pip install -e .[dev]
+```
+
+3. Copy environment and config templates:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+4. Configure instances in config/instances.yaml.
+5. Run the service:
+
+```powershell
+python -m src.server
+```
+
+6. Validate endpoints:
+
+- http://localhost:8080/
+- http://localhost:8080/diagnostics/health
+- http://localhost:8080/diagnostics/security
+
+## Docker Runtime
+
+Use the runtime compose flow documented in docs/run-mcp-server-with-docker.md.
+
+```powershell
+docker compose -f docker/docker-compose.runtime.yml up -d
+```
+
+## Testing
+
+Run unit tests:
+
+```powershell
+pytest -q
+```
+
+## Security Notes
+
+- Do not commit real secrets.
+- Keep .env local only.
+- Prefer least-privilege SQL credentials.
+- See SECURITY.md for reporting and hardening guidance.
+
+## Contributing
+
+See CONTRIBUTING.md for branch, PR, and test expectations.
+
+## Release and CI
+
+- CI runs on pull requests and pushes to master/main.
+- Release tags follow v* (example: v1.2).
+
+## License
+
+No license file is currently included. Add one before open-source distribution.
