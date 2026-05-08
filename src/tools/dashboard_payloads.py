@@ -213,6 +213,7 @@ def _html_sessions_table(sessions: list[dict[str, Any]], head_blockers: list[int
     active_count = 0
     idle_count = 0
     blocked_count = 0
+    head_blocker_count = 0
     rows_html: list[str] = []
 
     for session in sessions:
@@ -227,6 +228,7 @@ def _html_sessions_table(sessions: list[dict[str, Any]], head_blockers: list[int
             blocked_count += 1
             status_badge = '<span class="badge badge-blocked">BLOCKED</span>'
         else:
+            head_blocker_count += 1
             status_badge = '<span class="badge badge-blocker">HEAD-BLOCKER</span>'
 
         rows_html.append(
@@ -252,7 +254,7 @@ def _html_sessions_table(sessions: list[dict[str, Any]], head_blockers: list[int
 
     caption = (
         f"<caption class=\"muted\">Sessions: {len(sessions)} | Active: {active_count} | "
-        f"Idle: {idle_count} | Blocked: {blocked_count}</caption>"
+        f"Idle: {idle_count} | Blocked: {blocked_count} | Head-Blockers: {head_blocker_count}</caption>"
     )
     return (
         "<section class=\"card\" id=\"sessions\"><h2>Sessions</h2>"

@@ -81,16 +81,26 @@ class ConnectionManager:
         """
         normalized: list[str] = []
         seen: dict[str, int] = {}
+        final_names: set[str] = set()
         for idx, value in enumerate(raw_columns, start=1):
             name = str(value).strip() if value is not None else ""
             if not name:
                 name = f"col_{idx}"
-            count = seen.get(name, 0)
-            if count:
-                normalized_name = f"{name}_{count + 1}"
+            seen[name] = seen.get(name, 0) + 1
+            count = seen[name]
+            if count > 1:
+                normalized_name = f"{name}_{count}"
             else:
                 normalized_name = name
-            seen[name] = count + 1
+            # Ensure uniqueness against final names (not just original)
+            while normalized_name in final_names:
+                if "_" in normalized_name and normalized_name[-1].isdigit():
+                    base = "_".join(normalized_name.split("_")[:-1])
+                    num = int(normalized_name.split("_")[-1])
+                    normalized_name = f"{base}_{num + 1}"
+                else:
+                    normalized_name = f"{normalized_name}_1"
+            final_names.add(normalized_name)
             normalized.append(normalized_name)
         return normalized
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import pathlib
+import re
 import time
 from typing import Any
 
@@ -80,6 +81,9 @@ def build_diagnostics_router(state: Any) -> APIRouter:
 
     @router.get("/dashboards/{request_id}")
     def dashboard_page(request_id: str) -> Response:
+        # Validate request_id: alphanumerics, hyphen, underscore only (no path traversal)
+        if not request_id or not re.match(r"^[a-zA-Z0-9_-]{1,255}$", request_id):
+            raise HTTPException(status_code=400, detail="Invalid request_id format")
         html = get_dashboard_page(request_id)
         if html is None:
             raise HTTPException(status_code=404, detail="dashboard_page_not_found_or_expired")

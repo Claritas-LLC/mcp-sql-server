@@ -717,6 +717,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             })
             raise
         except Exception as exc:
+            decision = "deny"
             error_code = str(exc)
             if ctx is not None:
                 await ctx.error(
@@ -726,6 +727,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         "tool": tool,
                         "instance": instance,
                         "actor": actor,
+                        "decision": decision,
                         "error_code": error_code
                     }
                 )
@@ -734,6 +736,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 "tool": tool,
                 "instance": instance,
                 "actor": actor,
+                "decision": decision,
                 "error": error_code
             })
             raise
@@ -817,11 +820,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     logger.warning(f"Transaction {request_id} DENIED: {error_code}")
                     raise
                 except Exception as exc:
+                    decision = "deny"
                     error_code = str(exc)
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Select query failed: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "instance": _instance, "actor": actor, "error": error_code}
+                            extra={"request_id": request_id, "tool": _tool, "instance": _instance, "actor": actor, "decision": decision, "error": error_code}
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise
@@ -899,11 +903,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     logger.warning(f"Transaction {request_id} DENIED: {error_code}")
                     raise
                 except Exception as exc:
+                    decision = "deny"
                     error_code = str(exc)
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Stored procedure {proc_name} failed: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "instance": _instance, "actor": actor, "proc": proc_name, "error": error_code}
+                            extra={"request_id": request_id, "tool": _tool, "instance": _instance, "actor": actor, "proc": proc_name, "decision": decision, "error": error_code}
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise

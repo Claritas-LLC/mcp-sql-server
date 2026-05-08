@@ -45,7 +45,7 @@ To validate the full server stack (including interactive app routing) using the 
 # Start stack
 docker compose -f docker/docker-compose.runtime.yml up -d
 
-# Confirm FastMCP app route is served
+# Confirm FastMCP health endpoint is served
 Invoke-WebRequest -Uri http://localhost:8085/diagnostics/health | Select-Object -ExpandProperty StatusCode
 
 # Stop stack

@@ -25,12 +25,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
+          set -e
           python scripts/generate-traceability-matrix.py > docs/traceability-matrix.md
-
-      - name: Commit matrix if changed
-        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/traceability-matrix.md
-          git diff --quiet --staged || git commit -m "docs: update traceability matrix"
-          git push
+          git diff --quiet --staged || (git commit -m "docs: update traceability matrix" && git push)

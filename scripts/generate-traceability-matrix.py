@@ -47,19 +47,44 @@ def main() -> int:
         print("ERROR: GITHUB_TOKEN and GITHUB_REPOSITORY are required", file=sys.stderr)
         return 1
 
+    if "/" not in repo or not repo.strip():
+        print(f"ERROR: GITHUB_REPOSITORY must be in format 'owner/repo', got: {repo}", file=sys.stderr)
+        return 1
+
     owner, name = repo.split("/", 1)
 
     try:
-        issues = _api_get(
-            f"https://api.github.com/repos/{owner}/{name}/issues?state=all&labels=requirement&per_page=100",
-            token,
-        )
-        prs = _api_get(
-            f"https://api.github.com/repos/{owner}/{name}/pulls?state=all&per_page=100",
-            token,
-        )
+        issues: list = []
+        page = 1
+        while True:
+            page_issues = _api_get(
+                f"https://api.github.com/repos/{owner}/{name}/issues?state=all&labels=requirement&per_page=100&page={page}",
+                token,
+            )
+            if not page_issues:
+                break
+            issues.extend(page_issues)
+            page += 1
+
+        prs: list = []
+        page = 1
+        while True:
+            page_prs = _api_get(
+                f"https://api.github.com/repos/{owner}/{name}/pulls?state=all&per_page=100&page={page}",
+                token,
+            )
+            if not page_prs:
+                break
+            prs.extend(page_prs)
+            page += 1
     except urllib.error.HTTPError as exc:
-        print(f"ERROR: GitHub API request failed ({exc.code})", file=sys.stderr)
+        print(f"ERROR: GitHub API request failed (HTTP {exc.code})", file=sys.stderr)
+        return 1
+    except urllib.error.URLError as exc:
+        print(f"ERROR: GitHub API request failed (network error: {exc.reason})", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"ERROR: Failed to retrieve GitHub data: {exc}", file=sys.stderr)
         return 1
 
     req_to_prs: dict[int, list[int]] = {}

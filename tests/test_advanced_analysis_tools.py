@@ -25,9 +25,7 @@ from src.tools.query_catalog import (
     stale_statistics_query,
     table_size_query,
     tables_without_fk_query,
-    tran_locks_query,
     trustworthy_databases_query,
-    waiting_tasks_query,
 )
 from src.tools.security_redaction import redact_sensitive_fields
 

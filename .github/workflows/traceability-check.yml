@@ -2,7 +2,7 @@ name: Requirements Traceability Check
 
 on:
   pull_request:
-    types: [opened, edited, synchronize]
+    types: [opened, edited, synchronize, reopened]
 
 permissions:
   contents: read
@@ -20,7 +20,7 @@ jobs:
             const hasRequirement = /(Implements|Closes|Fixes|Resolves)\s*:\s*(Closes\s+)?#\d+/i.test(prBody) || /\b(Closes|Fixes|Resolves)\s+#\d+/i.test(prBody);
 
             if (!hasRequirement) {
-              core.setFailed('PR must reference at least one requirement issue. Add "Implements: Closes #<issue>" to the PR body.');
+              core.setFailed('PR must reference at least one requirement issue. Add \'Implements: #<issue>\' or \'Closes #<issue>\' to the PR body.');
               return;
             }
 
