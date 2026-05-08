@@ -81,6 +81,8 @@ def backup_recency_query() -> str:
 def active_sessions_query(top_n: int) -> str:
     return (
         f"SELECT TOP {top_n} s.session_id, s.login_name, s.host_name, s.program_name, s.status, "
+        "DB_NAME(s.database_id) AS session_database_name, "
+        "s.open_transaction_count, "
         "r.command, r.wait_type, r.wait_time, r.cpu_time, r.blocking_session_id "
         "FROM sys.dm_exec_sessions s "
         "LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id "
@@ -91,9 +93,59 @@ def active_sessions_query(top_n: int) -> str:
 
 def lock_chain_query(top_n: int) -> str:
     return (
-        f"SELECT TOP {top_n} wt.session_id, wt.blocking_session_id, wt.wait_type, wt.wait_duration_ms "
+        f"SELECT TOP {top_n} wt.session_id, wt.blocking_session_id, wt.wait_type, wt.wait_duration_ms, wt.resource_description "
         "FROM sys.dm_os_waiting_tasks wt "
         "WHERE wt.blocking_session_id IS NOT NULL "
+        "ORDER BY wt.wait_duration_ms DESC"
+    )
+
+
+def blocking_chain_query(top_n: int) -> str:
+    """Blocked-session rows used to render chaining details in webpage view."""
+    return (
+        f"SELECT TOP {top_n} "
+        "r.session_id, "
+        "r.blocking_session_id, "
+        "r.wait_type, "
+        "r.wait_time, "
+        "s.status, "
+        "s.login_name, "
+        "s.host_name, "
+        "r.command "
+        "FROM sys.dm_exec_requests r "
+        "JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id "
+        "WHERE r.blocking_session_id > 0 "
+        "ORDER BY r.blocking_session_id, r.wait_time DESC"
+    )
+
+
+def tran_locks_query(top_n: int) -> str:
+    """Active lock holders from sys.dm_tran_locks with resource and mode details."""
+    return (
+        f"SELECT TOP {top_n} "
+        "tl.request_session_id AS session_id, "
+        "tl.resource_type, "
+        "tl.resource_database_id, "
+        "tl.resource_associated_entity_id, "
+        "tl.request_mode, "
+        "tl.request_status, "
+        "tl.request_owner_type "
+        "FROM sys.dm_tran_locks tl "
+        "WHERE tl.request_status IN ('GRANT', 'WAIT') "
+        "ORDER BY tl.request_status DESC, tl.request_session_id"
+    )
+
+
+def waiting_tasks_query(top_n: int) -> str:
+    """All waiting tasks from sys.dm_os_waiting_tasks with full wait context."""
+    return (
+        f"SELECT TOP {top_n} "
+        "wt.session_id, "
+        "wt.blocking_session_id, "
+        "wt.wait_type, "
+        "wt.wait_duration_ms, "
+        "wt.resource_description "
+        "FROM sys.dm_os_waiting_tasks wt "
         "ORDER BY wt.wait_duration_ms DESC"
     )
 
@@ -215,6 +267,181 @@ def missing_fk_index_query() -> str:
         "    AND ic.key_ordinal = 1"
         ") "
         "ORDER BY parent_schema, parent_table"
+    )
+
+
+def missing_index_dmv_query(top_n: int) -> str:
+    """Top missing indexes by estimated improvement impact (SQL Server optimizer DMVs)."""
+    return (
+        f"SELECT TOP {top_n} "
+        "OBJECT_SCHEMA_NAME(mid.object_id) AS schema_name, "
+        "OBJECT_NAME(mid.object_id) AS table_name, "
+        "mid.equality_columns, "
+        "mid.inequality_columns, "
+        "mid.included_columns, "
+        "migs.avg_total_user_cost * migs.avg_user_impact * (migs.user_seeks + migs.user_scans) AS estimated_impact, "
+        "migs.user_seeks, "
+        "migs.user_scans "
+        "FROM sys.dm_db_missing_index_details mid "
+        "JOIN sys.dm_db_missing_index_groups mig ON mig.index_handle = mid.index_handle "
+        "JOIN sys.dm_db_missing_index_group_stats migs ON migs.group_handle = mig.index_group_handle "
+        "WHERE mid.database_id = DB_ID() "
+        "ORDER BY estimated_impact DESC"
+    )
+
+
+def unused_indexes_query(top_n: int) -> str:
+    """Nonclustered indexes that incur write overhead but have never been read since last restart."""
+    return (
+        f"SELECT TOP {top_n} "
+        "OBJECT_SCHEMA_NAME(i.object_id) AS schema_name, "
+        "OBJECT_NAME(i.object_id) AS table_name, "
+        "i.name AS index_name, "
+        "i.type_desc, "
+        "ISNULL(ius.user_seeks + ius.user_scans + ius.user_lookups, 0) AS total_reads, "
+        "ISNULL(ius.user_updates, 0) AS total_writes, "
+        "o.create_date AS table_create_date "
+        "FROM sys.indexes i "
+        "JOIN sys.objects o ON o.object_id = i.object_id "
+        "LEFT JOIN sys.dm_db_index_usage_stats ius "
+        "  ON ius.object_id = i.object_id AND ius.index_id = i.index_id AND ius.database_id = DB_ID() "
+        "WHERE i.type_desc = 'NONCLUSTERED' "
+        "  AND i.is_disabled = 0 "
+        "  AND OBJECTPROPERTY(i.object_id, 'IsUserTable') = 1 "
+        "  AND ISNULL(ius.user_seeks + ius.user_scans + ius.user_lookups, 0) = 0 "
+        "  AND ISNULL(ius.user_updates, 0) > 10 "
+        "  AND o.create_date < DATEADD(DAY, -7, GETDATE()) "
+        "ORDER BY total_writes DESC, i.name"
+    )
+
+
+def redundant_indexes_query(top_n: int) -> str:
+    """Index pairs on the same table that share the same leading key column (redundancy candidates)."""
+    return (
+        f"SELECT TOP {top_n} "
+        "OBJECT_SCHEMA_NAME(i1.object_id) AS schema_name, "
+        "OBJECT_NAME(i1.object_id) AS table_name, "
+        "i1.name AS index_a, "
+        "i2.name AS index_b, "
+        "COL_NAME(ic1.object_id, ic1.column_id) AS shared_leading_key_column "
+        "FROM sys.indexes i1 "
+        "JOIN sys.index_columns ic1 "
+        "  ON ic1.object_id = i1.object_id AND ic1.index_id = i1.index_id AND ic1.key_ordinal = 1 "
+        "JOIN sys.index_columns ic2 "
+        "  ON ic2.object_id = i1.object_id AND ic2.column_id = ic1.column_id AND ic2.key_ordinal = 1 "
+        "JOIN sys.indexes i2 "
+        "  ON i2.object_id = ic2.object_id AND i2.index_id = ic2.index_id "
+        "WHERE i1.type_desc = 'NONCLUSTERED' "
+        "  AND i2.type_desc = 'NONCLUSTERED' "
+        "  AND i1.index_id < i2.index_id "
+        "  AND i1.is_disabled = 0 "
+        "  AND OBJECTPROPERTY(i1.object_id, 'IsUserTable') = 1 "
+        "ORDER BY schema_name, table_name, index_a"
+    )
+
+
+def datatype_inconsistency_query(top_n: int) -> str:
+    """FK relationships where parent and child column base types, length, or precision differ."""
+    return (
+        f"SELECT TOP {top_n} "
+        "fk.name AS fk_name, "
+        "OBJECT_SCHEMA_NAME(fkc.parent_object_id) AS child_schema, "
+        "OBJECT_NAME(fkc.parent_object_id) AS child_table, "
+        "c_child.name AS child_column, "
+        "tp_child.name AS child_type, "
+        "c_child.max_length AS child_max_length, "
+        "c_child.precision AS child_precision, "
+        "OBJECT_SCHEMA_NAME(fkc.referenced_object_id) AS parent_schema, "
+        "OBJECT_NAME(fkc.referenced_object_id) AS parent_table, "
+        "c_parent.name AS parent_column, "
+        "tp_parent.name AS parent_type, "
+        "c_parent.max_length AS parent_max_length, "
+        "c_parent.precision AS parent_precision "
+        "FROM sys.foreign_key_columns fkc "
+        "JOIN sys.foreign_keys fk ON fk.object_id = fkc.constraint_object_id "
+        "JOIN sys.columns c_child "
+        "  ON c_child.object_id = fkc.parent_object_id AND c_child.column_id = fkc.parent_column_id "
+        "JOIN sys.types tp_child ON tp_child.user_type_id = c_child.user_type_id "
+        "JOIN sys.columns c_parent "
+        "  ON c_parent.object_id = fkc.referenced_object_id AND c_parent.column_id = fkc.referenced_column_id "
+        "JOIN sys.types tp_parent ON tp_parent.user_type_id = c_parent.user_type_id "
+        "WHERE tp_child.name != tp_parent.name "
+        "   OR c_child.max_length != c_parent.max_length "
+        "   OR c_child.precision != c_parent.precision "
+        "ORDER BY child_schema, child_table, child_column"
+    )
+
+
+def soft_delete_columns_query() -> str:
+    """Tables with soft-delete marker columns but no corresponding audit/history table in same schema."""
+    return (
+        "SELECT "
+        "s.name AS schema_name, "
+        "t.name AS table_name, "
+        "c.name AS soft_delete_column, "
+        "tp.name AS column_type "
+        "FROM sys.columns c "
+        "JOIN sys.tables t ON t.object_id = c.object_id "
+        "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+        "JOIN sys.types tp ON tp.user_type_id = c.user_type_id "
+        "WHERE LOWER(c.name) IN ("
+        "  N'isdeleted', N'is_deleted', N'deleted', N'deletedflag', N'deleteflag',"
+        "  N'deletedat', N'deleted_at', N'isactive', N'is_active', N'activeflag', N'active_flag',"
+        "  N'archived', N'isarchived', N'is_archived'"
+        ") "
+        "AND NOT EXISTS ("
+        "  SELECT 1 FROM sys.tables t2 "
+        "  JOIN sys.schemas s2 ON s2.schema_id = t2.schema_id "
+        "  WHERE s2.schema_id = s.schema_id "
+        "    AND (LOWER(t2.name) LIKE LOWER(t.name) + N'%hist%' "
+        "      OR LOWER(t2.name) LIKE LOWER(t.name) + N'%audit%' "
+        "      OR LOWER(t2.name) LIKE LOWER(t.name) + N'%log%')"
+        ") "
+        "ORDER BY s.name, t.name"
+    )
+
+
+def update_heavy_tables_query(top_n: int) -> str:
+    """Tables where writes significantly outnumber reads (update anomaly / over-normalisation risk)."""
+    return (
+        f"SELECT TOP {top_n} "
+        "OBJECT_SCHEMA_NAME(i.object_id) AS schema_name, "
+        "OBJECT_NAME(i.object_id) AS table_name, "
+        "SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) AS total_reads, "
+        "SUM(ius.user_updates) AS total_writes, "
+        "CAST(SUM(ius.user_updates) AS FLOAT) "
+        "  / NULLIF(SUM(ius.user_seeks + ius.user_scans + ius.user_lookups), 0) AS write_read_ratio "
+        "FROM sys.indexes i "
+        "JOIN sys.dm_db_index_usage_stats ius "
+        "  ON ius.object_id = i.object_id AND ius.index_id = i.index_id AND ius.database_id = DB_ID() "
+        "WHERE i.index_id = 1 AND OBJECTPROPERTY(i.object_id, 'IsUserTable') = 1 "
+        "GROUP BY i.object_id "
+        "HAVING SUM(ius.user_updates) > 100 "
+        "  AND (SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) = 0 "
+        "    OR CAST(SUM(ius.user_updates) AS FLOAT) "
+        "       / NULLIF(SUM(ius.user_seeks + ius.user_scans + ius.user_lookups), 0) > 5) "
+        "ORDER BY write_read_ratio DESC, total_writes DESC"
+    )
+
+
+def normalization_column_overlap_query() -> str:
+    """Child tables that copy non-key columns from their referenced parent (transitive dependency / 3NF violation)."""
+    return (
+        "SELECT "
+        "OBJECT_SCHEMA_NAME(fkc.parent_object_id) AS child_schema, "
+        "OBJECT_NAME(fkc.parent_object_id) AS child_table, "
+        "OBJECT_SCHEMA_NAME(fkc.referenced_object_id) AS parent_schema, "
+        "OBJECT_NAME(fkc.referenced_object_id) AS parent_table, "
+        "fk.name AS fk_constraint_name, "
+        "c_child.name AS overlapping_column "
+        "FROM sys.foreign_key_columns fkc "
+        "JOIN sys.foreign_keys fk ON fk.object_id = fkc.constraint_object_id "
+        "JOIN sys.columns c_child ON c_child.object_id = fkc.parent_object_id "
+        "JOIN sys.columns c_parent "
+        "  ON c_parent.object_id = fkc.referenced_object_id AND c_parent.name = c_child.name "
+        "WHERE c_child.column_id != fkc.parent_column_id "
+        "  AND c_parent.column_id != fkc.referenced_column_id "
+        "ORDER BY child_schema, child_table, overlapping_column"
     )
 
 

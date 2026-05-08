@@ -16,6 +16,7 @@ from src.middleware.write_guard import WriteGuard
 from src.models import RuntimePolicy
 from src.security.session_manager import SessionManager
 from src.tools.sql_tools import register_sql_tools
+from src.tools.sessions_dashboard_app import register_sessions_dashboard_app_provider
 
 
 def secret_resolver(secret_ref: str) -> dict[str, str]:
@@ -89,6 +90,7 @@ def build_fastapi_app() -> FastAPI:
 
     mcp = FastMCP("sql2019-dual-instance")
     registered_tools = register_sql_tools(mcp, state)
+    register_sessions_dashboard_app_provider(mcp, state)
     state.registered_tools = registered_tools
 
     # FastMCP versions differ in mount helper names. Use getattr to stay

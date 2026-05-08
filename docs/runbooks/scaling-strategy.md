@@ -23,3 +23,33 @@
 - Maintain index health and statistics update cadence.
 - Separate reporting-heavy operations to secondary instance where possible.
 - Limit result sets and enforce command timeout ceilings from policy.
+
+## Interactive App Architecture (FastMCPApp)
+
+The Sessions Dashboard is delivered as a **FastMCPApp** — an interactive front end running inside the MCP server process:
+
+| Concern | Detail |
+|---|---|
+| **Entry tool** | `db_{instance_number}_sql2019_sessions_dashboard` — the MCP tool an LLM calls to get a dashboard URL. |
+| **App backend** | `fetch_sessions_dashboard_data` (app-tool) — executes all four DMV queries and populates state. |
+| **State model** | `DASHBOARD_STATE_SCHEMA` in `src/tools/dashboard_payloads.py` — validated sections: `sessions`, `locks`, `blockers`, `blocking_chains`, `head_blockers`, `recommendations`, `ui_meta`. |
+| **Page delivery** | Generated pages are retrievable at `/diagnostics/dashboards/{request_id}` via in-memory TTL-backed storage. |
+| **Registration** | `register_sessions_dashboard_app_provider(mcp, state)` called once in `server.py`. |
+| **Scaling note** | FastMCPApp state is per-process. Under horizontal scaling, each replica maintains its own live state; there is no shared app state needed because queries are stateless DMV snapshots. |
+
+## Docker Runtime Validation
+
+To validate the full server stack (including interactive app routing) using the runtime Docker Compose:
+
+```powershell
+# Start stack
+docker compose -f docker/docker-compose.runtime.yml up -d
+
+# Confirm FastMCP app route is served
+Invoke-WebRequest -Uri http://localhost:8085/diagnostics/health | Select-Object -ExpandProperty StatusCode
+
+# Stop stack
+docker compose -f docker/docker-compose.runtime.yml down
+```
+
+Expected: HTTP 200 on `/diagnostics/health`. The dashboard URL is returned in the `dashboard_url` field of the `db_{instance_number}_sql2019_sessions_dashboard` tool response and is served by `/diagnostics/dashboards/{request_id}` until TTL expiry.

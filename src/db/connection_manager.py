@@ -72,11 +72,33 @@ class ConnectionManager:
     def list_enabled_instances(self) -> list[str]:
         return list(self._instances)
 
+    @staticmethod
+    def _normalize_column_names(raw_columns: list[Any]) -> list[str]:
+        """Ensure row dict keys are always stable, non-empty strings.
+
+        Some SQL Server expressions/DMVs can surface unnamed columns via ODBC,
+        which produces None column names and breaks downstream JSON/tool handling.
+        """
+        normalized: list[str] = []
+        seen: dict[str, int] = {}
+        for idx, value in enumerate(raw_columns, start=1):
+            name = str(value).strip() if value is not None else ""
+            if not name:
+                name = f"col_{idx}"
+            count = seen.get(name, 0)
+            if count:
+                normalized_name = f"{name}_{count + 1}"
+            else:
+                normalized_name = name
+            seen[name] = count + 1
+            normalized.append(normalized_name)
+        return normalized
+
     def execute_read(self, instance_id: str, sql: str, max_rows: int) -> list[dict[str, Any]]:
         with self.connect(instance_id) as conn:
             cur = conn.cursor()
             cur.execute(sql)
-            columns = [d[0] for d in cur.description or []]
+            columns = self._normalize_column_names([d[0] for d in cur.description or []])
             rows = cur.fetchmany(max_rows)
             return [dict(zip(columns, row, strict=False)) for row in rows]
 
@@ -84,7 +106,7 @@ class ConnectionManager:
         with self.connect(instance_id, database_override=database_name) as conn:
             cur = conn.cursor()
             cur.execute(sql)
-            columns = [d[0] for d in cur.description or []]
+            columns = self._normalize_column_names([d[0] for d in cur.description or []])
             rows = cur.fetchmany(max_rows)
             payload = [dict(zip(columns, row, strict=False)) for row in rows]
             return {"columns": columns, "rows": payload}
@@ -104,7 +126,7 @@ class ConnectionManager:
             cur = conn.cursor()
             cur.execute(sql)
             row = cur.fetchone()
-            columns = [d[0] for d in cur.description or []]
+            columns = self._normalize_column_names([d[0] for d in cur.description or []])
             if row is None:
                 return {}
             return dict(zip(columns, row, strict=False))
@@ -133,7 +155,7 @@ class ConnectionManager:
         with self.connect(instance_id, database_override=database_name) as conn:
             cur = conn.cursor()
             cur.execute(sql, object_type_map[key])
-            columns = [d[0] for d in cur.description or []]
+            columns = self._normalize_column_names([d[0] for d in cur.description or []])
             rows = cur.fetchall()
             return [dict(zip(columns, row, strict=False)) for row in rows]
 
@@ -143,7 +165,7 @@ class ConnectionManager:
             cur.execute("SET SHOWPLAN_ALL ON")
             try:
                 cur.execute(sql)
-                columns = [d[0] for d in cur.description or []]
+                columns = self._normalize_column_names([d[0] for d in cur.description or []])
                 rows = cur.fetchall()
             finally:
                 cur.execute("SET SHOWPLAN_ALL OFF")
