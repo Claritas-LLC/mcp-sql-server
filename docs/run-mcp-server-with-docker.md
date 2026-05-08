@@ -34,6 +34,62 @@ docker compose -f docker/docker-compose.runtime.yml --profile local-redis up -d
 - Use `host.docker.internal` instead of `localhost` when the SQL Server runs on the Docker host.
 - Credential env vars must match the `auth_secret_ref` names in `config/instances.yaml`.
 
+## Procedure Execution Security (exec_proc Tool)
+
+The `db_{instance_number}_sql2019_exec_proc` tool allows execution of **approved stored procedures only**. Procedure execution is governed by an allowlist defined in `config/runtime-policy.yaml` under the `allowed_tools` section.
+
+### Configuring the Procedure Allowlist
+
+Only procedures explicitly listed in the allowlist may be executed. By default, all procedures are **denied**:
+
+```yaml
+allowed_tools:
+  db_primary_sql2019_exec_proc:
+    allowed_procedures:
+      - dbo.usp_RunApprovedMaintenance
+      - dbo.usp_RefreshMaterializedView
+  db_secondary_sql2019_exec_proc:
+    allowed_procedures: []  # Empty = deny all on secondary
+```
+
+### Key Security Properties
+
+- **Fail-safe default**: If a procedure is not in the allowlist, it is **denied**.
+- **Case-insensitive**: Procedure names are matched case-insensitively per SQL Server convention.
+- **Schema-qualified**: Both `dbo.usp_MyProc` and `usp_MyProc` formats are supported.
+- **Per-tool isolation**: Each tool has its own independent allowlist.
+- **Audit trail**: All procedure execution attempts (approved and denied) are logged with the decision.
+
+### Example: Adding a Procedure to the Allowlist
+
+1. Edit `config/runtime-policy.yaml`
+2. Add the procedure to the appropriate tool's `allowed_procedures` list:
+
+```yaml
+allowed_tools:
+  db_primary_sql2019_exec_proc:
+    allowed_procedures:
+      - dbo.usp_RunApprovedMaintenance
+      - dbo.usp_RefreshMaterializedView
+      - dbo.usp_MyNewProcedure  # <- Add here
+```
+
+3. Restart the container:
+
+```powershell
+docker compose -f docker/docker-compose.runtime.yml restart mcp-sqlserver
+```
+
+4. Test the execution via the MCP tool (Inspector or your client).
+
+### Important: What This Does NOT Allow
+
+- **DML/DDL statements**: Direct `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP` are blocked by the denylist, regardless of the exec_proc allowlist.
+- **Unsafe procedures**: The allowlist controls *which* procedures execute, but procedures that contain DML/DDL will execute those statements. Ensure approved procedures are audited for safety.
+- **Unapproved procedures**: Any procedure not in the allowlist is rejected with a `PermissionError` before execution.
+
+
+
 ## Interactive App (Sessions Dashboard)
 
 The Sessions Dashboard is exposed by `db_{instance_number}_sql2019_sessions_dashboard`. The tool call returns a `dashboard_url` that points to a generated webpage route hosted by the same service.

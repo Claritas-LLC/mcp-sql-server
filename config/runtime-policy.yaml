@@ -6,6 +6,13 @@ blocked_sql_patterns:
   - "(?i)\\bxp_cmdshell\\b"
 max_result_rows: 5000
 max_query_duration_ms: 15000
+allowed_tools:
+  db_primary_sql2019_exec_proc:
+    allowed_procedures:
+      - dbo.usp_RunApprovedMaintenance
+      - dbo.usp_RefreshMaterializedView
+  db_secondary_sql2019_exec_proc:
+    allowed_procedures: []
 instance_enable_flags:
   primary: true
   secondary: true

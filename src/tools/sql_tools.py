@@ -869,6 +869,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     
                     state.session_manager.touch(actor, request_id)
                     state.rate_limiter.allow(actor)
+                    state.write_guard.validate_procedure(_tool, proc_name)
                     state.write_guard.enforce(_tool, "UPDATE __policy_probe__ SET x = 1")
                     result = state.connection_manager.execute_proc(_instance, proc_name, params)
                     

@@ -27,6 +27,7 @@ class RuntimePolicy(BaseModel):
     instance_enable_flags: dict[str, bool] = Field(default_factory=dict)
     tool_enable_flags: dict[str, bool] = Field(default_factory=dict)
     instance_tool_enable_flags: dict[str, dict[str, bool]] = Field(default_factory=dict)
+    allowed_tools: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
 
 
 class RateLimitSection(BaseModel):
