@@ -23,6 +23,7 @@ Remote FastMCP server for dual SQL Server 2019 instances with strong read-only c
 - docs: tool catalog, runbooks, and run instructions
 - docs/runbooks/scaling-strategy.md: runbook for scaling and load-validation operations
 - docs/runbooks/security-maintenance.md: runbook for security posture checks and maintenance
+- docs/access-levels-and-controlled-write.md: access model and controlled-write enforcement reference
 
 ## Quick Start (Local)
 
@@ -51,6 +52,13 @@ python -m src.server
 - http://localhost:8080/
 - http://localhost:8080/diagnostics/health
 - http://localhost:8080/diagnostics/security
+- http://localhost:8080/diagnostics/pool
+
+Primary rollout verification checks:
+
+- `/diagnostics/health`: confirms service and instance connectivity.
+- `/diagnostics/security`: confirms auth mode, required scope count, group-authorization posture, and registered tool inventory.
+- `/diagnostics/pool`: confirms per-instance SQL pool sizing and reuse counters.
 
 ## Docker Runtime
 
@@ -73,6 +81,11 @@ Run unit tests:
 pytest -q
 ```
 
+Current validation snapshot:
+
+- Full test suite: `143 passed`
+- See [testing/artifacts/phase5-entra-pooling-summary.md](testing/artifacts/phase5-entra-pooling-summary.md) for rollout verification notes.
+
 ## Security Notes
 
 - Do not commit real secrets.
@@ -88,6 +101,7 @@ See CONTRIBUTING.md for branch, PR, and test expectations.
 
 - CI runs on pull requests and pushes to master/main.
 - Release tags follow v* (example: v1.2).
+- Latest release notes: [docs/release-notes-v1.3.0.md](docs/release-notes-v1.3.0.md)
 
 ## CMMI-Oriented Platform Integration
 

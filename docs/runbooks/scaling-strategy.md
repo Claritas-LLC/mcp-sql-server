@@ -17,12 +17,25 @@
 - Run multiple FastMCP replicas behind a reverse proxy.
 - Use shared rate-limit storage (Redis or equivalent) for consistent enforcement.
 - Keep audit output centralized using log forwarding sidecar/agent.
+- Monitor `/diagnostics/pool` per replica because SQL pool state is process-local.
 
 ## Database-Side Considerations
 
 - Maintain index health and statistics update cadence.
 - Separate reporting-heavy operations to secondary instance where possible.
 - Limit result sets and enforce command timeout ceilings from policy.
+
+## Auth and Pool Rollout Sequence
+
+1. Enable pool settings first and validate `/diagnostics/pool` shows reuse without saturation.
+2. Enable Azure token verification next and confirm `/diagnostics/security` reflects expected auth mode and scope counts.
+3. Enable group authorization last after validating read/write group mappings in non-production.
+
+## Operational Rollback
+
+- If SQL connectivity regresses under load, set instance `pool_enabled: false` and restart affected replicas.
+- If Entra token validation blocks all callers unexpectedly, set `auth.azure_auth_enabled: false` and restart.
+- If only group mapping is misconfigured, set `auth.azure_group_authorization_enabled: false` and restart.
 
 ## Interactive App Architecture (FastMCPApp)
 
