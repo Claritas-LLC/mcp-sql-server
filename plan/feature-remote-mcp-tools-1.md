@@ -10,7 +10,7 @@ tags: [feature, mcp, remote-server, sqlserver, security, operations]
 
 # Introduction
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: Completed](https://img.shields.io/badge/status-Completed-brightgreen)
 
 This plan defines how to add new MCP tools to the remote FastMCP SQL Server service in a deterministic, security-first way. It is aligned to the current codebase structure, existing naming standard, dual-instance routing model, Redis-enabled rate limiting, and CI/CD signing pipeline.
 
