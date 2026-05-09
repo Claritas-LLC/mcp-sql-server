@@ -1,6 +1,7 @@
 write_mode_default: deny
 allowed_write_tools:
   - db_primary_sql2019_exec_proc
+  - db_secondary_sql2019_exec_proc
 blocked_sql_patterns:
   - "(?i)\\b(drop|alter|truncate|create)\\b"
   - "(?i)\\bxp_cmdshell\\b"
@@ -9,10 +10,12 @@ max_query_duration_ms: 15000
 allowed_tools:
   db_primary_sql2019_exec_proc:
     allowed_procedures:
-      - dbo.usp_RunApprovedMaintenance
-      - dbo.usp_RefreshMaterializedView
+      - dbo.usp_RunApprovedMaintenance # Approved maintenance routine; DBA-reviewed proc only. DDL is not permitted by MCP policy and procedure must remain non-DDL.
+      - dbo.usp_RefreshMaterializedView # Internal refresh routine only; constrained via allowlist + audit trail. No CREATE/ALTER/DROP paths allowed.
   db_secondary_sql2019_exec_proc:
-    allowed_procedures: []
+    allowed_procedures:
+      - dbo.usp_RunApprovedMaintenance # Approved maintenance routine; DBA-reviewed proc only. DDL is not permitted by MCP policy and procedure must remain non-DDL.
+      - dbo.usp_RefreshMaterializedView # Internal refresh routine only; constrained via allowlist + audit trail. No CREATE/ALTER/DROP paths allowed.
 instance_enable_flags:
   primary: true
   secondary: true
@@ -24,4 +27,4 @@ instance_tool_enable_flags:
   primary:
     exec_proc: true
   secondary:
-    exec_proc: false
+    exec_proc: true

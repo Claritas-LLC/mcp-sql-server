@@ -3,12 +3,8 @@ Integration tests for exec_proc tool with allowlist validation.
 Tests the full flow of procedure execution with allowlist checks.
 """
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 from src.models import RuntimePolicy
 from src.middleware.write_guard import WriteGuard
-from src.middleware.rate_limiter import RateLimiter
-from src.security.session_manager import SessionManager
-from src.middleware.audit_logger import AuditLogger
 
 
 class TestExecProcAllowlistValidation:

@@ -94,10 +94,12 @@ class ConnectionManager:
                 normalized_name = name
             # Ensure uniqueness against final names (not just original)
             while normalized_name in final_names:
-                if "_" in normalized_name and normalized_name[-1].isdigit():
-                    base = "_".join(normalized_name.split("_")[:-1])
-                    num = int(normalized_name.split("_")[-1])
-                    normalized_name = f"{base}_{num + 1}"
+                if "_" in normalized_name:
+                    base, suffix = normalized_name.rsplit("_", 1)
+                    if suffix.isdigit():
+                        normalized_name = f"{base}_{int(suffix) + 1}"
+                    else:
+                        normalized_name = f"{normalized_name}_1"
                 else:
                     normalized_name = f"{normalized_name}_1"
             final_names.add(normalized_name)

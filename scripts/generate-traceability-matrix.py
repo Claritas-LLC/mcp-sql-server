@@ -52,6 +52,11 @@ def main() -> int:
         return 1
 
     owner, name = repo.split("/", 1)
+    owner = owner.strip()
+    name = name.strip()
+    if not owner or not name or "/" in owner or "/" in name:
+        print(f"ERROR: GITHUB_REPOSITORY must be in format 'owner/repo', got: {repo}", file=sys.stderr)
+        return 1
 
     try:
         issues: list = []
@@ -116,10 +121,12 @@ def main() -> int:
     rows.sort(key=lambda r: r.req_id)
 
     print("# Requirements Traceability Matrix\n")
+    print("This file is maintained by .github/workflows/traceability-matrix.yml.\n")
+    print("Run manually via workflow_dispatch or wait for the weekly schedule.\n")
     print("| Req ID | Title | State | Implemented By |")
     print("|---|---|---|---|")
     for row in rows:
-        safe_title = row.title.replace("|", "\\|")
+        safe_title = row.title.replace("|", "\\|").replace("\r", " ").replace("\n", " ")
         print(f"| {row.req_id} | {safe_title} | {row.state} | {row.linked_prs} |")
 
     print(f"\nTotal requirements: {len(rows)}")

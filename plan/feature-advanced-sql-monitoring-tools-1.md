@@ -68,7 +68,7 @@ This plan defines the implementation of four advanced MCP tools per SQL instance
 | TASK-010 | In `src/tools/sql_tools.py`, register `db_<n>_sql2019_analyze_db_data_model` with inputs: `database_name`, `schema_filter|None`, `max_edges: int`, `actor`. | Yes | 2026-05-07 |
 | TASK-011 | Implement model checks: orphan tables, cardinality anti-patterns, nullable FK anomalies, circular FK dependencies, missing relationship indexes, denormalization hints, naming convention drift. | Yes | 2026-05-07 |
 | TASK-012 | Implement graph extraction helper `build_fk_graph()` in new file `src/tools/model_graph.py`; emit node/edge summaries for downstream visualization. | Yes | 2026-05-07 |
-| TASK-013 | Return report JSON with `model_overview`, `integrity_findings`, `normalization_findings`, and actionable recommendations with estimated impact. | Yes | 2026-05-07 |
+| TASK-013 | Return report JSON following REQ-003 standard envelope with `summary`, `findings`, `severity_counts`, `recommendations`, `evidence`, and `generated_at_utc`; require `findings` object to contain `model_overview`, `integrity_findings`, and `normalization_findings`, with actionable recommendations and estimated impact placed under `recommendations`. | Yes | 2026-05-07 |
 
 ### Implementation Phase 4
 
@@ -79,7 +79,7 @@ This plan defines the implementation of four advanced MCP tools per SQL instance
 | TASK-014 | In `src/tools/sql_tools.py`, register `db_<n>_sql2019_analyze_sec_config` with inputs: `database_name`, `include_server_scope: bool`, `actor`. | Yes | 2026-05-07 |
 | TASK-015 | Implement checks for excessive privileges, orphan users, weak role assignments, TRUSTWORTHY/cross-db ownership chain risks, xp_cmdshell state, CLR state, audit configuration coverage, backup recency and recovery model mismatches. | Yes | 2026-05-07 |
 | TASK-016 | Redact sensitive output values before return using helper `redact_sensitive_fields()` in `src/tools/security_redaction.py`. | Yes | 2026-05-07 |
-| TASK-017 | Return prioritized findings and recommendations grouped by `server_security`, `database_security`, `audit_backup`, and `hardening_actions`. | Yes | 2026-05-07 |
+| TASK-017 | Return REQ-003-compliant envelope where `findings` explicitly nests `server_security`, `database_security`, and `audit_backup` (for example: `findings: { server_security: [...], database_security: [...], audit_backup: [...] }`) and `recommendations` nests `hardening_actions` (for example: `recommendations: { hardening_actions: [...] }`) so mapping is unambiguous. | Yes | 2026-05-07 |
 
 ### Implementation Phase 5
 

@@ -176,14 +176,23 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
                     Text("Action:")
                     Text(rec.action)
 
-        default_instance = available_instance_numbers[0] if available_instance_numbers else 1
-        initial_dashboard = fetch_sessions_dashboard_data(
-            instance_number=default_instance,
-            database_name="master",
-            lookback_minutes=15,
-            include_locks=True,
-            actor="system",
-        )
+        initial_dashboard = {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "instance_number": available_instance_numbers[0] if available_instance_numbers else "",
+            "database_name": "master",
+            "lookback_minutes": 15,
+            "active_sessions": [],
+            "lock_chains": [],
+            "blocking_chains": [],
+            "head_blockers": [],
+            "recommendations": [
+                {
+                    "priority": "info",
+                    "action": "Click Refresh to load dashboard data.",
+                    "rationale": "No initial server-side fetch is performed.",
+                }
+            ],
+        }
 
         return PrefabApp(view=view, state={"dashboard": initial_dashboard})
 
