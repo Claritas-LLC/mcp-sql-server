@@ -12,7 +12,7 @@ from fastmcp.utilities.logging import get_logger
 from src.diagnostics.routes import REQUEST_COUNT, REQUEST_LATENCY
 from src.security.privilege_mapper import resolve_group_privilege
 from src.tools.analysis_contracts import build_finding, build_recommendation, build_report_envelope
-from src.tools.dashboard_payloads import build_sessions_dashboard, build_sessions_dashboard_full
+from src.tools.dashboard_payloads import build_sessions_dashboard_full
 from src.tools.dashboard_page_store import get_dashboard_page_expiry_utc, register_dashboard_page
 from src.tools.input_validation import validate_database_name, validate_identifier, validate_positive_int
 from src.tools.model_graph import build_fk_graph
