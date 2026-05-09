@@ -37,7 +37,9 @@ class _FakeConnection:
         self.closed = True
 
 
-def _instance(pool_max: int = 10, pool_enabled: bool = True, acquire_timeout: int = 1) -> SqlInstanceConfig:
+def _instance(
+    pool_max: int = 10, pool_enabled: bool = True, acquire_timeout: int = 1
+) -> SqlInstanceConfig:
     return SqlInstanceConfig(
         id="primary",
         host="localhost",
@@ -85,7 +87,9 @@ def test_pool_acquire_timeout_when_full(monkeypatch: pytest.MonkeyPatch) -> None
         return _FakeConnection()
 
     monkeypatch.setattr("src.db.connection_manager.pyodbc.connect", _fake_connect)
-    manager = ConnectionManager([_instance(pool_max=1, acquire_timeout=0)], secret_resolver=_resolver)
+    manager = ConnectionManager(
+        [_instance(pool_max=1, acquire_timeout=0)], secret_resolver=_resolver
+    )
 
     first = manager.connect("primary")
     conn = first.__enter__()

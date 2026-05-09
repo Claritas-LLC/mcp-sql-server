@@ -47,19 +47,28 @@ class AzureEntraTokenVerifier(TokenVerifier):
 
     async def _get_openid_config(self) -> dict[str, Any]:
         now = time.time()
-        if self._openid_config_cache and (now - self._openid_config_cache_at) < self._config_cache_ttl_sec:
+        if (
+            self._openid_config_cache
+            and (now - self._openid_config_cache_at) < self._config_cache_ttl_sec
+        ):
             return self._openid_config_cache
 
         response = await self._http_client.get(self._discovery_url())
         response.raise_for_status()
         payload = response.json()
-        if not isinstance(payload, dict) or not payload.get("jwks_uri") or not payload.get("issuer"):
+        if (
+            not isinstance(payload, dict)
+            or not payload.get("jwks_uri")
+            or not payload.get("issuer")
+        ):
             raise ValueError("Azure OpenID configuration is missing required fields")
         self._openid_config_cache = payload
         self._openid_config_cache_at = now
         return payload
 
-    async def _get_jwks(self, jwks_uri: str, force_refresh: bool = False) -> dict[str, Any]:
+    async def _get_jwks(
+        self, jwks_uri: str, force_refresh: bool = False
+    ) -> dict[str, Any]:
         now = time.time()
         if (
             not force_refresh
@@ -111,10 +120,14 @@ class AzureEntraTokenVerifier(TokenVerifier):
 
         try:
             jwks = await self._get_jwks(jwks_uri)
-            key_data = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
+            key_data = next(
+                (k for k in jwks.get("keys", []) if k.get("kid") == kid), None
+            )
             if key_data is None:
                 jwks = await self._get_jwks(jwks_uri, force_refresh=True)
-                key_data = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
+                key_data = next(
+                    (k for k in jwks.get("keys", []) if k.get("kid") == kid), None
+                )
             if key_data is None:
                 return None
 
@@ -123,7 +136,9 @@ class AzureEntraTokenVerifier(TokenVerifier):
             claims = jwt.decode(
                 token,
                 key=signing_key,
-                algorithms=[str(alg)],
+                algorithms=[
+                    "RS256"
+                ],  # Hardcoded: only accept RS256 from Azure Entra; do not trust alg from header
                 audience=audience,
                 issuer=issuer,
                 options={"require": ["exp", "iss", "aud"]},
@@ -144,12 +159,19 @@ class AzureEntraTokenVerifier(TokenVerifier):
             claims[self._group_claim_name] = []
 
         expires_at = claims.get("exp")
-        client_id = claims.get("azp") or claims.get("appid") or claims.get("aud") or self._client_id
+        client_id = (
+            claims.get("azp")
+            or claims.get("appid")
+            or claims.get("aud")
+            or self._client_id
+        )
         return AccessToken(
             token=token,
             client_id=str(client_id),
             scopes=scopes,
-            expires_at=int(expires_at) if isinstance(expires_at, (int, float)) else None,
+            expires_at=int(expires_at)
+            if isinstance(expires_at, (int, float))
+            else None,
             claims=claims,
         )
 
@@ -168,7 +190,10 @@ def build_auth_provider(
     if auth_config.auth_mode not in {"azure_token_verifier", "disabled"}:
         raise ValueError(f"Unsupported auth_mode: {auth_config.auth_mode}")
 
-    if not (auth_config.azure_auth_enabled or auth_config.auth_mode == "azure_token_verifier"):
+    if not (
+        auth_config.azure_auth_enabled
+        or auth_config.auth_mode == "azure_token_verifier"
+    ):
         return None
 
     missing: list[str] = []
@@ -178,7 +203,8 @@ def build_auth_provider(
         missing.append("azure_client_id")
     if missing:
         raise ValueError(
-            "Azure Entra auth is enabled but required settings are missing: " + ", ".join(missing)
+            "Azure Entra auth is enabled but required settings are missing: "
+            + ", ".join(missing)
         )
 
     return AzureEntraTokenVerifier(

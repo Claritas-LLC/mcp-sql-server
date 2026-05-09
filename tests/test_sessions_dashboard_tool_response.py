@@ -25,8 +25,13 @@ class _FakeConnectionManager:
     def list_enabled_instances(self) -> list[str]:
         return ["primary"]
 
-    def execute_catalog_query(self, instance_id: str, database_name: str, sql: str, max_rows: int = 5000) -> dict[str, Any]:
-        if "sys.dm_exec_sessions s" in sql and "LEFT JOIN sys.dm_exec_requests r" in sql:
+    def execute_catalog_query(
+        self, instance_id: str, database_name: str, sql: str, max_rows: int = 5000
+    ) -> dict[str, Any]:
+        if (
+            "sys.dm_exec_sessions s" in sql
+            and "LEFT JOIN sys.dm_exec_requests r" in sql
+        ):
             return {
                 "rows": [
                     {
@@ -48,7 +53,10 @@ class _FakeConnectionManager:
                 "row_count": 1,
                 "latency_ms": 1,
             }
-        if "sys.dm_os_waiting_tasks" in sql and "blocking_session_id IS NOT NULL" in sql:
+        if (
+            "sys.dm_os_waiting_tasks" in sql
+            and "blocking_session_id IS NOT NULL" in sql
+        ):
             return {
                 "rows": [
                     {

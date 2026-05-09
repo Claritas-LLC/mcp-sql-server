@@ -32,7 +32,7 @@ instance_tool_enable_flags:
 auth:
   auth_mode: disabled
   azure_auth_enabled: false
-  azure_group_authorization_enabled: true
+  azure_group_authorization_enabled: false
   azure_tenant_id: ""
   azure_client_id: ""
   azure_client_secret_ref: ""

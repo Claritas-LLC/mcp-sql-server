@@ -11,10 +11,21 @@ from fastmcp.utilities.logging import get_logger
 
 from src.diagnostics.routes import REQUEST_COUNT, REQUEST_LATENCY
 from src.security.privilege_mapper import resolve_group_privilege
-from src.tools.analysis_contracts import build_finding, build_recommendation, build_report_envelope
+from src.tools.analysis_contracts import (
+    build_finding,
+    build_recommendation,
+    build_report_envelope,
+)
 from src.tools.dashboard_payloads import build_sessions_dashboard_full
-from src.tools.dashboard_page_store import get_dashboard_page_expiry_utc, register_dashboard_page
-from src.tools.input_validation import validate_database_name, validate_identifier, validate_positive_int
+from src.tools.dashboard_page_store import (
+    get_dashboard_page_expiry_utc,
+    register_dashboard_page,
+)
+from src.tools.input_validation import (
+    validate_database_name,
+    validate_identifier,
+    validate_positive_int,
+)
 from src.tools.model_graph import build_fk_graph
 from src.tools.query_catalog import (
     active_sessions_query,
@@ -50,6 +61,7 @@ logger = get_logger(__name__)
 # Private async subtool helpers – used exclusively by _analyze_db_data_model
 # ---------------------------------------------------------------------------
 
+
 async def _subtool_analyze_indexes(
     db_name: str,
     instance_id: str,
@@ -78,7 +90,11 @@ async def _subtool_analyze_indexes(
         )
         rows = result["rows"]
         if schema_filter:
-            rows = [r for r in rows if str(r.get("schema_name", "")).lower() == schema_filter.lower()]
+            rows = [
+                r
+                for r in rows
+                if str(r.get("schema_name", "")).lower() == schema_filter.lower()
+            ]
         missing_optimizer_count = len(rows)
         if rows:
             sev = "high" if missing_optimizer_count >= 5 else "medium"
@@ -125,7 +141,11 @@ async def _subtool_analyze_indexes(
         )
         rows = result["rows"]
         if schema_filter:
-            rows = [r for r in rows if str(r.get("parent_schema", "")).lower() == schema_filter.lower()]
+            rows = [
+                r
+                for r in rows
+                if str(r.get("parent_schema", "")).lower() == schema_filter.lower()
+            ]
         missing_fk_count = len(rows)
         if rows:
             findings.append(
@@ -166,7 +186,11 @@ async def _subtool_analyze_indexes(
         )
         rows = result["rows"]
         if schema_filter:
-            rows = [r for r in rows if str(r.get("schema_name", "")).lower() == schema_filter.lower()]
+            rows = [
+                r
+                for r in rows
+                if str(r.get("schema_name", "")).lower() == schema_filter.lower()
+            ]
         redundant_count = len(rows)
         if rows:
             findings.append(
@@ -208,7 +232,11 @@ async def _subtool_analyze_indexes(
         )
         rows = result["rows"]
         if schema_filter:
-            rows = [r for r in rows if str(r.get("schema_name", "")).lower() == schema_filter.lower()]
+            rows = [
+                r
+                for r in rows
+                if str(r.get("schema_name", "")).lower() == schema_filter.lower()
+            ]
         unused_count = len(rows)
         if rows:
             findings.append(
@@ -279,7 +307,8 @@ async def _subtool_analyze_normalization(
         rows = result["rows"]
         if schema_filter:
             rows = [
-                r for r in rows
+                r
+                for r in rows
                 if str(r.get("child_schema", "")).lower() == schema_filter.lower()
                 or str(r.get("parent_schema", "")).lower() == schema_filter.lower()
             ]
@@ -363,7 +392,11 @@ async def _subtool_analyze_anomalies(
         )
         rows = result["rows"]
         if schema_filter:
-            rows = [r for r in rows if str(r.get("schema_name", "")).lower() == schema_filter.lower()]
+            rows = [
+                r
+                for r in rows
+                if str(r.get("schema_name", "")).lower() == schema_filter.lower()
+            ]
         update_anomaly_count = len(rows)
         if rows:
             findings.append(
@@ -413,7 +446,11 @@ async def _subtool_analyze_anomalies(
         )
         rows = result["rows"]
         if schema_filter:
-            rows = [r for r in rows if str(r.get("schema_name", "")).lower() == schema_filter.lower()]
+            rows = [
+                r
+                for r in rows
+                if str(r.get("schema_name", "")).lower() == schema_filter.lower()
+            ]
         delete_anomaly_count = len(rows)
         if rows:
             findings.append(
@@ -459,13 +496,20 @@ async def _subtool_analyze_anomalies(
                 extra={"request_id": request_id, "db": db_name},
             )
         # Re-use the existing heap_tables_query available from query_catalog
-        from src.tools.query_catalog import heap_tables_query  # local import to avoid circular at module init
+        from src.tools.query_catalog import (
+            heap_tables_query,
+        )  # local import to avoid circular at module init
+
         result = connection_manager.execute_catalog_query(
             instance_id, db_name, heap_tables_query(), 200
         )
         rows = result["rows"]
         if schema_filter:
-            rows = [r for r in rows if str(r.get("schema_name", "")).lower() == schema_filter.lower()]
+            rows = [
+                r
+                for r in rows
+                if str(r.get("schema_name", "")).lower() == schema_filter.lower()
+            ]
         insert_anomaly_count = len(rows)
         if rows:
             findings.append(
@@ -537,7 +581,8 @@ async def _subtool_analyze_datatype_consistency(
         rows = result["rows"]
         if schema_filter:
             rows = [
-                r for r in rows
+                r
+                for r in rows
                 if str(r.get("child_schema", "")).lower() == schema_filter.lower()
                 or str(r.get("parent_schema", "")).lower() == schema_filter.lower()
             ]
@@ -547,10 +592,13 @@ async def _subtool_analyze_datatype_consistency(
             r for r in rows if r.get("child_type") != r.get("parent_type")
         ]
         length_mismatches = [
-            r for r in rows
+            r
+            for r in rows
             if r.get("child_type") == r.get("parent_type")
-            and (r.get("child_max_length") != r.get("parent_max_length")
-                 or r.get("child_precision") != r.get("parent_precision"))
+            and (
+                r.get("child_max_length") != r.get("parent_max_length")
+                or r.get("child_precision") != r.get("parent_precision")
+            )
         ]
         mismatch_count = len(rows)
 
@@ -597,9 +645,9 @@ async def _subtool_analyze_datatype_consistency(
                         {
                             "fk": r.get("fk_name"),
                             "child": f"{r.get('child_schema')}.{r.get('child_table')}.{r.get('child_column')} "
-                                     f"({r.get('child_type')} len={r.get('child_max_length')} prec={r.get('child_precision')})",
+                            f"({r.get('child_type')} len={r.get('child_max_length')} prec={r.get('child_precision')})",
                             "parent": f"{r.get('parent_schema')}.{r.get('parent_table')}.{r.get('parent_column')} "
-                                      f"({r.get('parent_type')} len={r.get('parent_max_length')} prec={r.get('parent_precision')})",
+                            f"({r.get('parent_type')} len={r.get('parent_max_length')} prec={r.get('parent_precision')})",
                         }
                         for r in length_mismatches[:20]
                     ],
@@ -618,7 +666,9 @@ async def _subtool_analyze_datatype_consistency(
                 f"[{request_id}] Subtool: datatype consistency analysis failed: {exc}",
                 extra={"request_id": request_id},
             )
-        logger.warning(f"Transaction {request_id}: datatype consistency scan skipped: {exc}")
+        logger.warning(
+            f"Transaction {request_id}: datatype consistency scan skipped: {exc}"
+        )
 
     return {
         "findings": findings,
@@ -631,13 +681,17 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
     registered: list[str] = []
 
     instance_ids = state.connection_manager.list_enabled_instances()
-    number_by_instance = {instance_id: idx for idx, instance_id in enumerate(instance_ids, start=1)}
+    number_by_instance = {
+        instance_id: idx for idx, instance_id in enumerate(instance_ids, start=1)
+    }
 
     def _auth_enforced() -> bool:
         auth_cfg = getattr(state, "auth", None)
         if auth_cfg is None:
             return False
-        return bool(auth_cfg.azure_auth_enabled or auth_cfg.auth_mode == "azure_token_verifier")
+        return bool(
+            auth_cfg.azure_auth_enabled or auth_cfg.auth_mode == "azure_token_verifier"
+        )
 
     async def _resolve_actor_and_authorize(
         *,
@@ -679,7 +733,11 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         if required_privilege == "read" and privilege_level == "none":
             raise PermissionError("AUTH_FAILED: read privilege required")
 
-        resolved_actor = subject if actor in {"system", "unknown"} and isinstance(subject, str) and subject else actor
+        resolved_actor = (
+            subject
+            if actor in {"system", "unknown"} and isinstance(subject, str) and subject
+            else actor
+        )
 
         if ctx is not None:
             await ctx.debug(
@@ -747,9 +805,14 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             if ctx is not None:
                 await ctx.debug(
                     f"[{request_id}] Starting {tool} transaction for actor={actor}",
-                    extra={"request_id": request_id, "tool": tool, "actor": actor, "instance": instance}
+                    extra={
+                        "request_id": request_id,
+                        "tool": tool,
+                        "actor": actor,
+                        "instance": instance,
+                    },
                 )
-            
+
             actor, _auth_ctx = await _resolve_actor_and_authorize(
                 actor=actor,
                 tool=tool,
@@ -759,18 +822,18 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             state.session_manager.touch(actor, request_id)
             if ctx is not None:
                 await ctx.debug(f"[{request_id}] Session validated for {actor}")
-            
+
             state.rate_limiter.allow(actor)
             if ctx is not None:
                 await ctx.debug(f"[{request_id}] Rate limit check passed for {actor}")
-            
+
             state.write_guard.enforce(tool, sql)
             if ctx is not None:
                 await ctx.debug(f"[{request_id}] Write guard policy check passed")
-            
+
             result = state.connection_manager.execute_read(instance, sql, max_rows)
             rows = len(result)
-            
+
             if ctx is not None:
                 await ctx.info(
                     f"[{request_id}] {tool} transaction completed successfully",
@@ -781,24 +844,32 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         "actor": actor,
                         "decision": decision,
                         "rows_returned": rows,
-                        "latency_ms": int((time.time() - started) * 1000)
-                    }
+                        "latency_ms": int((time.time() - started) * 1000),
+                    },
                 )
-            
-            logger.info(f"Transaction {request_id}: {tool} on {instance} by {actor} - {rows} rows", extra={
-                "request_id": request_id,
-                "tool": tool,
+
+            logger.info(
+                f"Transaction {request_id}: {tool} on {instance} by {actor} - {rows} rows",
+                extra={
+                    "request_id": request_id,
+                    "tool": tool,
+                    "instance": instance,
+                    "actor": actor,
+                    "rows": rows,
+                },
+            )
+
+            return {
                 "instance": instance,
-                "actor": actor,
-                "rows": rows
-            })
-            
-            return {"instance": instance, "tool": tool, "row_count": rows, "rows": result}
+                "tool": tool,
+                "row_count": rows,
+                "rows": result,
+            }
         except PermissionError as exc:
             decision = "deny"
             state.denied_requests += 1
             error_code = str(exc)
-            
+
             if ctx is not None:
                 await ctx.warning(
                     f"[{request_id}] {tool} transaction denied for {actor}: {error_code}",
@@ -808,17 +879,20 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         "instance": instance,
                         "actor": actor,
                         "decision": decision,
-                        "error_code": error_code
-                    }
+                        "error_code": error_code,
+                    },
                 )
-            
-            logger.warning(f"Transaction {request_id} DENIED: {error_code}", extra={
-                "request_id": request_id,
-                "tool": tool,
-                "instance": instance,
-                "actor": actor,
-                "error": error_code
-            })
+
+            logger.warning(
+                f"Transaction {request_id} DENIED: {error_code}",
+                extra={
+                    "request_id": request_id,
+                    "tool": tool,
+                    "instance": instance,
+                    "actor": actor,
+                    "error": error_code,
+                },
+            )
             raise
         except Exception as exc:
             decision = "deny"
@@ -832,17 +906,20 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         "instance": instance,
                         "actor": actor,
                         "decision": decision,
-                        "error_code": error_code
-                    }
+                        "error_code": error_code,
+                    },
                 )
-            logger.error(f"Transaction {request_id} ERROR: {error_code}", extra={
-                "request_id": request_id,
-                "tool": tool,
-                "instance": instance,
-                "actor": actor,
-                "decision": decision,
-                "error": error_code
-            })
+            logger.error(
+                f"Transaction {request_id} ERROR: {error_code}",
+                extra={
+                    "request_id": request_id,
+                    "tool": tool,
+                    "instance": instance,
+                    "actor": actor,
+                    "decision": decision,
+                    "error": error_code,
+                },
+            )
             raise
         finally:
             latency_ms = int((time.time() - started) * 1000)
@@ -871,7 +948,13 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         if spec.toolname == "select":
 
             @mcp.tool(name=tool_name)
-            async def _select(sql: str, actor: str = "unknown", ctx: Context | None = None, _tool=tool_name, _instance=instance):
+            async def _select(
+                sql: str,
+                actor: str = "unknown",
+                ctx: Context | None = None,
+                _tool=tool_name,
+                _instance=instance,
+            ):
                 """Execute a read query against the bound SQL instance.
 
                 Inputs:
@@ -891,9 +974,14 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.debug(
                             f"[{request_id}] Executing select query on {_instance} for actor={actor}",
-                            extra={"request_id": request_id, "tool": _tool, "actor": actor, "instance": _instance}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "actor": actor,
+                                "instance": _instance,
+                            },
                         )
-                    
+
                     actor, _auth_ctx = await _resolve_actor_and_authorize(
                         actor=actor,
                         tool=_tool,
@@ -903,9 +991,11 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     state.session_manager.touch(actor, request_id)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, sql)
-                    result = state.connection_manager.execute_read(_instance, sql, state.policy.max_result_rows)
+                    result = state.connection_manager.execute_read(
+                        _instance, sql, state.policy.max_result_rows
+                    )
                     rows = len(result)
-                    
+
                     if ctx is not None:
                         await ctx.info(
                             f"[{request_id}] Select query executed successfully",
@@ -915,10 +1005,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 "instance": _instance,
                                 "actor": actor,
                                 "rows_returned": rows,
-                                "decision": decision
-                            }
+                                "decision": decision,
+                            },
                         )
-                    logger.info(f"Transaction {request_id}: {_tool} - {rows} rows returned")
+                    logger.info(
+                        f"Transaction {request_id}: {_tool} - {rows} rows returned"
+                    )
                     return {"instance": _instance, "rows": result, "row_count": rows}
                 except PermissionError as exc:
                     decision = "deny"
@@ -927,7 +1019,13 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.warning(
                             f"[{request_id}] Select query denied: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "instance": _instance, "actor": actor, "decision": decision}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "instance": _instance,
+                                "actor": actor,
+                                "decision": decision,
+                            },
                         )
                     logger.warning(f"Transaction {request_id} DENIED: {error_code}")
                     raise
@@ -937,7 +1035,14 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Select query failed: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "instance": _instance, "actor": actor, "decision": decision, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "instance": _instance,
+                                "actor": actor,
+                                "decision": decision,
+                                "error": error_code,
+                            },
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise
@@ -961,7 +1066,14 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         elif spec.toolname == "exec_proc":
 
             @mcp.tool(name=tool_name)
-            async def _exec_proc(proc_name: str, params: list[str | int | float | bool | None] | None = None, actor: str = "unknown", ctx: Context | None = None, _tool=tool_name, _instance=instance):
+            async def _exec_proc(
+                proc_name: str,
+                params: list[str | int | float | bool | None] | None = None,
+                actor: str = "unknown",
+                ctx: Context | None = None,
+                _tool=tool_name,
+                _instance=instance,
+            ):
                 """Execute an approved stored procedure on the bound instance.
 
                 Inputs:
@@ -982,9 +1094,15 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.debug(
                             f"[{request_id}] Executing stored procedure {proc_name} on {_instance} for actor={actor}",
-                            extra={"request_id": request_id, "tool": _tool, "actor": actor, "instance": _instance, "proc": proc_name}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "actor": actor,
+                                "instance": _instance,
+                                "proc": proc_name,
+                            },
                         )
-                    
+
                     actor, _auth_ctx = await _resolve_actor_and_authorize(
                         actor=actor,
                         tool=_tool,
@@ -994,9 +1112,13 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     state.session_manager.touch(actor, request_id)
                     state.rate_limiter.allow(actor)
                     state.write_guard.validate_procedure(_tool, proc_name)
-                    state.write_guard.enforce(_tool, "UPDATE __policy_probe__ SET x = 1")
-                    result = state.connection_manager.execute_proc(_instance, proc_name, params)
-                    
+                    state.write_guard.enforce(
+                        _tool, "UPDATE __policy_probe__ SET x = 1"
+                    )
+                    result = state.connection_manager.execute_proc(
+                        _instance, proc_name, params
+                    )
+
                     if ctx is not None:
                         await ctx.info(
                             f"[{request_id}] Stored procedure {proc_name} executed successfully",
@@ -1006,10 +1128,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 "instance": _instance,
                                 "actor": actor,
                                 "proc": proc_name,
-                                "decision": decision
-                            }
+                                "decision": decision,
+                            },
                         )
-                    logger.info(f"Transaction {request_id}: {_tool} - procedure {proc_name} executed")
+                    logger.info(
+                        f"Transaction {request_id}: {_tool} - procedure {proc_name} executed"
+                    )
                     return {"instance": _instance, **result}
                 except PermissionError as exc:
                     decision = "deny"
@@ -1018,7 +1142,14 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.warning(
                             f"[{request_id}] Stored procedure {proc_name} execution denied: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "instance": _instance, "actor": actor, "proc": proc_name, "decision": decision}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "instance": _instance,
+                                "actor": actor,
+                                "proc": proc_name,
+                                "decision": decision,
+                            },
                         )
                     logger.warning(f"Transaction {request_id} DENIED: {error_code}")
                     raise
@@ -1028,7 +1159,15 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Stored procedure {proc_name} failed: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "instance": _instance, "actor": actor, "proc": proc_name, "decision": decision, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "instance": _instance,
+                                "actor": actor,
+                                "proc": proc_name,
+                                "decision": decision,
+                                "error": error_code,
+                            },
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise
@@ -1052,7 +1191,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         elif spec.toolname == "latency_report":
 
             @mcp.tool(name=tool_name)
-            async def _latency_report(actor: str = "system", _tool=tool_name, _instance=instance):
+            async def _latency_report(
+                actor: str = "system", _tool=tool_name, _instance=instance
+            ):
                 """Return guidance for latency diagnostics on this instance.
 
                 Use diagnostics metrics endpoint for histogram/percentile analysis.
@@ -1067,7 +1208,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         elif spec.toolname == "block_report":
 
             @mcp.tool(name=tool_name)
-            async def _block_report(actor: str = "system", ctx: Context | None = None, _tool=tool_name, _instance=instance):
+            async def _block_report(
+                actor: str = "system",
+                ctx: Context | None = None,
+                _tool=tool_name,
+                _instance=instance,
+            ):
                 """Return blocking session chains and wait details for the bound instance.
 
                 Inputs:
@@ -1263,7 +1409,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 "Executes SQL in the specified database context. Fully qualified object names are supported for "
                 "cross-database reads. Use COMPACT for row payload only; FULL adds explain-plan summary when available."
             ),
-            "required_parameters": ["database_name", "request_datetime_utc", "sql_statement", "view_mode"],
+            "required_parameters": [
+                "database_name",
+                "request_datetime_utc",
+                "sql_statement",
+                "view_mode",
+            ],
             "optional_parameters": ["actor"],
             "output_fields": [
                 "instance_number",
@@ -1286,7 +1437,13 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 "tables missing primary keys. Returns prioritized findings and recommendations."
             ),
             "required_parameters": ["database_name"],
-            "optional_parameters": ["schema_name", "table_name", "include_indexes", "top_n", "actor"],
+            "optional_parameters": [
+                "schema_name",
+                "table_name",
+                "include_indexes",
+                "top_n",
+                "actor",
+            ],
             "output_fields": [
                 "instance_number",
                 "database_name",
@@ -1343,7 +1500,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 "both HTML and machine-readable widget data."
             ),
             "required_parameters": [],
-            "optional_parameters": ["database_name", "lookback_minutes", "include_locks", "actor"],
+            "optional_parameters": [
+                "database_name",
+                "lookback_minutes",
+                "include_locks",
+                "actor",
+            ],
             "output_fields": ["content_type", "html", "data"],
             "operational_behavior": "Collects bounded DMV data and formats a dashboard payload for MCP clients.",
         },
@@ -1381,8 +1543,10 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             _auth_ctx: dict[str, Any] | None = None
             try:
                 if ctx is not None:
-                    await ctx.debug(f"[{request_id}] Pinging instance {_instance_number} for actor={actor}")
-                
+                    await ctx.debug(
+                        f"[{request_id}] Pinging instance {_instance_number} for actor={actor}"
+                    )
+
                 actor, _auth_ctx = await _resolve_actor_and_authorize(
                     actor=actor,
                     tool=_tool,
@@ -1391,16 +1555,23 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 )
                 state.session_manager.touch(actor, request_id)
                 state.rate_limiter.allow(actor)
-                payload = state.connection_manager.fetch_single_row_in_database(_instance, "master", sql)
+                payload = state.connection_manager.fetch_single_row_in_database(
+                    _instance, "master", sql
+                )
                 row_count = 1 if payload else 0
-                
+
                 if ctx is not None:
                     await ctx.info(
                         f"[{request_id}] Instance {_instance_number} is accessible",
-                        extra={"request_id": request_id, "tool": _tool, "instance_number": _instance_number, "accessible": True}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "instance_number": _instance_number,
+                            "accessible": True,
+                        },
                     )
                 logger.info(f"Transaction {request_id}: {_tool} - instance accessible")
-                
+
                 return {
                     "accessible": True,
                     "instance_number": _instance_number,
@@ -1414,14 +1585,22 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 decision = "deny"
                 error_code = f"INSTANCE_UNREACHABLE: {exc}"
                 state.denied_requests += 1
-                
+
                 if ctx is not None:
                     await ctx.warning(
                         f"[{request_id}] Instance {_instance_number} is not accessible: {error_code}",
-                        extra={"request_id": request_id, "tool": _tool, "instance_number": _instance_number, "accessible": False, "error": error_code}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "instance_number": _instance_number,
+                            "accessible": False,
+                            "error": error_code,
+                        },
                     )
-                logger.warning(f"Transaction {request_id}: {_tool} - instance unreachable: {error_code}")
-                
+                logger.warning(
+                    f"Transaction {request_id}: {_tool} - instance unreachable: {error_code}"
+                )
+
                 return {
                     "accessible": False,
                     "instance_number": _instance_number,
@@ -1478,8 +1657,10 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             _auth_ctx: dict[str, Any] | None = None
             try:
                 if ctx is not None:
-                    await ctx.debug(f"[{request_id}] Listing tools for instance {_instance_number}")
-                
+                    await ctx.debug(
+                        f"[{request_id}] Listing tools for instance {_instance_number}"
+                    )
+
                 actor, _auth_ctx = await _resolve_actor_and_authorize(
                     actor=actor,
                     tool=_tool,
@@ -1488,13 +1669,23 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 )
                 state.session_manager.touch(actor, request_id)
                 state.rate_limiter.allow(actor)
-                info = state.connection_manager.fetch_single_row_in_database(_instance, "master", sql)
+                info = state.connection_manager.fetch_single_row_in_database(
+                    _instance, "master", sql
+                )
                 prefix = f"db_{_instance_number}_sql2019_"
-                matching = [name for name in state.registered_tools if name.startswith(prefix)]
+                matching = [
+                    name for name in state.registered_tools if name.startswith(prefix)
+                ]
                 tools = []
                 for name in matching:
                     suffix = name[len(prefix) :]
-                    meta = tool_metadata_by_suffix.get(suffix, {"description": "Registered MCP tool", "required_parameters": []})
+                    meta = tool_metadata_by_suffix.get(
+                        suffix,
+                        {
+                            "description": "Registered MCP tool",
+                            "required_parameters": [],
+                        },
+                    )
                     tools.append(
                         {
                             "name": name,
@@ -1502,18 +1693,27 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             "required_parameters": meta["required_parameters"],
                             "optional_parameters": meta.get("optional_parameters", []),
                             "output_fields": meta.get("output_fields", []),
-                            "operational_behavior": meta.get("operational_behavior", "Registered MCP tool"),
+                            "operational_behavior": meta.get(
+                                "operational_behavior", "Registered MCP tool"
+                            ),
                         }
                     )
                 row_count = len(tools)
-                
+
                 if ctx is not None:
                     await ctx.info(
                         f"[{request_id}] Listed {row_count} tools for instance {_instance_number}",
-                        extra={"request_id": request_id, "tool": _tool, "instance_number": _instance_number, "tool_count": row_count}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "instance_number": _instance_number,
+                            "tool_count": row_count,
+                        },
                     )
-                logger.info(f"Transaction {request_id}: {_tool} - {row_count} tools listed")
-                
+                logger.info(
+                    f"Transaction {request_id}: {_tool} - {row_count} tools listed"
+                )
+
                 return {
                     "instance_number": _instance_number,
                     "database_instance_name": info.get("instance_name"),
@@ -1525,14 +1725,19 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 decision = "deny"
                 error_code = f"SQL_EXECUTION_ERROR: {exc}"
                 state.denied_requests += 1
-                
+
                 if ctx is not None:
                     await ctx.error(
                         f"[{request_id}] Failed to list tools: {error_code}",
-                        extra={"request_id": request_id, "tool": _tool, "instance_number": _instance_number, "error": error_code}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "instance_number": _instance_number,
+                            "error": error_code,
+                        },
                     )
                 logger.error(f"Transaction {request_id} ERROR: {error_code}")
-                
+
                 raise RuntimeError(error_code) from exc
             finally:
                 latency_ms = int((time.time() - started) * 1000)
@@ -1584,9 +1789,14 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 if ctx is not None:
                     await ctx.debug(
                         f"[{request_id}] Listing {object_type} objects in {database_name}",
-                        extra={"request_id": request_id, "tool": _tool, "database": database_name, "object_type": object_type}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "object_type": object_type,
+                        },
                     )
-                
+
                 actor, _auth_ctx = await _resolve_actor_and_authorize(
                     actor=actor,
                     tool=_tool,
@@ -1595,9 +1805,11 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 )
                 state.session_manager.touch(actor, request_id)
                 state.rate_limiter.allow(actor)
-                rows = state.connection_manager.list_objects(_instance, database_name, object_type)
+                rows = state.connection_manager.list_objects(
+                    _instance, database_name, object_type
+                )
                 row_count = len(rows)
-                
+
                 if ctx is not None:
                     await ctx.info(
                         f"[{request_id}] Listed {row_count} {object_type} objects",
@@ -1607,11 +1819,13 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             "database": database_name,
                             "object_type": object_type,
                             "object_count": row_count,
-                            "decision": decision
-                        }
+                            "decision": decision,
+                        },
                     )
-                logger.info(f"Transaction {request_id}: {_tool} - {row_count} objects listed")
-                
+                logger.info(
+                    f"Transaction {request_id}: {_tool} - {row_count} objects listed"
+                )
+
                 return {
                     "instance_number": _instance_number,
                     "database_name": database_name,
@@ -1624,11 +1838,17 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 decision = "deny"
                 error_code = str(exc)
                 state.denied_requests += 1
-                
+
                 if ctx is not None:
                     await ctx.warning(
                         f"[{request_id}] Invalid parameters: {error_code}",
-                        extra={"request_id": request_id, "tool": _tool, "database": database_name, "object_type": object_type, "error": error_code}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "object_type": object_type,
+                            "error": error_code,
+                        },
                     )
                 logger.warning(f"Transaction {request_id} denied: {error_code}")
                 raise
@@ -1636,14 +1856,20 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 decision = "deny"
                 error_code = f"SQL_EXECUTION_ERROR: {exc}"
                 state.denied_requests += 1
-                
+
                 if ctx is not None:
                     await ctx.error(
                         f"[{request_id}] Object listing failed: {error_code}",
-                        extra={"request_id": request_id, "tool": _tool, "database": database_name, "object_type": object_type, "error": error_code}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "object_type": object_type,
+                            "error": error_code,
+                        },
                     )
                 logger.error(f"Transaction {request_id} ERROR: {error_code}")
-                
+
                 raise RuntimeError(error_code) from exc
             finally:
                 latency_ms = int((time.time() - started) * 1000)
@@ -1698,9 +1924,14 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 if ctx is not None:
                     await ctx.debug(
                         f"[{request_id}] Executing query in {database_name} (view_mode={view_mode})",
-                        extra={"request_id": request_id, "tool": _tool, "database": database_name, "view_mode": view_mode}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "view_mode": view_mode,
+                        },
                     )
-                
+
                 normalized = view_mode.strip().upper()
                 if normalized not in {"FULL", "COMPACT"}:
                     raise ValueError("INVALID_INPUT: view_mode must be FULL or COMPACT")
@@ -1736,7 +1967,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
                 if normalized == "FULL":
                     try:
-                        output["plan"] = state.connection_manager.explain_query(_instance, database_name, sql_statement)
+                        output["plan"] = state.connection_manager.explain_query(
+                            _instance, database_name, sql_statement
+                        )
                     except Exception as exc:
                         output["plan"] = {
                             "available": False,
@@ -1754,8 +1987,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             "database": database_name,
                             "rows_returned": rows,
                             "view_mode": normalized,
-                            "decision": decision
-                        }
+                            "decision": decision,
+                        },
                     )
                 logger.info(f"Transaction {request_id}: {_tool} - {rows} rows returned")
 
@@ -1764,11 +1997,16 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 decision = "deny"
                 error_code = str(exc)
                 state.denied_requests += 1
-                
+
                 if ctx is not None:
                     await ctx.warning(
                         f"[{request_id}] Invalid query parameters: {error_code}",
-                        extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "error": error_code,
+                        },
                     )
                 logger.warning(f"Transaction {request_id} denied: {error_code}")
                 raise
@@ -1776,11 +2014,16 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 decision = "deny"
                 error_code = str(exc)
                 state.denied_requests += 1
-                
+
                 if ctx is not None:
                     await ctx.warning(
                         f"[{request_id}] Query execution denied: {error_code}",
-                        extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "error": error_code,
+                        },
                     )
                 logger.warning(f"Transaction {request_id} DENIED: {error_code}")
                 raise
@@ -1788,14 +2031,19 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 decision = "deny"
                 error_code = f"SQL_EXECUTION_ERROR: {exc}"
                 state.denied_requests += 1
-                
+
                 if ctx is not None:
                     await ctx.error(
                         f"[{request_id}] Query execution failed: {error_code}",
-                        extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                        extra={
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "error": error_code,
+                        },
                     )
                 logger.error(f"Transaction {request_id} ERROR: {error_code}")
-                
+
                 raise RuntimeError(error_code) from exc
             finally:
                 latency_ms = int((time.time() - started) * 1000)
@@ -1844,9 +2092,13 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.debug(
                             f"[{request_id}] Analyzing table health in {database_name}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                            },
                         )
-                    
+
                     db_name = validate_database_name(database_name)
                     if schema_name is not None:
                         schema_name = validate_identifier(schema_name, "schema_name")
@@ -1864,7 +2116,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
 
-                    table_sizes = state.connection_manager.execute_catalog_query(_instance, db_name, table_size_query(size), size)
+                    table_sizes = state.connection_manager.execute_catalog_query(
+                        _instance, db_name, table_size_query(size), size
+                    )
                     fragmented = {"rows": []}
                     if include_indexes:
                         fragmented = state.connection_manager.execute_catalog_query(
@@ -1873,13 +2127,23 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             fragmented_indexes_query(size),
                             size,
                         )
-                    missing_pk = state.connection_manager.execute_catalog_query(_instance, db_name, missing_pk_query(), size)
+                    missing_pk = state.connection_manager.execute_catalog_query(
+                        _instance, db_name, missing_pk_query(), size
+                    )
 
                     filtered_sizes = table_sizes["rows"]
                     if schema_name:
-                        filtered_sizes = [r for r in filtered_sizes if str(r.get("schema_name")).lower() == schema_name.lower()]
+                        filtered_sizes = [
+                            r
+                            for r in filtered_sizes
+                            if str(r.get("schema_name")).lower() == schema_name.lower()
+                        ]
                     if table_name:
-                        filtered_sizes = [r for r in filtered_sizes if str(r.get("table_name")).lower() == table_name.lower()]
+                        filtered_sizes = [
+                            r
+                            for r in filtered_sizes
+                            if str(r.get("table_name")).lower() == table_name.lower()
+                        ]
 
                     findings: list[dict[str, Any]] = []
                     recommendations: list[dict[str, Any]] = []
@@ -1931,8 +2195,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             )
                         )
 
-                    rows = len(filtered_sizes) + len(fragmented["rows"]) + len(missing_pk["rows"])
-                    
+                    rows = (
+                        len(filtered_sizes)
+                        + len(fragmented["rows"])
+                        + len(missing_pk["rows"])
+                    )
+
                     if ctx is not None:
                         await ctx.info(
                             f"[{request_id}] Table health analysis completed - {len(findings)} findings",
@@ -1942,11 +2210,13 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 "database": database_name,
                                 "findings_count": len(findings),
                                 "tables_scanned": len(filtered_sizes),
-                                "decision": decision
-                            }
+                                "decision": decision,
+                            },
                         )
-                    logger.info(f"Transaction {request_id}: {_tool} - {len(findings)} findings identified")
-                    
+                    logger.info(
+                        f"Transaction {request_id}: {_tool} - {len(findings)} findings identified"
+                    )
+
                     return build_report_envelope(
                         instance_number=_instance_number,
                         database_name=db_name,
@@ -1967,7 +2237,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.warning(
                             f"[{request_id}] Validation error: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.warning(f"Transaction {request_id} denied: {error_code}")
                     raise
@@ -1978,7 +2253,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.warning(
                             f"[{request_id}] Analysis denied: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.warning(f"Transaction {request_id} DENIED: {error_code}")
                     raise
@@ -1989,7 +2269,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Analysis failed: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise RuntimeError(error_code) from exc
@@ -2012,7 +2297,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
             registered.append(analyze_tab_health_name)
 
-        analyze_db_data_model_name = f"db_{instance_number}_sql2019_analyze_db_data_model"
+        analyze_db_data_model_name = (
+            f"db_{instance_number}_sql2019_analyze_db_data_model"
+        )
         if is_tool_enabled(state.policy, instance_id, "analyze_db_data_model"):
 
             @mcp.tool(name=analyze_db_data_model_name)
@@ -2038,12 +2325,18 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.debug(
                             f"[{request_id}] Analyzing data model in {database_name}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                            },
                         )
-                    
+
                     db_name = validate_database_name(database_name)
                     if schema_filter is not None:
-                        schema_filter = validate_identifier(schema_filter, "schema_filter")
+                        schema_filter = validate_identifier(
+                            schema_filter, "schema_filter"
+                        )
                     edge_limit = validate_positive_int(max_edges, "max_edges", 1, 5000)
 
                     actor, _auth_ctx = await _resolve_actor_and_authorize(
@@ -2056,14 +2349,18 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
 
-                    graph_rows = state.connection_manager.execute_catalog_query(_instance, db_name, fk_graph_query(), edge_limit)
+                    graph_rows = state.connection_manager.execute_catalog_query(
+                        _instance, db_name, fk_graph_query(), edge_limit
+                    )
                     filtered_rows = graph_rows["rows"]
                     if schema_filter:
                         filtered_rows = [
                             row
                             for row in filtered_rows
-                            if str(row.get("parent_schema", "")).lower() == schema_filter.lower()
-                            or str(row.get("referenced_schema", "")).lower() == schema_filter.lower()
+                            if str(row.get("parent_schema", "")).lower()
+                            == schema_filter.lower()
+                            or str(row.get("referenced_schema", "")).lower()
+                            == schema_filter.lower()
                         ]
                     graph = build_fk_graph(filtered_rows)
 
@@ -2077,7 +2374,10 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 severity="high",
                                 title="Circular foreign-key dependencies detected",
                                 detail="Cyclic dependencies increase migration and delete/update complexity.",
-                                evidence=[{"table": t} for t in graph["circular_dependency_tables"]],
+                                evidence=[
+                                    {"table": t}
+                                    for t in graph["circular_dependency_tables"]
+                                ],
                             )
                         )
                         recommendations.append(
@@ -2112,20 +2412,44 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.debug(
                             f"[{request_id}] Running extended data model analysis (indexes, normalization, anomalies, datatypes)",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name},
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                            },
                         )
 
                     index_result = await _subtool_analyze_indexes(
-                        db_name, _instance, state.connection_manager, schema_filter, request_id, ctx
+                        db_name,
+                        _instance,
+                        state.connection_manager,
+                        schema_filter,
+                        request_id,
+                        ctx,
                     )
                     norm_result = await _subtool_analyze_normalization(
-                        db_name, _instance, state.connection_manager, schema_filter, request_id, ctx
+                        db_name,
+                        _instance,
+                        state.connection_manager,
+                        schema_filter,
+                        request_id,
+                        ctx,
                     )
                     anomaly_result = await _subtool_analyze_anomalies(
-                        db_name, _instance, state.connection_manager, schema_filter, request_id, ctx
+                        db_name,
+                        _instance,
+                        state.connection_manager,
+                        schema_filter,
+                        request_id,
+                        ctx,
                     )
                     datatype_result = await _subtool_analyze_datatype_consistency(
-                        db_name, _instance, state.connection_manager, schema_filter, request_id, ctx
+                        db_name,
+                        _instance,
+                        state.connection_manager,
+                        schema_filter,
+                        request_id,
+                        ctx,
                     )
 
                     findings.extend(index_result["findings"])
@@ -2162,7 +2486,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 "decision": decision,
                             },
                         )
-                    logger.info(f"Transaction {request_id}: {_tool} - {graph['edge_count']} edges, {len(findings)} findings")
+                    logger.info(
+                        f"Transaction {request_id}: {_tool} - {graph['edge_count']} edges, {len(findings)} findings"
+                    )
 
                     return build_report_envelope(
                         instance_number=_instance_number,
@@ -2172,20 +2498,38 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             "model_overview": {
                                 "node_count": graph["node_count"],
                                 "edge_count": graph["edge_count"],
-                                "circular_dependency_count": len(graph["circular_dependency_tables"]),
+                                "circular_dependency_count": len(
+                                    graph["circular_dependency_tables"]
+                                ),
                                 "edge_preview": graph["edges"][:20],
                             },
                             "integrity_findings": {
-                                "missing_optimizer_index_count": index_result["summary"]["missing_optimizer_count"],
-                                "missing_fk_index_count": index_result["summary"]["missing_fk_index_count"],
-                                "redundant_index_count": index_result["summary"]["redundant_count"],
-                                "unused_index_count": index_result["summary"]["unused_count"],
-                                "fk_datatype_mismatches": datatype_result["summary"]["fk_datatype_mismatches"],
+                                "missing_optimizer_index_count": index_result[
+                                    "summary"
+                                ]["missing_optimizer_count"],
+                                "missing_fk_index_count": index_result["summary"][
+                                    "missing_fk_index_count"
+                                ],
+                                "redundant_index_count": index_result["summary"][
+                                    "redundant_count"
+                                ],
+                                "unused_index_count": index_result["summary"][
+                                    "unused_count"
+                                ],
+                                "fk_datatype_mismatches": datatype_result["summary"][
+                                    "fk_datatype_mismatches"
+                                ],
                             },
                             "normalization_findings": {
-                                "transitive_dependency_tables": norm_result["summary"]["transitive_dependency_tables"],
-                                "update_anomaly_tables": anomaly_result["summary"]["update_anomaly_tables"],
-                                "soft_delete_no_audit_tables": anomaly_result["summary"]["soft_delete_no_audit_tables"],
+                                "transitive_dependency_tables": norm_result["summary"][
+                                    "transitive_dependency_tables"
+                                ],
+                                "update_anomaly_tables": anomaly_result["summary"][
+                                    "update_anomaly_tables"
+                                ],
+                                "soft_delete_no_audit_tables": anomaly_result[
+                                    "summary"
+                                ]["soft_delete_no_audit_tables"],
                                 "heap_tables": anomaly_result["summary"]["heap_tables"],
                             },
                         },
@@ -2199,7 +2543,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.warning(
                             f"[{request_id}] Validation error: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.warning(f"Transaction {request_id} denied: {error_code}")
                     raise
@@ -2210,7 +2559,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.warning(
                             f"[{request_id}] Analysis denied: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.warning(f"Transaction {request_id} DENIED: {error_code}")
                     raise
@@ -2221,7 +2575,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Analysis failed: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise RuntimeError(error_code) from exc
@@ -2269,9 +2628,13 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.debug(
                             f"[{request_id}] Analyzing security configuration in {database_name}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                            },
                         )
-                    
+
                     db_name = validate_database_name(database_name)
 
                     actor, _auth_ctx = await _resolve_actor_and_authorize(
@@ -2284,9 +2647,15 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
 
-                    orphan_users = state.connection_manager.execute_catalog_query(_instance, db_name, orphan_user_query(), 200)
-                    elevated_roles = state.connection_manager.execute_catalog_query(_instance, db_name, elevated_roles_query(), 500)
-                    backup_rows = state.connection_manager.execute_catalog_query(_instance, "master", backup_recency_query(), 200)
+                    orphan_users = state.connection_manager.execute_catalog_query(
+                        _instance, db_name, orphan_user_query(), 200
+                    )
+                    elevated_roles = state.connection_manager.execute_catalog_query(
+                        _instance, db_name, elevated_roles_query(), 500
+                    )
+                    backup_rows = state.connection_manager.execute_catalog_query(
+                        _instance, "master", backup_recency_query(), 200
+                    )
 
                     xp_cmdshell_enabled = False
                     xp_cmdshell_error = None
@@ -2298,7 +2667,10 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 "SELECT CAST(value_in_use AS INT) AS value_in_use FROM sys.configurations WHERE name = 'xp_cmdshell'",
                                 1,
                             )
-                            xp_cmdshell_enabled = bool(xp_rows["rows"] and int(xp_rows["rows"][0].get("value_in_use", 0)) == 1)
+                            xp_cmdshell_enabled = bool(
+                                xp_rows["rows"]
+                                and int(xp_rows["rows"][0].get("value_in_use", 0)) == 1
+                            )
                         except Exception as exc:
                             xp_cmdshell_error = str(exc)
 
@@ -2312,7 +2684,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 severity="medium",
                                 title="Orphan database users detected",
                                 detail="Users exist without matching server principals.",
-                                evidence=redact_sensitive_fields(orphan_users["rows"][:20]),
+                                evidence=redact_sensitive_fields(
+                                    orphan_users["rows"][:20]
+                                ),
                             )
                         )
                         recommendations.append(
@@ -2330,7 +2704,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 severity="high",
                                 title="Elevated database role memberships found",
                                 detail="High-privilege role assignments should be periodically reviewed.",
-                                evidence=redact_sensitive_fields(elevated_roles["rows"][:30]),
+                                evidence=redact_sensitive_fields(
+                                    elevated_roles["rows"][:30]
+                                ),
                             )
                         )
                         recommendations.append(
@@ -2370,8 +2746,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             )
                         )
 
-                    rows = len(orphan_users["rows"]) + len(elevated_roles["rows"]) + len(backup_rows["rows"])
-                    
+                    rows = (
+                        len(orphan_users["rows"])
+                        + len(elevated_roles["rows"])
+                        + len(backup_rows["rows"])
+                    )
+
                     if ctx is not None:
                         await ctx.info(
                             f"[{request_id}] Security analysis completed - {len(findings)} findings",
@@ -2382,11 +2762,13 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 "findings_count": len(findings),
                                 "orphan_users": len(orphan_users["rows"]),
                                 "elevated_roles": len(elevated_roles["rows"]),
-                                "decision": decision
-                            }
+                                "decision": decision,
+                            },
                         )
-                    logger.info(f"Transaction {request_id}: {_tool} - {len(findings)} security findings")
-                    
+                    logger.info(
+                        f"Transaction {request_id}: {_tool} - {len(findings)} security findings"
+                    )
+
                     return build_report_envelope(
                         instance_number=_instance_number,
                         database_name=db_name,
@@ -2398,7 +2780,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             },
                             "database_security": {
                                 "orphan_user_count": len(orphan_users["rows"]),
-                                "elevated_role_memberships": len(elevated_roles["rows"]),
+                                "elevated_role_memberships": len(
+                                    elevated_roles["rows"]
+                                ),
                             },
                             "audit_backup": {
                                 "backup_recency_rows": len(backup_rows["rows"]),
@@ -2415,7 +2799,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.warning(
                             f"[{request_id}] Validation error: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.warning(f"Transaction {request_id} denied: {error_code}")
                     raise
@@ -2426,7 +2815,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.warning(
                             f"[{request_id}] Analysis denied: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.warning(f"Transaction {request_id} DENIED: {error_code}")
                     raise
@@ -2437,7 +2831,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Analysis failed: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise RuntimeError(error_code) from exc
@@ -2486,9 +2885,13 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.debug(
                             f"[{request_id}] Generating sessions dashboard for {database_name}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                            },
                         )
-                    
+
                     db_name = validate_database_name(database_name)
                     validate_positive_int(lookback_minutes, "lookback_minutes", 1, 1440)
 
@@ -2502,16 +2905,28 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
 
-                    sessions = state.connection_manager.execute_catalog_query(_instance, db_name, active_sessions_query(200), 200)
+                    sessions = state.connection_manager.execute_catalog_query(
+                        _instance, db_name, active_sessions_query(200), 200
+                    )
                     lock_rows = {"rows": []}
                     tran_lock_rows = {"rows": []}
                     waiting_rows = {"rows": []}
                     blocking_chain_rows = {"rows": []}
                     if include_locks:
-                        lock_rows = state.connection_manager.execute_catalog_query(_instance, db_name, lock_chain_query(200), 200)
-                        tran_lock_rows = state.connection_manager.execute_catalog_query(_instance, db_name, tran_locks_query(200), 200)
-                        waiting_rows = state.connection_manager.execute_catalog_query(_instance, db_name, waiting_tasks_query(200), 200)
-                        blocking_chain_rows = state.connection_manager.execute_catalog_query(_instance, db_name, blocking_chain_query(200), 200)
+                        lock_rows = state.connection_manager.execute_catalog_query(
+                            _instance, db_name, lock_chain_query(200), 200
+                        )
+                        tran_lock_rows = state.connection_manager.execute_catalog_query(
+                            _instance, db_name, tran_locks_query(200), 200
+                        )
+                        waiting_rows = state.connection_manager.execute_catalog_query(
+                            _instance, db_name, waiting_tasks_query(200), 200
+                        )
+                        blocking_chain_rows = (
+                            state.connection_manager.execute_catalog_query(
+                                _instance, db_name, blocking_chain_query(200), 200
+                            )
+                        )
 
                     head_blockers: list[int] = []
                     for row in lock_rows["rows"]:
@@ -2525,8 +2940,14 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         if blocker_id > 0 and blocker_id not in head_blockers:
                             head_blockers.append(blocker_id)
 
-                    rows = len(sessions["rows"]) + len(lock_rows["rows"]) + len(tran_lock_rows["rows"]) + len(waiting_rows["rows"]) + len(blocking_chain_rows["rows"])
-                    
+                    rows = (
+                        len(sessions["rows"])
+                        + len(lock_rows["rows"])
+                        + len(tran_lock_rows["rows"])
+                        + len(waiting_rows["rows"])
+                        + len(blocking_chain_rows["rows"])
+                    )
+
                     full_payload = build_sessions_dashboard_full(
                         instance_number=_instance_number,
                         database_name=db_name,
@@ -2538,7 +2959,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         blocking_chains=blocking_chain_rows["rows"],
                     )
 
-                    dashboard_url = register_dashboard_page(request_id, full_payload["html"], ttl_seconds=900)
+                    dashboard_url = register_dashboard_page(
+                        request_id, full_payload["html"], ttl_seconds=900
+                    )
                     expires_at_utc = get_dashboard_page_expiry_utc(request_id)
 
                     if ctx is not None:
@@ -2552,7 +2975,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 "head_blockers": len(head_blockers),
                                 "decision": decision,
                                 "dashboard_url": dashboard_url,
-                            }
+                            },
                         )
                     logger.info(
                         f"Transaction {request_id}: {_tool} - {len(sessions['rows'])} sessions analyzed - URL: {dashboard_url}"
@@ -2562,7 +2985,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         "dashboard_url": dashboard_url,
                         "request_id": request_id,
                         "expires_at_utc": expires_at_utc,
-                        **full_payload,
+                        **{
+                            k: v
+                            for k, v in full_payload.items()
+                            if k
+                            not in {"dashboard_url", "request_id", "expires_at_utc"}
+                        },
                     }
                 except ValueError as exc:
                     decision = "deny"
@@ -2571,7 +2999,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.warning(
                             f"[{request_id}] Validation error: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.warning(f"Transaction {request_id} denied: {error_code}")
                     raise
@@ -2582,7 +3015,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.warning(
                             f"[{request_id}] Dashboard generation denied: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.warning(f"Transaction {request_id} DENIED: {error_code}")
                     raise
@@ -2593,7 +3031,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Dashboard generation failed: {error_code}",
-                            extra={"request_id": request_id, "tool": _tool, "database": database_name, "error": error_code}
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise RuntimeError(error_code) from exc

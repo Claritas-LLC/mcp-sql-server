@@ -16,7 +16,14 @@ def _normalize_severity(value: str) -> Severity:
     return normalized  # type: ignore[return-value]
 
 
-def build_finding(*, code: str, severity: str, title: str, detail: str, evidence: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def build_finding(
+    *,
+    code: str,
+    severity: str,
+    title: str,
+    detail: str,
+    evidence: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     return {
         "code": code,
         "severity": _normalize_severity(severity),
@@ -26,7 +33,9 @@ def build_finding(*, code: str, severity: str, title: str, detail: str, evidence
     }
 
 
-def build_recommendation(*, priority: str, action: str, rationale: str) -> dict[str, str]:
+def build_recommendation(
+    *, priority: str, action: str, rationale: str
+) -> dict[str, str]:
     return {
         "priority": _normalize_severity(priority),
         "action": action,

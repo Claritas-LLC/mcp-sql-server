@@ -50,7 +50,9 @@ def summarize_audit_events(audit_path: pathlib.Path) -> dict[str, Any]:
             by_tool[tool][decision if decision in by_tool[tool] else "unknown"] += 1
 
             by_category.setdefault(category, {"allow": 0, "deny": 0, "unknown": 0})
-            by_category[category][decision if decision in by_category[category] else "unknown"] += 1
+            by_category[category][
+                decision if decision in by_category[category] else "unknown"
+            ] += 1
 
             if decision == "deny":
                 deny_total += 1

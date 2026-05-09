@@ -29,7 +29,7 @@ def _api_get(url: str, token: str) -> dict | list:
             "User-Agent": "traceability-matrix-generator",
         },
     )
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=10) as resp:
         return __import__("json").loads(resp.read().decode("utf-8"))
 
 
@@ -48,14 +48,20 @@ def main() -> int:
         return 1
 
     if "/" not in repo or not repo.strip():
-        print(f"ERROR: GITHUB_REPOSITORY must be in format 'owner/repo', got: {repo}", file=sys.stderr)
+        print(
+            f"ERROR: GITHUB_REPOSITORY must be in format 'owner/repo', got: {repo}",
+            file=sys.stderr,
+        )
         return 1
 
     owner, name = repo.split("/", 1)
     owner = owner.strip()
     name = name.strip()
     if not owner or not name or "/" in owner or "/" in name:
-        print(f"ERROR: GITHUB_REPOSITORY must be in format 'owner/repo', got: {repo}", file=sys.stderr)
+        print(
+            f"ERROR: GITHUB_REPOSITORY must be in format 'owner/repo', got: {repo}",
+            file=sys.stderr,
+        )
         return 1
 
     try:
@@ -86,7 +92,10 @@ def main() -> int:
         print(f"ERROR: GitHub API request failed (HTTP {exc.code})", file=sys.stderr)
         return 1
     except urllib.error.URLError as exc:
-        print(f"ERROR: GitHub API request failed (network error: {exc.reason})", file=sys.stderr)
+        print(
+            f"ERROR: GitHub API request failed (network error: {exc.reason})",
+            file=sys.stderr,
+        )
         return 1
     except Exception as exc:
         print(f"ERROR: Failed to retrieve GitHub data: {exc}", file=sys.stderr)
@@ -108,7 +117,11 @@ def main() -> int:
         req_id_match = re.search(r"\[(REQ-[^\]]+)\]", title)
         req_id = req_id_match.group(1) if req_id_match else f"#{number}"
         prs_for_req = req_to_prs.get(number, [])
-        linked = ", ".join(f"#{n}" for n in sorted(set(prs_for_req))) if prs_for_req else "None"
+        linked = (
+            ", ".join(f"#{n}" for n in sorted(set(prs_for_req)))
+            if prs_for_req
+            else "None"
+        )
         rows.append(
             RequirementRow(
                 req_id=req_id,

@@ -19,9 +19,13 @@ def validate_identifier(name: str, field_name: str) -> str:
     return value
 
 
-def validate_positive_int(value: int, field_name: str, minimum: int, maximum: int) -> int:
+def validate_positive_int(
+    value: int, field_name: str, minimum: int, maximum: int
+) -> int:
     if value < minimum or value > maximum:
-        raise ValueError(f"INVALID_INPUT: {field_name} must be between {minimum} and {maximum}")
+        raise ValueError(
+            f"INVALID_INPUT: {field_name} must be between {minimum} and {maximum}"
+        )
     return value
 
 

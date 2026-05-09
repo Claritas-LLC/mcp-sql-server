@@ -2,6 +2,7 @@
 Integration tests for exec_proc tool with allowlist validation.
 Tests the full flow of procedure execution with allowlist checks.
 """
+
 import pytest
 from src.models import RuntimePolicy
 from src.middleware.write_guard import WriteGuard
@@ -16,7 +17,10 @@ class TestExecProcAllowlistValidation:
         return RuntimePolicy(
             allowed_tools={
                 "db_primary_sql2019_exec_proc": {
-                    "allowed_procedures": ["dbo.usp_RunApprovedMaintenance", "dbo.usp_RefreshMaterializedView"]
+                    "allowed_procedures": [
+                        "dbo.usp_RunApprovedMaintenance",
+                        "dbo.usp_RefreshMaterializedView",
+                    ]
                 }
             }
         )
@@ -25,11 +29,7 @@ class TestExecProcAllowlistValidation:
     def policy_empty_allowlist(self):
         """RuntimePolicy with empty allowlist (deny all)."""
         return RuntimePolicy(
-            allowed_tools={
-                "db_primary_sql2019_exec_proc": {
-                    "allowed_procedures": []
-                }
-            }
+            allowed_tools={"db_primary_sql2019_exec_proc": {"allowed_procedures": []}}
         )
 
     @pytest.fixture
@@ -41,13 +41,17 @@ class TestExecProcAllowlistValidation:
         """Allowed procedure should pass validation without raising."""
         guard = WriteGuard(policy_with_allowlist)
         # Should not raise
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance")
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance"
+        )
 
     def test_disallowed_procedure_validation_fails(self, policy_with_allowlist):
         """Disallowed procedure should fail validation."""
         guard = WriteGuard(policy_with_allowlist)
         with pytest.raises(PermissionError, match="not in the allowed procedures list"):
-            guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_Unauthorized")
+            guard.validate_procedure(
+                "db_primary_sql2019_exec_proc", "dbo.usp_Unauthorized"
+            )
 
     def test_empty_allowlist_denies_all_procedures(self, policy_empty_allowlist):
         """Empty allowlist should deny all procedure executions."""
@@ -58,23 +62,35 @@ class TestExecProcAllowlistValidation:
     def test_missing_tool_config_denies_procedure(self, policy_no_tool_config):
         """Missing tool config should deny procedure execution."""
         guard = WriteGuard(policy_no_tool_config)
-        with pytest.raises(PermissionError, match="Procedure execution not configured for tool"):
+        with pytest.raises(
+            PermissionError, match="Procedure execution not configured for tool"
+        ):
             guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_AnyProc")
 
     def test_case_insensitive_procedure_matching(self, policy_with_allowlist):
         """Procedure name matching should be case-insensitive."""
         guard = WriteGuard(policy_with_allowlist)
         # All case variations should pass
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance")
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "DBO.usp_RunApprovedMaintenance")
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.USP_RUNAPPROVEDMAINTENANCE")
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance"
+        )
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "DBO.usp_RunApprovedMaintenance"
+        )
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "dbo.USP_RUNAPPROVEDMAINTENANCE"
+        )
 
     def test_schema_qualified_and_unqualified_mixing(self, policy_with_allowlist):
         """Mixing schema-qualified and unqualified names should work."""
         guard = WriteGuard(policy_with_allowlist)
         # Allowlist has dbo.usp_RunApprovedMaintenance
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance")
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "usp_RunApprovedMaintenance")
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance"
+        )
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "usp_RunApprovedMaintenance"
+        )
 
     def test_validation_error_message_clarity(self, policy_with_allowlist):
         """Error message should clearly indicate what was denied."""
@@ -89,15 +105,21 @@ class TestExecProcAllowlistValidation:
     def test_multiple_procedures_in_allowlist(self, policy_with_allowlist):
         """All procedures in allowlist should be allowed."""
         guard = WriteGuard(policy_with_allowlist)
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance")
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_RefreshMaterializedView")
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance"
+        )
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "dbo.usp_RefreshMaterializedView"
+        )
 
     def test_partial_name_match_rejected(self, policy_with_allowlist):
         """Partial name matches should be rejected."""
         guard = WriteGuard(policy_with_allowlist)
         with pytest.raises(PermissionError):
             # Similar but not exact
-            guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance_v2")
+            guard.validate_procedure(
+                "db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance_v2"
+            )
 
     def test_allowlist_isolation_between_tools(self):
         """Different tools should have isolated allowlists."""
@@ -121,10 +143,14 @@ class TestExecProcAllowlistValidation:
         """Validation errors should be traceable for audit purposes."""
         guard = WriteGuard(policy_with_allowlist)
         # Allowed procedure validation succeeds silently
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance")
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance"
+        )
         # Disallowed procedure raises traceable error
         with pytest.raises(PermissionError) as exc_info:
-            guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_Forbidden")
+            guard.validate_procedure(
+                "db_primary_sql2019_exec_proc", "dbo.usp_Forbidden"
+            )
         # Error should be informative for audit logs
         error_msg = str(exc_info.value)
         assert "Forbidden" in error_msg

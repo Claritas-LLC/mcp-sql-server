@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_groups(raw: Any) -> set[str]:
@@ -9,10 +13,10 @@ def _normalize_groups(raw: Any) -> set[str]:
     if isinstance(raw, str):
         values = [item.strip() for item in raw.split(",") if item.strip()]
         return {item.lower() for item in values}
-    if isinstance(raw, list):
+    if isinstance(raw, (list, set, tuple)):
         values = [str(item).strip() for item in raw if str(item).strip()]
         return {item.lower() for item in values}
-    return set()
+    raise TypeError(f"Expected str, list, set, or tuple; got {type(raw).__name__}")
 
 
 def resolve_group_privilege(

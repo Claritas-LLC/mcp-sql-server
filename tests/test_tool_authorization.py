@@ -26,7 +26,9 @@ class _FakeConnectionManager:
     def list_enabled_instances(self) -> list[str]:
         return ["primary"]
 
-    def execute_read(self, instance: str, sql: str, max_rows: int) -> list[dict[str, Any]]:
+    def execute_read(
+        self, instance: str, sql: str, max_rows: int
+    ) -> list[dict[str, Any]]:
         return [{"instance": instance, "sql": sql, "max_rows": max_rows}]
 
     def execute_proc(
@@ -90,7 +92,9 @@ def test_select_denies_when_token_missing(monkeypatch) -> None:
     mcp, state = _register_tools(_auth_config())
     monkeypatch.setattr("src.tools.sql_tools.get_access_token", lambda: None)
 
-    with pytest.raises(PermissionError, match="AUTH_FAILED: missing or invalid bearer token"):
+    with pytest.raises(
+        PermissionError, match="AUTH_FAILED: missing or invalid bearer token"
+    ):
         asyncio.run(
             mcp.tools["db_primary_sql2019_select"](
                 sql="SELECT 1 AS value",
@@ -110,7 +114,7 @@ def test_select_allows_read_group_and_uses_subject_as_actor(monkeypatch) -> None
     )
 
     result = asyncio.run(
-            mcp.tools["db_primary_sql2019_select"](
+        mcp.tools["db_primary_sql2019_select"](
             sql="SELECT 1 AS value",
             actor="system",
             ctx=None,
@@ -150,7 +154,7 @@ def test_exec_proc_allows_write_group(monkeypatch) -> None:
     )
 
     result = asyncio.run(
-            mcp.tools["db_primary_sql2019_exec_proc"](
+        mcp.tools["db_primary_sql2019_exec_proc"](
             proc_name="dbo.usp_DoThing",
             params=[1],
             actor="system",

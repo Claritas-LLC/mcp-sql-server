@@ -7,7 +7,11 @@ from fastmcp import FastMCP
 from fastmcp.utilities.logging import get_logger
 
 from src.tools.input_validation import validate_database_name, validate_positive_int
-from src.tools.query_catalog import active_sessions_query, blocking_chain_query, lock_chain_query
+from src.tools.query_catalog import (
+    active_sessions_query,
+    blocking_chain_query,
+    lock_chain_query,
+)
 
 logger = get_logger(__name__)
 
@@ -23,18 +27,37 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
         from prefab_ui.actions import ShowToast
         from prefab_ui.actions.mcp import CallTool
         from prefab_ui.app import PrefabApp
-        from prefab_ui.components import Button, Column, Form, Heading, Input, Row, Select, SelectOption, Separator, Text, ForEach
+        from prefab_ui.components import (
+            Button,
+            Column,
+            Form,
+            Heading,
+            Input,
+            Row,
+            Select,
+            SelectOption,
+            Separator,
+            Text,
+            ForEach,
+        )
     except Exception as exc:  # pragma: no cover - environment-specific optional deps
-        logger.warning("Interactive app dependencies unavailable; sessions app provider disabled: %s", exc)
+        logger.warning(
+            "Interactive app dependencies unavailable; sessions app provider disabled: %s",
+            exc,
+        )
         return False
 
     app = FastMCPApp("SQL Sessions Dashboard")
 
     instance_ids = state.connection_manager.list_enabled_instances()
-    number_by_instance = {idx: instance_id for idx, instance_id in enumerate(instance_ids, start=1)}
+    number_by_instance = {
+        idx: instance_id for idx, instance_id in enumerate(instance_ids, start=1)
+    }
     available_instance_numbers = sorted(number_by_instance)
 
-    @app.tool(description="Fetch sessions and lock-chain diagnostics for interactive dashboard")
+    @app.tool(
+        description="Fetch sessions and lock-chain diagnostics for interactive dashboard"
+    )
     def fetch_sessions_dashboard_data(
         instance_number: int = 1,
         database_name: str = "master",
@@ -47,7 +70,9 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
         validate_positive_int(lookback_minutes, "lookback_minutes", 1, 1440)
 
         if instance_number not in number_by_instance:
-            raise ValueError(f"INVALID_INPUT: instance_number must be one of {available_instance_numbers}")
+            raise ValueError(
+                f"INVALID_INPUT: instance_number must be one of {available_instance_numbers}"
+            )
 
         instance_id = number_by_instance[instance_number]
 
@@ -78,16 +103,23 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
             )
 
         head_blockers: list[int] = []
+        # Compute true head blockers: sessions that block others but are not themselves blocked
+        blocking_ids = set()
+        blocked_ids = set()
         for row in lock_rows["rows"]:
-            blocker = row.get("blocking_session_id")
-            if blocker is None:
-                continue
-            try:
-                blocker_id = int(blocker)
-            except (TypeError, ValueError):
-                continue
-            if blocker_id > 0 and blocker_id not in head_blockers:
-                head_blockers.append(blocker_id)
+            session_id = row.get("session_id")
+            blocking_session_id = row.get("blocking_session_id")
+            if session_id is not None:
+                try:
+                    blocked_ids.add(int(session_id))
+                except (TypeError, ValueError):
+                    pass
+            if blocking_session_id is not None and blocking_session_id > 0:
+                try:
+                    blocking_ids.add(int(blocking_session_id))
+                except (TypeError, ValueError):
+                    pass
+        head_blockers = sorted(blocking_ids - blocked_ids)
 
         return {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -131,8 +163,18 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
                     with Select(name="instance_number", label="Instance Number"):
                         for n in available_instance_numbers:
                             SelectOption(str(n), value=str(n))
-                    Input(name="database_name", label="Database", value="master", required=True)
-                    Input(name="lookback_minutes", label="Lookback Minutes", value="15", required=True)
+                    Input(
+                        name="database_name",
+                        label="Database",
+                        value="master",
+                        required=True,
+                    )
+                    Input(
+                        name="lookback_minutes",
+                        label="Lookback Minutes",
+                        value="15",
+                        required=True,
+                    )
                     with Select(name="include_locks", label="Include Locks"):
                         SelectOption("Yes", value="true")
                         SelectOption("No", value="false")
@@ -140,7 +182,9 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
 
             Separator()
             Heading("Summary", level=3)
-            Text("Instance: {dashboard.instance_number} | DB: {dashboard.database_name}")
+            Text(
+                "Instance: {dashboard.instance_number} | DB: {dashboard.database_name}"
+            )
             Text("Generated: {dashboard.generated_at_utc}")
             Text("Head blockers: {dashboard.head_blockers}")
 
@@ -177,7 +221,9 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
 
         initial_dashboard = {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-            "instance_number": available_instance_numbers[0] if available_instance_numbers else "",
+            "instance_number": available_instance_numbers[0]
+            if available_instance_numbers
+            else "",
             "database_name": "master",
             "lookback_minutes": 15,
             "active_sessions": [],

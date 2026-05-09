@@ -14,7 +14,7 @@
   - Confirm `azure_auth_enabled` matches intended deployment state.
   - Confirm configured read/write group IDs still map to the correct operator groups.
   - Verify required scopes still match the app registration exposure.
-- **Review procedure allowlist** (`allowed_tools.{tool_name}.allowed_procedures` in runtime-policy.yaml):
+- **Review procedure allowlist** (`allowed_tools.{tool_name}.allowed_procedures` in config/runtime-policy.yaml):
   - Audit each approved procedure for unexpected DML/DDL operations.
   - Remove procedures no longer required by operational workflows.
   - Document business justification for each approved procedure in a separate registry.

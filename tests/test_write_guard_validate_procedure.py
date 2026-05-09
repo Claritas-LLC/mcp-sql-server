@@ -2,6 +2,7 @@
 Unit tests for WriteGuard.validate_procedure method.
 Tests procedure allowlist validation with various inputs.
 """
+
 import pytest
 from src.middleware.write_guard import WriteGuard
 from src.models import RuntimePolicy
@@ -15,13 +16,18 @@ class TestWriteGuardValidateProcedure:
         policy = RuntimePolicy(
             allowed_tools={
                 "db_primary_sql2019_exec_proc": {
-                    "allowed_procedures": ["dbo.usp_RunApprovedMaintenance", "dbo.usp_RefreshView"]
+                    "allowed_procedures": [
+                        "dbo.usp_RunApprovedMaintenance",
+                        "dbo.usp_RefreshView",
+                    ]
                 }
             }
         )
         guard = WriteGuard(policy)
         # Should not raise
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance")
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "dbo.usp_RunApprovedMaintenance"
+        )
 
     def test_disallowed_procedure_raises_permission_error(self):
         """Procedures not in allowlist should raise PermissionError."""
@@ -34,16 +40,14 @@ class TestWriteGuardValidateProcedure:
         )
         guard = WriteGuard(policy)
         with pytest.raises(PermissionError, match="not in the allowed procedures list"):
-            guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_Unauthorized")
+            guard.validate_procedure(
+                "db_primary_sql2019_exec_proc", "dbo.usp_Unauthorized"
+            )
 
     def test_empty_allowlist_denies_all(self):
         """Empty procedure allowlist should deny all procedures."""
         policy = RuntimePolicy(
-            allowed_tools={
-                "db_primary_sql2019_exec_proc": {
-                    "allowed_procedures": []
-                }
-            }
+            allowed_tools={"db_primary_sql2019_exec_proc": {"allowed_procedures": []}}
         )
         guard = WriteGuard(policy)
         with pytest.raises(PermissionError, match="not in the allowed procedures list"):
@@ -53,7 +57,9 @@ class TestWriteGuardValidateProcedure:
         """Tool not in allowed_tools should deny execution."""
         policy = RuntimePolicy(allowed_tools={})
         guard = WriteGuard(policy)
-        with pytest.raises(PermissionError, match="Procedure execution not configured for tool"):
+        with pytest.raises(
+            PermissionError, match="Procedure execution not configured for tool"
+        ):
             guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_AnyProc")
 
     def test_case_insensitive_matching(self):
@@ -67,9 +73,15 @@ class TestWriteGuardValidateProcedure:
         )
         guard = WriteGuard(policy)
         # All these should succeed (case variations)
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.USP_RUNAPPROVEDMAINTENANCE")
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "DBO.usp_RunApprovedMaintenance")
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_runapprovedmaintenance")
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "dbo.USP_RUNAPPROVEDMAINTENANCE"
+        )
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "DBO.usp_RunApprovedMaintenance"
+        )
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "dbo.usp_runapprovedmaintenance"
+        )
 
     def test_schema_qualified_names_normalized(self):
         """Schema-qualified names (e.g., dbo.usp_X) should be handled correctly."""
@@ -103,9 +115,7 @@ class TestWriteGuardValidateProcedure:
         """Schema-qualified procedure name should match unqualified allowlist entry."""
         policy = RuntimePolicy(
             allowed_tools={
-                "db_primary_sql2019_exec_proc": {
-                    "allowed_procedures": ["usp_Approved"]
-                }
+                "db_primary_sql2019_exec_proc": {"allowed_procedures": ["usp_Approved"]}
             }
         )
         guard = WriteGuard(policy)
@@ -123,9 +133,13 @@ class TestWriteGuardValidateProcedure:
         )
         guard = WriteGuard(policy)
         guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_Proc1")
-        guard.validate_procedure("db_primary_sql2019_exec_proc", "custom_schema.usp_Proc2")
+        guard.validate_procedure(
+            "db_primary_sql2019_exec_proc", "custom_schema.usp_Proc2"
+        )
         with pytest.raises(PermissionError):
-            guard.validate_procedure("db_primary_sql2019_exec_proc", "other_schema.usp_Proc3")
+            guard.validate_procedure(
+                "db_primary_sql2019_exec_proc", "other_schema.usp_Proc3"
+            )
 
     def test_similar_procedure_names_not_confused(self):
         """Similar procedure names should not be confused."""
@@ -139,7 +153,9 @@ class TestWriteGuardValidateProcedure:
         guard = WriteGuard(policy)
         guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_Approved")
         with pytest.raises(PermissionError):
-            guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_ApprovedX")
+            guard.validate_procedure(
+                "db_primary_sql2019_exec_proc", "dbo.usp_ApprovedX"
+            )
         with pytest.raises(PermissionError):
             guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_Approve")
 
@@ -157,11 +173,17 @@ class TestWriteGuardValidateProcedure:
         )
         guard = WriteGuard(policy)
         guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_PrimaryProc")
-        guard.validate_procedure("db_secondary_sql2019_exec_proc", "dbo.usp_SecondaryProc")
+        guard.validate_procedure(
+            "db_secondary_sql2019_exec_proc", "dbo.usp_SecondaryProc"
+        )
         with pytest.raises(PermissionError):
-            guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_SecondaryProc")
+            guard.validate_procedure(
+                "db_primary_sql2019_exec_proc", "dbo.usp_SecondaryProc"
+            )
         with pytest.raises(PermissionError):
-            guard.validate_procedure("db_secondary_sql2019_exec_proc", "dbo.usp_PrimaryProc")
+            guard.validate_procedure(
+                "db_secondary_sql2019_exec_proc", "dbo.usp_PrimaryProc"
+            )
 
     def test_error_message_includes_procedure_name(self):
         """Error message should include the procedure name for clarity."""
@@ -174,6 +196,8 @@ class TestWriteGuardValidateProcedure:
         )
         guard = WriteGuard(policy)
         with pytest.raises(PermissionError) as exc_info:
-            guard.validate_procedure("db_primary_sql2019_exec_proc", "dbo.usp_Unauthorized")
+            guard.validate_procedure(
+                "db_primary_sql2019_exec_proc", "dbo.usp_Unauthorized"
+            )
         assert "dbo.usp_Unauthorized" in str(exc_info.value)
         assert "db_primary_sql2019_exec_proc" in str(exc_info.value)

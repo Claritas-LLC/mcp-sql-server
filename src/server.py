@@ -50,7 +50,6 @@ class AppState:
     last_secret_refresh_utc: str = ""
 
 
-
 def build_fastapi_app() -> FastAPI:
     config_path = os.getenv("FASTMCP_CONFIG_PATH", "config/instances.yaml")
     policy_path = os.getenv("FASTMCP_POLICY_PATH", "config/runtime-policy.yaml")
@@ -59,11 +58,16 @@ def build_fastapi_app() -> FastAPI:
     rate_limit_backend = os.getenv("FASTMCP_RATE_LIMIT_BACKEND", "local")
     redis_url = os.getenv("FASTMCP_REDIS_URL")
     redis_namespace = os.getenv("FASTMCP_REDIS_NAMESPACE", "mcp:ratelimit")
-    has_tool_flag_env = bool(os.getenv("FASTMCP_TOOL_ENABLE_FLAGS_JSON") or os.getenv("FASTMCP_INSTANCE_TOOL_ENABLE_FLAGS_JSON"))
+    has_tool_flag_env = bool(
+        os.getenv("FASTMCP_TOOL_ENABLE_FLAGS_JSON")
+        or os.getenv("FASTMCP_INSTANCE_TOOL_ENABLE_FLAGS_JSON")
+    )
 
     cfg = load_config(config_path, policy_path, rate_limit_path)
     max_connections = cfg.auth.pool_max_connections
-    max_keepalive_connections = min(cfg.auth.pool_max_keepalive_connections, max_connections)
+    max_keepalive_connections = min(
+        cfg.auth.pool_max_keepalive_connections, max_connections
+    )
     shared_http_client = httpx.AsyncClient(
         timeout=cfg.auth.pool_timeout_seconds,
         limits=httpx.Limits(
@@ -117,7 +121,9 @@ def build_fastapi_app() -> FastAPI:
     # compatible across versions without triggering type-checker errors on
     # attributes that may not exist in the installed version's stubs.
     mcp_app: Any
-    _http_app_factory = getattr(mcp, "http_app", None) or getattr(mcp, "streamable_http_app", None)
+    _http_app_factory = getattr(mcp, "http_app", None) or getattr(
+        mcp, "streamable_http_app", None
+    )
     if _http_app_factory is not None:
         mcp_app = _http_app_factory(path="/")
     else:
@@ -135,10 +141,24 @@ def build_fastapi_app() -> FastAPI:
             else:
                 yield
         finally:
-            state.connection_manager.close_all_pools()
-            await shared_http_client.aclose()
+            # Ensure both cleanup actions run even if one raises
+            exc_from_pools = None
+            try:
+                state.connection_manager.close_all_pools()
+            except Exception as e:
+                exc_from_pools = e
+            try:
+                await shared_http_client.aclose()
+            except Exception:
+                if exc_from_pools is None:
+                    raise
+                # If both failed, log the http client exception but raise pools exception
+            if exc_from_pools is not None:
+                raise exc_from_pools
 
-    app = FastAPI(title="FastMCP SQL Server 2019", version=state.version, lifespan=app_lifespan)
+    app = FastAPI(
+        title="FastMCP SQL Server 2019", version=state.version, lifespan=app_lifespan
+    )
     app.state.runtime = state
     app.state.registered_tools = registered_tools
     app.include_router(build_diagnostics_router(state), prefix="/diagnostics")

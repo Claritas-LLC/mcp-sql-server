@@ -42,13 +42,17 @@ def test_apply_policy_env_overrides_no_values_returns_original() -> None:
 def test_apply_policy_env_overrides_invalid_json_raises() -> None:
     policy = _base_policy()
     with pytest.raises(ValueError, match="FASTMCP_TOOL_ENABLE_FLAGS_JSON"):
-        apply_policy_env_overrides(policy, {"FASTMCP_TOOL_ENABLE_FLAGS_JSON": "{bad-json"})
+        apply_policy_env_overrides(
+            policy, {"FASTMCP_TOOL_ENABLE_FLAGS_JSON": "{bad-json"}
+        )
 
 
 def test_apply_policy_env_overrides_invalid_structure_raises() -> None:
     policy = _base_policy()
     with pytest.raises(ValueError, match="string keys to boolean values"):
-        apply_policy_env_overrides(policy, {"FASTMCP_TOOL_ENABLE_FLAGS_JSON": '{"x": "yes"}'})
+        apply_policy_env_overrides(
+            policy, {"FASTMCP_TOOL_ENABLE_FLAGS_JSON": '{"x": "yes"}'}
+        )
 
 
 def test_apply_auth_env_overrides_defaults_unchanged() -> None:

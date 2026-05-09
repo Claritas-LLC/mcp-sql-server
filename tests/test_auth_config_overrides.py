@@ -66,4 +66,6 @@ def test_instance_pool_env_overrides_apply_to_all_instances() -> None:
 
 def test_instance_pool_env_override_invalid_int_raises() -> None:
     with pytest.raises(ValueError, match="FASTMCP_SQL_POOL_MAX"):
-        apply_instance_env_overrides([_base_instance()], {"FASTMCP_SQL_POOL_MAX": "bad"})
+        apply_instance_env_overrides(
+            [_base_instance()], {"FASTMCP_SQL_POOL_MAX": "bad"}
+        )

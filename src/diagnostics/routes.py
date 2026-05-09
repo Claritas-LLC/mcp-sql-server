@@ -13,8 +13,12 @@ from starlette.responses import Response
 from src.diagnostics.usage_summary import summarize_audit_events
 from src.tools.dashboard_page_store import get_dashboard_page
 
-REQUEST_COUNT = Counter("mcp_requests_total", "Total MCP tool calls", ["tool", "instance", "decision"])
-REQUEST_LATENCY = Histogram("mcp_query_latency_ms", "MCP query latency in ms", ["tool", "instance"])
+REQUEST_COUNT = Counter(
+    "mcp_requests_total", "Total MCP tool calls", ["tool", "instance", "decision"]
+)
+REQUEST_LATENCY = Histogram(
+    "mcp_query_latency_ms", "MCP query latency in ms", ["tool", "instance"]
+)
 
 
 def build_diagnostics_router(state: Any) -> APIRouter:
@@ -50,7 +54,11 @@ def build_diagnostics_router(state: Any) -> APIRouter:
         policy_path = pathlib.Path(state.policy_path)
         raw = policy_path.read_bytes() if policy_path.exists() else b""
         registered_tools = list(getattr(state, "registered_tools", []))
-        advanced_tools = [name for name in registered_tools if "_analyze_" in name or name.endswith("_dashboard")]
+        advanced_tools = [
+            name
+            for name in registered_tools
+            if "_analyze_" in name or name.endswith("_dashboard")
+        ]
         auth_cfg = getattr(state, "auth", None)
         auth_summary = {
             "auth_mode": getattr(auth_cfg, "auth_mode", "disabled"),
@@ -58,7 +66,9 @@ def build_diagnostics_router(state: Any) -> APIRouter:
             "azure_group_authorization_enabled": bool(
                 getattr(auth_cfg, "azure_group_authorization_enabled", False)
             ),
-            "required_scopes": list(getattr(auth_cfg, "azure_required_scopes", []) or []),
+            "required_scopes": list(
+                getattr(auth_cfg, "azure_required_scopes", []) or []
+            ),
             "read_group_count": len(getattr(auth_cfg, "azure_read_groups", []) or []),
             "write_group_count": len(getattr(auth_cfg, "azure_write_groups", []) or []),
         }
@@ -102,7 +112,9 @@ def build_diagnostics_router(state: Any) -> APIRouter:
             raise HTTPException(status_code=400, detail="Invalid request_id format")
         html = get_dashboard_page(request_id)
         if html is None:
-            raise HTTPException(status_code=404, detail="dashboard_page_not_found_or_expired")
+            raise HTTPException(
+                status_code=404, detail="dashboard_page_not_found_or_expired"
+            )
         return Response(content=html, media_type="text/html")
 
     return router

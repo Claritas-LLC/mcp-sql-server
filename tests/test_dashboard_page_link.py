@@ -7,7 +7,11 @@ from fastapi.testclient import TestClient
 
 from src.diagnostics.routes import build_diagnostics_router
 import src.tools.dashboard_page_store as page_store
-from src.tools.dashboard_page_store import clear_dashboard_pages, get_dashboard_page, register_dashboard_page
+from src.tools.dashboard_page_store import (
+    clear_dashboard_pages,
+    get_dashboard_page,
+    register_dashboard_page,
+)
 
 
 def _fake_state() -> SimpleNamespace:
@@ -18,7 +22,9 @@ def test_register_dashboard_page_returns_dashboard_url(monkeypatch) -> None:
     clear_dashboard_pages()
     monkeypatch.setenv("FASTMCP_PUBLIC_BASE_URL", "https://mcp.example.com")
 
-    url = register_dashboard_page("req-123", "<html><body>ok</body></html>", ttl_seconds=900)
+    url = register_dashboard_page(
+        "req-123", "<html><body>ok</body></html>", ttl_seconds=900
+    )
 
     assert url == "https://mcp.example.com/diagnostics/dashboards/req-123"
 
@@ -26,7 +32,9 @@ def test_register_dashboard_page_returns_dashboard_url(monkeypatch) -> None:
 def test_register_dashboard_page_round_trip_content() -> None:
     clear_dashboard_pages()
 
-    _ = register_dashboard_page("req-abc", "<html><body>dashboard</body></html>", ttl_seconds=900)
+    _ = register_dashboard_page(
+        "req-abc", "<html><body>dashboard</body></html>", ttl_seconds=900
+    )
     stored = get_dashboard_page("req-abc")
 
     assert stored == "<html><body>dashboard</body></html>"
@@ -38,7 +46,9 @@ def test_diagnostics_dashboard_route_returns_200_and_404() -> None:
     app = FastAPI()
     app.include_router(build_diagnostics_router(_fake_state()), prefix="/diagnostics")
 
-    register_dashboard_page("req-route", "<html><body>route ok</body></html>", ttl_seconds=900)
+    register_dashboard_page(
+        "req-route", "<html><body>route ok</body></html>", ttl_seconds=900
+    )
 
     with TestClient(app) as client:
         ok_resp = client.get("/diagnostics/dashboards/req-route")
@@ -54,7 +64,9 @@ def test_diagnostics_dashboard_route_returns_200_and_404() -> None:
 def test_dashboard_page_expires_after_ttl(monkeypatch) -> None:
     clear_dashboard_pages()
 
-    _ = register_dashboard_page("req-expire", "<html><body>ttl</body></html>", ttl_seconds=1)
+    _ = register_dashboard_page(
+        "req-expire", "<html><body>ttl</body></html>", ttl_seconds=1
+    )
     assert get_dashboard_page("req-expire") is not None
 
     monkeypatch.setattr(page_store, "_now_epoch", lambda: 10_000_000_000.0)

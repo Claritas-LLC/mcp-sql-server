@@ -3,6 +3,7 @@
 TASK-017: App state transitions and CallTool result shape validation.
 TASK-018: Integration-level tests for dashboard payload structure and head_blockers derivation.
 """
+
 from __future__ import annotations
 
 from src.tools.dashboard_payloads import (
@@ -114,8 +115,18 @@ def test_build_sessions_dashboard_full_required_sections() -> None:
         head_blockers=[],
     )
     data = result["data"]
-    for key in ("generated_at_utc", "instance_number", "database_name",
-            "ui_meta", "sessions", "locks", "blockers", "blocking_chains", "head_blockers", "recommendations"):
+    for key in (
+        "generated_at_utc",
+        "instance_number",
+        "database_name",
+        "ui_meta",
+        "sessions",
+        "locks",
+        "blockers",
+        "blocking_chains",
+        "head_blockers",
+        "recommendations",
+    ):
         assert key in data, f"Missing section: {key}"
 
 
@@ -174,7 +185,9 @@ def test_build_sessions_dashboard_full_head_blocker_recommendation_generated() -
     )
     recs = result["data"]["recommendations"]
     high_recs = [r for r in recs if r["priority"] == "high"]
-    assert high_recs, "Expected at least one high-priority recommendation for head blockers"
+    assert high_recs, (
+        "Expected at least one high-priority recommendation for head blockers"
+    )
     assert "55" in high_recs[0]["action"] or "66" in high_recs[0]["action"]
 
 
@@ -214,7 +227,15 @@ def test_build_sessions_dashboard_full_no_issues_info_recommendation() -> None:
 
 def test_build_sessions_dashboard_full_tran_locks_in_locks_section() -> None:
     tran_locks = [
-        {"session_id": 33, "resource_type": "ROW", "request_mode": "X", "request_status": "GRANT", "request_owner_type": "TRANSACTION", "resource_database_id": 5, "resource_associated_entity_id": 12345},
+        {
+            "session_id": 33,
+            "resource_type": "ROW",
+            "request_mode": "X",
+            "request_status": "GRANT",
+            "request_owner_type": "TRANSACTION",
+            "resource_database_id": 5,
+            "resource_associated_entity_id": 12345,
+        },
     ]
     result = build_sessions_dashboard_full(
         instance_number=1,
@@ -229,7 +250,9 @@ def test_build_sessions_dashboard_full_tran_locks_in_locks_section() -> None:
 
 
 def test_build_sessions_dashboard_full_waiting_tasks_in_blockers_section() -> None:
-    waiting_tasks = [{"session_id": 7, "wait_duration_ms": 1000, "wait_type": "LCK_M_X"}]
+    waiting_tasks = [
+        {"session_id": 7, "wait_duration_ms": 1000, "wait_type": "LCK_M_X"}
+    ]
     result = build_sessions_dashboard_full(
         instance_number=1,
         database_name="testdb",
@@ -267,8 +290,18 @@ def test_build_sessions_dashboard_full_widgets_present() -> None:
 
 def test_dashboard_state_schema_required_fields_declared() -> None:
     required = DASHBOARD_STATE_SCHEMA.get("required", [])
-    for field in ("generated_at_utc", "instance_number", "database_name",
-                  "ui_meta", "sessions", "locks", "blockers", "blocking_chains", "head_blockers", "recommendations"):
+    for field in (
+        "generated_at_utc",
+        "instance_number",
+        "database_name",
+        "ui_meta",
+        "sessions",
+        "locks",
+        "blockers",
+        "blocking_chains",
+        "head_blockers",
+        "recommendations",
+    ):
         assert field in required, f"Schema missing required: {field}"
 
 
@@ -305,6 +338,7 @@ def test_full_payload_generated_at_utc_is_iso_format() -> None:
     ts = result["data"]["generated_at_utc"]
     # Should be parseable as ISO 8601 datetime
     from datetime import datetime
+
     parsed = datetime.fromisoformat(ts)
     assert parsed.tzinfo is not None
 

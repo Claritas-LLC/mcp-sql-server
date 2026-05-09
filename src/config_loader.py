@@ -51,13 +51,17 @@ def _parse_nested_bool_map(name: str, raw: str) -> dict[str, dict[str, bool]]:
         inner: dict[str, bool] = {}
         for tool, enabled in mapping.items():
             if not isinstance(tool, str) or not isinstance(enabled, bool):
-                raise ValueError(f"{name} nested entries must map tool names to boolean values")
+                raise ValueError(
+                    f"{name} nested entries must map tool names to boolean values"
+                )
             inner[tool] = enabled
         parsed[instance] = inner
     return parsed
 
 
-def apply_policy_env_overrides(policy: RuntimePolicy, env: dict[str, str] | None = None) -> RuntimePolicy:
+def apply_policy_env_overrides(
+    policy: RuntimePolicy, env: dict[str, str] | None = None
+) -> RuntimePolicy:
     values = env or dict(os.environ)
 
     global_overrides = values.get("FASTMCP_TOOL_ENABLE_FLAGS_JSON")
@@ -65,7 +69,9 @@ def apply_policy_env_overrides(policy: RuntimePolicy, env: dict[str, str] | None
 
     update_data: dict[str, Any] = {}
     if global_overrides:
-        update_data["tool_enable_flags"] = _parse_bool_map("FASTMCP_TOOL_ENABLE_FLAGS_JSON", global_overrides)
+        update_data["tool_enable_flags"] = _parse_bool_map(
+            "FASTMCP_TOOL_ENABLE_FLAGS_JSON", global_overrides
+        )
     if instance_overrides:
         update_data["instance_tool_enable_flags"] = _parse_nested_bool_map(
             "FASTMCP_INSTANCE_TOOL_ENABLE_FLAGS_JSON", instance_overrides
@@ -87,6 +93,13 @@ def _parse_int_value(name: str, raw: str) -> int:
         raise ValueError(f"{name} must be an integer") from exc
 
 
+def _parse_positive_int_value(name: str, raw: str) -> int:
+    value = _parse_int_value(name, raw)
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer (> 0)")
+    return value
+
+
 def _parse_bool_value(name: str, raw: str) -> bool:
     value = str(raw).strip().lower()
     if value in {"1", "true", "yes", "on"}:
@@ -105,21 +118,25 @@ def apply_instance_env_overrides(
 
     pool_enabled = values.get("FASTMCP_SQL_POOL_ENABLED")
     if pool_enabled:
-        update_data["pool_enabled"] = _parse_bool_value("FASTMCP_SQL_POOL_ENABLED", pool_enabled)
+        update_data["pool_enabled"] = _parse_bool_value(
+            "FASTMCP_SQL_POOL_ENABLED", pool_enabled
+        )
 
     pool_max = values.get("FASTMCP_SQL_POOL_MAX")
     if pool_max:
-        update_data["pool_max"] = _parse_int_value("FASTMCP_SQL_POOL_MAX", pool_max)
+        update_data["pool_max"] = _parse_positive_int_value(
+            "FASTMCP_SQL_POOL_MAX", pool_max
+        )
 
     pool_idle_timeout = values.get("FASTMCP_SQL_POOL_IDLE_TIMEOUT_SEC")
     if pool_idle_timeout:
-        update_data["pool_idle_timeout_sec"] = _parse_int_value(
+        update_data["pool_idle_timeout_sec"] = _parse_positive_int_value(
             "FASTMCP_SQL_POOL_IDLE_TIMEOUT_SEC", pool_idle_timeout
         )
 
     pool_acquire_timeout = values.get("FASTMCP_SQL_POOL_ACQUIRE_TIMEOUT_SEC")
     if pool_acquire_timeout:
-        update_data["pool_acquire_timeout_sec"] = _parse_int_value(
+        update_data["pool_acquire_timeout_sec"] = _parse_positive_int_value(
             "FASTMCP_SQL_POOL_ACQUIRE_TIMEOUT_SEC", pool_acquire_timeout
         )
 
@@ -128,7 +145,9 @@ def apply_instance_env_overrides(
     return [instance.model_copy(update=update_data) for instance in instances]
 
 
-def apply_auth_env_overrides(auth: AuthConfig, env: dict[str, str] | None = None) -> AuthConfig:
+def apply_auth_env_overrides(
+    auth: AuthConfig, env: dict[str, str] | None = None
+) -> AuthConfig:
     values = env or dict(os.environ)
 
     update_data: dict[str, Any] = {}
@@ -139,12 +158,17 @@ def apply_auth_env_overrides(auth: AuthConfig, env: dict[str, str] | None = None
 
     azure_auth_enabled = values.get("FASTMCP_AZURE_AUTH_ENABLED")
     if azure_auth_enabled:
-        update_data["azure_auth_enabled"] = _parse_bool_value("FASTMCP_AZURE_AUTH_ENABLED", azure_auth_enabled)
+        update_data["azure_auth_enabled"] = _parse_bool_value(
+            "FASTMCP_AZURE_AUTH_ENABLED", azure_auth_enabled
+        )
 
-    azure_group_authorization_enabled = values.get("FASTMCP_AZURE_GROUP_AUTHORIZATION_ENABLED")
+    azure_group_authorization_enabled = values.get(
+        "FASTMCP_AZURE_GROUP_AUTHORIZATION_ENABLED"
+    )
     if azure_group_authorization_enabled:
         update_data["azure_group_authorization_enabled"] = _parse_bool_value(
-            "FASTMCP_AZURE_GROUP_AUTHORIZATION_ENABLED", azure_group_authorization_enabled
+            "FASTMCP_AZURE_GROUP_AUTHORIZATION_ENABLED",
+            azure_group_authorization_enabled,
         )
 
     tenant_id = values.get("FASTMCP_AZURE_TENANT_ID")
@@ -185,15 +209,21 @@ def apply_auth_env_overrides(auth: AuthConfig, env: dict[str, str] | None = None
 
     pool_max = values.get("FASTMCP_POOL_MAX_CONNECTIONS")
     if pool_max:
-        update_data["pool_max_connections"] = _parse_int_value("FASTMCP_POOL_MAX_CONNECTIONS", pool_max)
+        update_data["pool_max_connections"] = _parse_int_value(
+            "FASTMCP_POOL_MAX_CONNECTIONS", pool_max
+        )
 
     pool_keepalive = values.get("FASTMCP_POOL_MAX_KEEPALIVE")
     if pool_keepalive:
-        update_data["pool_max_keepalive_connections"] = _parse_int_value("FASTMCP_POOL_MAX_KEEPALIVE", pool_keepalive)
+        update_data["pool_max_keepalive_connections"] = _parse_int_value(
+            "FASTMCP_POOL_MAX_KEEPALIVE", pool_keepalive
+        )
 
     pool_timeout = values.get("FASTMCP_POOL_TIMEOUT_SECONDS")
     if pool_timeout:
-        update_data["pool_timeout_seconds"] = _parse_int_value("FASTMCP_POOL_TIMEOUT_SECONDS", pool_timeout)
+        update_data["pool_timeout_seconds"] = _parse_int_value(
+            "FASTMCP_POOL_TIMEOUT_SECONDS", pool_timeout
+        )
 
     if not update_data:
         return auth
@@ -208,12 +238,17 @@ def _load_yaml(path: pathlib.Path) -> dict[str, Any]:
     return data
 
 
-def load_config(instances_path: str, policy_path: str, rate_limit_path: str) -> AppConfig:
+def load_config(
+    instances_path: str, policy_path: str, rate_limit_path: str
+) -> AppConfig:
     instances_raw = _load_yaml(pathlib.Path(instances_path))
     policy_raw = _load_yaml(pathlib.Path(policy_path))
     rate_limit_raw = _load_yaml(pathlib.Path(rate_limit_path))
 
-    instances = [SqlInstanceConfig.model_validate(item) for item in instances_raw.get("instances", [])]
+    instances = [
+        SqlInstanceConfig.model_validate(item)
+        for item in instances_raw.get("instances", [])
+    ]
     instances = apply_instance_env_overrides(instances)
     if not instances:
         raise ValueError("At least one SQL instance must be configured")

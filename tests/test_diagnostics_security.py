@@ -44,7 +44,9 @@ def _state(tmp_path: Path) -> SimpleNamespace:
 
 def test_security_route_includes_auth_summary(tmp_path: Path) -> None:
     app = FastAPI()
-    app.include_router(build_diagnostics_router(_state(tmp_path)), prefix="/diagnostics")
+    app.include_router(
+        build_diagnostics_router(_state(tmp_path)), prefix="/diagnostics"
+    )
 
     with TestClient(app) as client:
         response = client.get("/diagnostics/security")

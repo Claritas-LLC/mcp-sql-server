@@ -20,7 +20,7 @@ jobs:
             const hasRequirement = /\b(?:Implements|Closes|Fixes|Resolves)\b(?:\s*:|\s+)\s*#\d+\b/i.test(prBody);
 
             if (!hasRequirement) {
-              core.setFailed('PR must reference at least one requirement issue. Add \'Implements: #<issue>\' or \'Closes #<issue>\' to the PR body.');
+              core.setFailed('PR must reference at least one requirement issue. Add one of: \'Implements #<issue>\', \'Closes #<issue>\', \'Fixes #<issue>\', or \'Resolves #<issue>\' to the PR body.');
               return;
             }
 

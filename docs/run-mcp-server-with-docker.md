@@ -84,7 +84,7 @@ docker compose -f docker/docker-compose.runtime.yml restart mcp-sqlserver
 
 ### Important: What This Does NOT Allow
 
-- **DML/DDL statements**: Direct `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP` are blocked by the denylist, regardless of the exec_proc allowlist.
+- **DML/DDL statements**: Direct `CREATE`, `ALTER`, `DROP`, `TRUNCATE` are blocked by the denylist, regardless of the exec_proc allowlist.
 - **Unsafe procedures**: The allowlist controls *which* procedures execute, but procedures that contain DML/DDL will execute those statements. Ensure approved procedures are audited for safety.
 - **Unapproved procedures**: Any procedure not in the allowlist is rejected with a `PermissionError` before execution.
 

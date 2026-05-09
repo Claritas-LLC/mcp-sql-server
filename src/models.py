@@ -14,7 +14,7 @@ class SqlInstanceConfig(BaseModel):
     connect_timeout_sec: int = 5
     command_timeout_sec: int = 30
     pool_min: int = 2
-    pool_max: int = 10
+    pool_max: int = 20  # Restored to intended default; use --pool-max env var or YAML override to customize
     pool_enabled: bool = True
     pool_idle_timeout_sec: int = 300
     pool_acquire_timeout_sec: int = 5
@@ -24,7 +24,9 @@ class SqlInstanceConfig(BaseModel):
 class RuntimePolicy(BaseModel):
     write_mode_default: str = Field(default="deny", pattern="^(allow|deny)$")
     allowed_write_tools: list[str] = Field(default_factory=list)
-    procedure_name_match_mode: str = Field(default="default_schema_expand", pattern="^(strict|default_schema_expand)$")
+    procedure_name_match_mode: str = Field(
+        default="default_schema_expand", pattern="^(strict|default_schema_expand)$"
+    )
     procedure_default_schema: str = "dbo"
     blocked_sql_patterns: list[str] = Field(default_factory=list)
     max_result_rows: int = 5000
@@ -36,9 +38,13 @@ class RuntimePolicy(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    auth_mode: str = Field(default="disabled")
+    auth_mode: str = Field(
+        default="disabled"
+    )  # Allow any auth mode; pattern validation can be added if modes are standardized
     azure_auth_enabled: bool = False
-    azure_group_authorization_enabled: bool = True
+    azure_group_authorization_enabled: bool = (
+        False  # Consistent with azure_auth_enabled default
+    )
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
     azure_client_secret_ref: str | None = None

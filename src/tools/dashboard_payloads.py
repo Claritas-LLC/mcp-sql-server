@@ -196,19 +196,21 @@ def _html_header(
     chain_count: int,
 ) -> str:
     return (
-        "<header class=\"card\"><h1>SQL Server Sessions Dashboard</h1>"
-        f"<div class=\"muted\">Instance {instance_number} / Database {_esc(database_name)}</div>"
-        f"<div class=\"muted\">Generated {_esc(generated_at_utc)}</div>"
-        "<div class=\"meta\">"
-        f"<span class=\"badge\">Sessions: {session_count}</span>"
-        f"<span class=\"badge\">Lock Holders: {lock_count}</span>"
-        f"<span class=\"badge\">Waiting Tasks: {wait_count}</span>"
-        f"<span class=\"badge\">Chain Rows: {chain_count}</span>"
+        '<header class="card"><h1>SQL Server Sessions Dashboard</h1>'
+        f'<div class="muted">Instance {instance_number} / Database {_esc(database_name)}</div>'
+        f'<div class="muted">Generated {_esc(generated_at_utc)}</div>'
+        '<div class="meta">'
+        f'<span class="badge">Sessions: {session_count}</span>'
+        f'<span class="badge">Lock Holders: {lock_count}</span>'
+        f'<span class="badge">Waiting Tasks: {wait_count}</span>'
+        f'<span class="badge">Chain Rows: {chain_count}</span>'
         "</div></header>"
     )
 
 
-def _html_sessions_table(sessions: list[dict[str, Any]], head_blockers: list[int]) -> str:
+def _html_sessions_table(
+    sessions: list[dict[str, Any]], head_blockers: list[int]
+) -> str:
     hb = set(head_blockers)
     active_count = 0
     idle_count = 0
@@ -232,7 +234,7 @@ def _html_sessions_table(sessions: list[dict[str, Any]], head_blockers: list[int
             status_badge = '<span class="badge badge-blocker">HEAD-BLOCKER</span>'
 
         rows_html.append(
-            "<tr class=\"%s\">"
+            '<tr class="%s">'
             "<td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
             "</tr>"
             % (
@@ -253,11 +255,11 @@ def _html_sessions_table(sessions: list[dict[str, Any]], head_blockers: list[int
         )
 
     caption = (
-        f"<caption class=\"muted\">Sessions: {len(sessions)} | Active: {active_count} | "
+        f'<caption class="muted">Sessions: {len(sessions)} | Active: {active_count} | '
         f"Idle: {idle_count} | Blocked: {blocked_count} | Head-Blockers: {head_blocker_count}</caption>"
     )
     return (
-        "<section class=\"card\" id=\"sessions\"><h2>Sessions</h2>"
+        '<section class="card" id="sessions"><h2>Sessions</h2>'
         "<table>"
         f"{caption}"
         "<thead><tr><th>Status</th><th>SID</th><th>Login</th><th>Host</th><th>Program</th><th>Database</th><th>Command</th><th>Wait Type</th><th>Wait (ms)</th><th>CPU (ms)</th><th>Txns</th><th>Blocking SID</th></tr></thead>"
@@ -265,9 +267,11 @@ def _html_sessions_table(sessions: list[dict[str, Any]], head_blockers: list[int
     )
 
 
-def _html_chain_section(blocking_chains: list[dict[str, Any]], waiting_tasks: list[dict[str, Any]]) -> str:
+def _html_chain_section(
+    blocking_chains: list[dict[str, Any]], waiting_tasks: list[dict[str, Any]]
+) -> str:
     if not blocking_chains:
-        return "<section class=\"card\" id=\"chains\"><h2>Session Chains</h2><p>No blocking chains detected.</p></section>"
+        return '<section class="card" id="chains"><h2>Session Chains</h2><p>No blocking chains detected.</p></section>'
 
     wait_by_session: dict[int, str] = {}
     for row in waiting_tasks:
@@ -302,7 +306,7 @@ def _html_chain_section(blocking_chains: list[dict[str, Any]], waiting_tasks: li
                 break
         return depth
 
-    chunks: list[str] = ["<section class=\"card\" id=\"chains\"><h2>Session Chains</h2>"]
+    chunks: list[str] = ['<section class="card" id="chains"><h2>Session Chains</h2>']
     for blocker_sid, rows in grouped.items():
         max_wait = 0
         for row in rows:
@@ -312,7 +316,7 @@ def _html_chain_section(blocking_chains: list[dict[str, Any]], waiting_tasks: li
                 pass
 
         chunks.append(
-            f"<details open><summary>Head blocker SID { _esc(blocker_sid) } | Blocked sessions: {len(rows)} | Max wait: {_esc(max_wait)} ms</summary>"
+            f"<details open><summary>Head blocker SID {_esc(blocker_sid)} | Blocked sessions: {len(rows)} | Max wait: {_esc(max_wait)} ms</summary>"
         )
         chunks.append(
             "<table><thead><tr><th>Blocked SID</th><th>Login</th><th>Host</th><th>Command</th><th>Wait Type</th><th>Wait (ms)</th><th>Resource</th></tr></thead><tbody>"
@@ -325,7 +329,7 @@ def _html_chain_section(blocking_chains: list[dict[str, Any]], waiting_tasks: li
             depth = _depth_for_session(sid) if sid > 0 else 0
             chunks.append(
                 "<tr>"
-                f"<td style=\"padding-left: {depth * 16}px\">{_esc(row.get('session_id'))}</td>"
+                f'<td style="padding-left: {depth * 16}px">{_esc(row.get("session_id"))}</td>'
                 f"<td>{_esc(row.get('login_name'))}</td>"
                 f"<td>{_esc(row.get('host_name'))}</td>"
                 f"<td>{_esc(row.get('command'))}</td>"
@@ -344,14 +348,18 @@ def _html_recommendations(recommendations: list[dict[str, Any]]) -> str:
     for rec in recommendations:
         priority = str(rec.get("priority", "info")).lower()
         cards.append(
-            f"<div class=\"rec-card rec-{_esc(priority)}\"><strong>[{_esc(priority.upper())}]</strong> {_esc(rec.get('action'))}<div class=\"muted\">{_esc(rec.get('rationale'))}</div></div>"
+            f'<div class="rec-card rec-{_esc(priority)}"><strong>[{_esc(priority.upper())}]</strong> {_esc(rec.get("action"))}<div class="muted">{_esc(rec.get("rationale"))}</div></div>'
         )
-    return "<section class=\"card\" id=\"recommendations\"><h2>Recommendations</h2>" + "".join(cards) + "</section>"
+    return (
+        '<section class="card" id="recommendations"><h2>Recommendations</h2>'
+        + "".join(cards)
+        + "</section>"
+    )
 
 
 def _html_footer(generated_at_utc: str) -> str:
     return (
-        "<footer class=\"card muted\">"
+        '<footer class="card muted">'
         f"<small>MCP SQL Server - Generated {_esc(generated_at_utc)} - Point-in-time DMV snapshot.</small>"
         "</footer>"
     )
@@ -360,6 +368,7 @@ def _html_footer(generated_at_utc: str) -> str:
 # ---------------------------------------------------------------------------
 # Default (minimal) dashboard payload – used by non-app clients
 # ---------------------------------------------------------------------------
+
 
 def build_sessions_dashboard(
     *,
@@ -393,6 +402,7 @@ def build_sessions_dashboard(
 # Full dashboard payload – all four DMV sections, interactive-app aligned
 # ---------------------------------------------------------------------------
 
+
 def build_sessions_dashboard_full(
     *,
     instance_number: int,
@@ -422,10 +432,7 @@ def build_sessions_dashboard_full(
                 "rationale": f"Detected {len(head_blockers)} unique head blocking session(s) causing wait chains.",
             }
         )
-    long_waits = [
-        w for w in waiting_tasks
-        if (w.get("wait_duration_ms") or 0) > 5000
-    ]
+    long_waits = [w for w in waiting_tasks if (w.get("wait_duration_ms") or 0) > 5000]
     if long_waits:
         recommendations.append(
             {
@@ -456,11 +463,11 @@ def build_sessions_dashboard_full(
     )
 
     html_doc = (
-        "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>Sessions Dashboard - Instance {instance_number}</title>"
         f"{_html_inline_styles()}"
-        "</head><body><main class=\"page\">"
+        '</head><body><main class="page">'
         f"{header}"
         f"{_html_sessions_table(sessions, head_blockers)}"
         f"{_html_chain_section(chain_rows, waiting_tasks)}"

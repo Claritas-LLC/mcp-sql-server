@@ -39,7 +39,9 @@ def _sign_token(private_key: Any, *, kid: str, claims: dict[str, Any]) -> str:
     return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": kid})
 
 
-def _mock_http_client(openid_payload: dict[str, Any], jwks_payload: dict[str, Any]) -> httpx.AsyncClient:
+def _mock_http_client(
+    openid_payload: dict[str, Any], jwks_payload: dict[str, Any]
+) -> httpx.AsyncClient:
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if url.endswith("/.well-known/openid-configuration"):
