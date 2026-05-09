@@ -21,6 +21,8 @@ Remote FastMCP server for dual SQL Server 2019 instances with strong read-only c
 - tests: unit tests
 - testing: integration and operational test harnesses
 - docs: tool catalog, runbooks, and run instructions
+- docs/runbooks/scaling-strategy.md: runbook for scaling and load-validation operations
+- docs/runbooks/security-maintenance.md: runbook for security posture checks and maintenance
 
 ## Quick Start (Local)
 
@@ -57,6 +59,11 @@ Use the runtime compose flow documented in docs/run-mcp-server-with-docker.md.
 ```powershell
 docker compose -f docker/docker-compose.runtime.yml up -d
 ```
+
+## Operational Runbooks
+
+- [Scaling strategy](docs/runbooks/scaling-strategy.md) - guidance for dashboard scaling and load validation.
+- [Security maintenance](docs/runbooks/security-maintenance.md) - maintenance checks for security posture and operational hygiene.
 
 ## Testing
 
@@ -101,4 +108,4 @@ Artifacts:
 
 ## License
 
-No license file is currently included. Add one before open-source distribution.
+Licensed under the MIT License. See [LICENSE](LICENSE).
