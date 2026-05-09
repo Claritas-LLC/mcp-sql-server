@@ -1,8 +1,10 @@
 import os
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from fastapi import FastAPI
 from fastmcp import FastMCP
 import uvicorn
@@ -14,6 +16,7 @@ from src.middleware.audit_logger import AuditLogger
 from src.middleware.rate_limiter import RateLimiter, build_rate_limiter
 from src.middleware.write_guard import WriteGuard
 from src.models import RuntimePolicy
+from src.security.auth_provider import build_auth_provider
 from src.security.session_manager import SessionManager
 from src.tools.sql_tools import register_sql_tools
 from src.tools.sessions_dashboard_app import register_sessions_dashboard_app_provider
@@ -31,6 +34,7 @@ class AppState:
     version: str
     config: AppConfig
     policy: RuntimePolicy
+    auth: Any
     policy_path: str
     audit_path: str
     connection_manager: ConnectionManager
@@ -41,6 +45,7 @@ class AppState:
     rate_limit_backend: str
     registered_tools: list[str]
     tool_flag_env_applied: bool
+    auth_http_client: httpx.AsyncClient
     denied_requests: int = 0
     last_secret_refresh_utc: str = ""
 
@@ -57,6 +62,15 @@ def build_fastapi_app() -> FastAPI:
     has_tool_flag_env = bool(os.getenv("FASTMCP_TOOL_ENABLE_FLAGS_JSON") or os.getenv("FASTMCP_INSTANCE_TOOL_ENABLE_FLAGS_JSON"))
 
     cfg = load_config(config_path, policy_path, rate_limit_path)
+    max_connections = cfg.auth.pool_max_connections
+    max_keepalive_connections = min(cfg.auth.pool_max_keepalive_connections, max_connections)
+    shared_http_client = httpx.AsyncClient(
+        timeout=cfg.auth.pool_timeout_seconds,
+        limits=httpx.Limits(
+            max_connections=max_connections,
+            max_keepalive_connections=max_keepalive_connections,
+        ),
+    )
     conn_mgr = ConnectionManager(cfg.instances, secret_resolver=secret_resolver)
     limiter = build_rate_limiter(
         backend=rate_limit_backend,
@@ -71,6 +85,7 @@ def build_fastapi_app() -> FastAPI:
         version="1.0.0",
         config=cfg,
         policy=cfg.policy,
+        auth=cfg.auth,
         policy_path=policy_path,
         audit_path=audit_path,
         connection_manager=conn_mgr,
@@ -85,10 +100,15 @@ def build_fastapi_app() -> FastAPI:
         rate_limit_backend=rate_limit_backend,
         registered_tools=[],
         tool_flag_env_applied=has_tool_flag_env,
+        auth_http_client=shared_http_client,
         last_secret_refresh_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     )
 
-    mcp = FastMCP("sql2019-dual-instance")
+    auth_provider = build_auth_provider(cfg.auth, shared_http_client, secret_resolver)
+    if auth_provider is not None:
+        mcp = FastMCP("sql2019-dual-instance", auth=auth_provider)
+    else:
+        mcp = FastMCP("sql2019-dual-instance")
     registered_tools = register_sql_tools(mcp, state)
     register_sessions_dashboard_app_provider(mcp, state)
     state.registered_tools = registered_tools
@@ -105,7 +125,20 @@ def build_fastapi_app() -> FastAPI:
         mcp_app = FastAPI()
 
     parent_lifespan = getattr(mcp_app, "lifespan", None)
-    app = FastAPI(title="FastMCP SQL Server 2019", version=state.version, lifespan=parent_lifespan)
+
+    @asynccontextmanager
+    async def app_lifespan(app: FastAPI):
+        try:
+            if parent_lifespan is not None:
+                async with parent_lifespan(app):
+                    yield
+            else:
+                yield
+        finally:
+            state.connection_manager.close_all_pools()
+            await shared_http_client.aclose()
+
+    app = FastAPI(title="FastMCP SQL Server 2019", version=state.version, lifespan=app_lifespan)
     app.state.runtime = state
     app.state.registered_tools = registered_tools
     app.include_router(build_diagnostics_router(state), prefix="/diagnostics")

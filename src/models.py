@@ -14,7 +14,10 @@ class SqlInstanceConfig(BaseModel):
     connect_timeout_sec: int = 5
     command_timeout_sec: int = 30
     pool_min: int = 2
-    pool_max: int = 20
+    pool_max: int = 10
+    pool_enabled: bool = True
+    pool_idle_timeout_sec: int = 300
+    pool_acquire_timeout_sec: int = 5
     enabled: bool = True
 
 
@@ -34,6 +37,8 @@ class RuntimePolicy(BaseModel):
 
 class AuthConfig(BaseModel):
     auth_mode: str = Field(default="disabled")
+    azure_auth_enabled: bool = False
+    azure_group_authorization_enabled: bool = True
     azure_tenant_id: str | None = None
     azure_client_id: str | None = None
     azure_client_secret_ref: str | None = None
@@ -41,6 +46,8 @@ class AuthConfig(BaseModel):
     azure_base_url: str | None = None
     azure_identifier_uri: str | None = None
     azure_group_claim_name: str = "groups"
+    azure_read_groups: list[str] = Field(default_factory=list)
+    azure_write_groups: list[str] = Field(default_factory=list)
     pool_max_connections: int = 10
     pool_max_keepalive_connections: int = 10
     pool_timeout_seconds: int = 10

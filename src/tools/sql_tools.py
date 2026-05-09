@@ -6,9 +6,11 @@ import uuid
 from typing import Any
 
 from fastmcp import Context, FastMCP
+from fastmcp.server.dependencies import get_access_token
 from fastmcp.utilities.logging import get_logger
 
 from src.diagnostics.routes import REQUEST_COUNT, REQUEST_LATENCY
+from src.security.privilege_mapper import resolve_group_privilege
 from src.tools.analysis_contracts import build_finding, build_recommendation, build_report_envelope
 from src.tools.dashboard_payloads import build_sessions_dashboard, build_sessions_dashboard_full
 from src.tools.dashboard_page_store import get_dashboard_page_expiry_utc, register_dashboard_page
@@ -631,6 +633,101 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
     instance_ids = state.connection_manager.list_enabled_instances()
     number_by_instance = {instance_id: idx for idx, instance_id in enumerate(instance_ids, start=1)}
 
+    def _auth_enforced() -> bool:
+        auth_cfg = getattr(state, "auth", None)
+        if auth_cfg is None:
+            return False
+        return bool(auth_cfg.azure_auth_enabled or auth_cfg.auth_mode == "azure_token_verifier")
+
+    async def _resolve_actor_and_authorize(
+        *,
+        actor: str,
+        tool: str,
+        required_privilege: str,
+        ctx: Context | None,
+    ) -> tuple[str, dict[str, Any]]:
+        auth_cfg = getattr(state, "auth", None)
+        if auth_cfg is None or not _auth_enforced():
+            return actor, {
+                "auth_mode": "disabled",
+                "auth_subject": None,
+                "privilege_level": "none",
+                "group_match_result": {"group_authorization_enabled": False},
+            }
+
+        token = get_access_token()
+        if token is None:
+            raise PermissionError("AUTH_FAILED: missing or invalid bearer token")
+
+        claims = getattr(token, "claims", {}) or {}
+        subject = (
+            claims.get("preferred_username")
+            or claims.get("oid")
+            or claims.get("sub")
+            or claims.get("upn")
+        )
+        principal_groups = claims.get(auth_cfg.azure_group_claim_name, [])
+        privilege_level, group_match_result = resolve_group_privilege(
+            principal_groups=principal_groups,
+            read_groups=auth_cfg.azure_read_groups,
+            write_groups=auth_cfg.azure_write_groups,
+            group_authorization_enabled=auth_cfg.azure_group_authorization_enabled,
+        )
+
+        if required_privilege == "write" and privilege_level != "write":
+            raise PermissionError("AUTH_FAILED: write privilege required")
+        if required_privilege == "read" and privilege_level == "none":
+            raise PermissionError("AUTH_FAILED: read privilege required")
+
+        resolved_actor = subject if actor in {"system", "unknown"} and isinstance(subject, str) and subject else actor
+
+        if ctx is not None:
+            await ctx.debug(
+                f"Auth context for {tool}: subject={subject}, privilege={privilege_level}",
+                extra={
+                    "tool": tool,
+                    "auth_subject": subject,
+                    "privilege_level": privilege_level,
+                    "group_match_result": group_match_result,
+                },
+            )
+
+        return resolved_actor, {
+            "auth_mode": auth_cfg.auth_mode,
+            "auth_subject": subject,
+            "privilege_level": privilege_level,
+            "group_match_result": group_match_result,
+        }
+
+    def _log_audit_event(
+        *,
+        request_id: str,
+        actor: str,
+        tool: str,
+        instance: str,
+        sql: str,
+        decision: str,
+        latency_ms: int,
+        rows: int,
+        error_code: str | None,
+        auth_ctx: dict[str, Any] | None,
+    ) -> None:
+        state.audit_logger.log_event(
+            request_id=request_id,
+            actor=actor,
+            tool=tool,
+            instance=instance,
+            sql=sql,
+            decision=decision,
+            latency_ms=latency_ms,
+            rows=rows,
+            error_code=error_code,
+            auth_mode=(auth_ctx or {}).get("auth_mode"),
+            auth_subject=(auth_ctx or {}).get("auth_subject"),
+            privilege_level=(auth_ctx or {}).get("privilege_level"),
+            group_match_result=(auth_ctx or {}).get("group_match_result"),
+        )
+
     async def _run_read_tool(
         *,
         sql: str,
@@ -645,6 +742,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         decision = "allow"
         rows = 0
         error_code = None
+        _auth_ctx: dict[str, Any] | None = None
         try:
             if ctx is not None:
                 await ctx.debug(
@@ -652,6 +750,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     extra={"request_id": request_id, "tool": tool, "actor": actor, "instance": instance}
                 )
             
+            actor, _auth_ctx = await _resolve_actor_and_authorize(
+                actor=actor,
+                tool=tool,
+                required_privilege="read",
+                ctx=ctx,
+            )
             state.session_manager.touch(actor, request_id)
             if ctx is not None:
                 await ctx.debug(f"[{request_id}] Session validated for {actor}")
@@ -744,7 +848,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             latency_ms = int((time.time() - started) * 1000)
             REQUEST_COUNT.labels(tool, instance, decision).inc()
             REQUEST_LATENCY.labels(tool, instance).observe(latency_ms)
-            state.audit_logger.log_event(
+            _log_audit_event(
                 request_id=request_id,
                 actor=actor,
                 tool=tool,
@@ -754,6 +858,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 latency_ms=latency_ms,
                 rows=rows,
                 error_code=error_code,
+                auth_ctx=_auth_ctx,
             )
 
     for spec in generate_tool_specs(instance_ids):
@@ -781,6 +886,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 decision = "allow"
                 rows = 0
                 error_code = None
+                _auth_ctx: dict[str, Any] | None = None
                 try:
                     if ctx is not None:
                         await ctx.debug(
@@ -788,6 +894,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             extra={"request_id": request_id, "tool": _tool, "actor": actor, "instance": _instance}
                         )
                     
+                    actor, _auth_ctx = await _resolve_actor_and_authorize(
+                        actor=actor,
+                        tool=_tool,
+                        required_privilege="read",
+                        ctx=ctx,
+                    )
                     state.session_manager.touch(actor, request_id)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, sql)
@@ -833,7 +945,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     latency_ms = int((time.time() - started) * 1000)
                     REQUEST_COUNT.labels(_tool, _instance, decision).inc()
                     REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
-                    state.audit_logger.log_event(
+                    _log_audit_event(
                         request_id=request_id,
                         actor=actor,
                         tool=_tool,
@@ -843,6 +955,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         latency_ms=latency_ms,
                         rows=rows,
                         error_code=error_code,
+                        auth_ctx=_auth_ctx,
                     )
 
         elif spec.toolname == "exec_proc":
@@ -864,6 +977,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 decision = "allow"
                 error_code = None
                 sql = f"EXEC {proc_name}"
+                _auth_ctx: dict[str, Any] | None = None
                 try:
                     if ctx is not None:
                         await ctx.debug(
@@ -871,6 +985,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             extra={"request_id": request_id, "tool": _tool, "actor": actor, "instance": _instance, "proc": proc_name}
                         )
                     
+                    actor, _auth_ctx = await _resolve_actor_and_authorize(
+                        actor=actor,
+                        tool=_tool,
+                        required_privilege="write",
+                        ctx=ctx,
+                    )
                     state.session_manager.touch(actor, request_id)
                     state.rate_limiter.allow(actor)
                     state.write_guard.validate_procedure(_tool, proc_name)
@@ -916,7 +1036,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     latency_ms = int((time.time() - started) * 1000)
                     REQUEST_COUNT.labels(_tool, _instance, decision).inc()
                     REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
-                    state.audit_logger.log_event(
+                    _log_audit_event(
                         request_id=request_id,
                         actor=actor,
                         tool=_tool,
@@ -926,6 +1046,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         latency_ms=latency_ms,
                         rows=0,
                         error_code=error_code,
+                        auth_ctx=_auth_ctx,
                     )
 
         elif spec.toolname == "latency_report":
@@ -1257,10 +1378,17 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             decision = "allow"
             error_code = None
             row_count = 0
+            _auth_ctx: dict[str, Any] | None = None
             try:
                 if ctx is not None:
                     await ctx.debug(f"[{request_id}] Pinging instance {_instance_number} for actor={actor}")
                 
+                actor, _auth_ctx = await _resolve_actor_and_authorize(
+                    actor=actor,
+                    tool=_tool,
+                    required_privilege="read",
+                    ctx=ctx,
+                )
                 state.session_manager.touch(actor, request_id)
                 state.rate_limiter.allow(actor)
                 payload = state.connection_manager.fetch_single_row_in_database(_instance, "master", sql)
@@ -1308,7 +1436,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 latency_ms = int((time.time() - started) * 1000)
                 REQUEST_COUNT.labels(_tool, _instance, decision).inc()
                 REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
-                state.audit_logger.log_event(
+                _log_audit_event(
                     request_id=request_id,
                     actor=actor,
                     tool=_tool,
@@ -1318,6 +1446,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     latency_ms=latency_ms,
                     rows=row_count,
                     error_code=error_code,
+                    auth_ctx=_auth_ctx,
                 )
 
         registered.append(ping_tool_name)
@@ -1346,10 +1475,17 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             decision = "allow"
             error_code = None
             row_count = 0
+            _auth_ctx: dict[str, Any] | None = None
             try:
                 if ctx is not None:
                     await ctx.debug(f"[{request_id}] Listing tools for instance {_instance_number}")
                 
+                actor, _auth_ctx = await _resolve_actor_and_authorize(
+                    actor=actor,
+                    tool=_tool,
+                    required_privilege="read",
+                    ctx=ctx,
+                )
                 state.session_manager.touch(actor, request_id)
                 state.rate_limiter.allow(actor)
                 info = state.connection_manager.fetch_single_row_in_database(_instance, "master", sql)
@@ -1402,7 +1538,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 latency_ms = int((time.time() - started) * 1000)
                 REQUEST_COUNT.labels(_tool, _instance, decision).inc()
                 REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
-                state.audit_logger.log_event(
+                _log_audit_event(
                     request_id=request_id,
                     actor=actor,
                     tool=_tool,
@@ -1412,6 +1548,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     latency_ms=latency_ms,
                     rows=row_count,
                     error_code=error_code,
+                    auth_ctx=_auth_ctx,
                 )
 
         registered.append(list_tools_name)
@@ -1442,6 +1579,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             decision = "allow"
             error_code = None
             row_count = 0
+            _auth_ctx: dict[str, Any] | None = None
             try:
                 if ctx is not None:
                     await ctx.debug(
@@ -1449,6 +1587,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         extra={"request_id": request_id, "tool": _tool, "database": database_name, "object_type": object_type}
                     )
                 
+                actor, _auth_ctx = await _resolve_actor_and_authorize(
+                    actor=actor,
+                    tool=_tool,
+                    required_privilege="read",
+                    ctx=ctx,
+                )
                 state.session_manager.touch(actor, request_id)
                 state.rate_limiter.allow(actor)
                 rows = state.connection_manager.list_objects(_instance, database_name, object_type)
@@ -1505,7 +1649,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 latency_ms = int((time.time() - started) * 1000)
                 REQUEST_COUNT.labels(_tool, _instance, decision).inc()
                 REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
-                state.audit_logger.log_event(
+                _log_audit_event(
                     request_id=request_id,
                     actor=actor,
                     tool=_tool,
@@ -1515,6 +1659,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     latency_ms=latency_ms,
                     rows=row_count,
                     error_code=error_code,
+                    auth_ctx=_auth_ctx,
                 )
 
         registered.append(list_object_name)
@@ -1548,6 +1693,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             decision = "allow"
             error_code = None
             rows = 0
+            _auth_ctx: dict[str, Any] | None = None
             try:
                 if ctx is not None:
                     await ctx.debug(
@@ -1559,6 +1705,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 if normalized not in {"FULL", "COMPACT"}:
                     raise ValueError("INVALID_INPUT: view_mode must be FULL or COMPACT")
 
+                actor, _auth_ctx = await _resolve_actor_and_authorize(
+                    actor=actor,
+                    tool=_tool,
+                    required_privilege="read",
+                    ctx=ctx,
+                )
                 state.session_manager.touch(actor, request_id)
                 state.rate_limiter.allow(actor)
                 state.write_guard.enforce(_tool, sql_statement)
@@ -1649,7 +1801,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 latency_ms = int((time.time() - started) * 1000)
                 REQUEST_COUNT.labels(_tool, _instance, decision).inc()
                 REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
-                state.audit_logger.log_event(
+                _log_audit_event(
                     request_id=request_id,
                     actor=actor,
                     tool=_tool,
@@ -1659,6 +1811,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     latency_ms=latency_ms,
                     rows=rows,
                     error_code=error_code,
+                    auth_ctx=_auth_ctx,
                 )
 
         registered.append(execute_query_name)
@@ -1686,6 +1839,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 error_code = None
                 rows = 0
                 sql_marker = "ANALYZE_TAB_HEALTH"
+                _auth_ctx: dict[str, Any] | None = None
                 try:
                     if ctx is not None:
                         await ctx.debug(
@@ -1700,6 +1854,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         table_name = validate_identifier(table_name, "table_name")
                     size = validate_positive_int(top_n, "top_n", 1, 500)
 
+                    actor, _auth_ctx = await _resolve_actor_and_authorize(
+                        actor=actor,
+                        tool=_tool,
+                        required_privilege="read",
+                        ctx=ctx,
+                    )
                     state.session_manager.touch(actor, request_id)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
@@ -1837,7 +1997,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     latency_ms = int((time.time() - started) * 1000)
                     REQUEST_COUNT.labels(_tool, _instance, decision).inc()
                     REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
-                    state.audit_logger.log_event(
+                    _log_audit_event(
                         request_id=request_id,
                         actor=actor,
                         tool=_tool,
@@ -1847,6 +2007,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         latency_ms=latency_ms,
                         rows=rows,
                         error_code=error_code,
+                        auth_ctx=_auth_ctx,
                     )
 
             registered.append(analyze_tab_health_name)
@@ -1872,6 +2033,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 error_code = None
                 rows = 0
                 sql_marker = "ANALYZE_DB_DATA_MODEL"
+                _auth_ctx: dict[str, Any] | None = None
                 try:
                     if ctx is not None:
                         await ctx.debug(
@@ -1884,6 +2046,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         schema_filter = validate_identifier(schema_filter, "schema_filter")
                     edge_limit = validate_positive_int(max_edges, "max_edges", 1, 5000)
 
+                    actor, _auth_ctx = await _resolve_actor_and_authorize(
+                        actor=actor,
+                        tool=_tool,
+                        required_privilege="read",
+                        ctx=ctx,
+                    )
                     state.session_manager.touch(actor, request_id)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
@@ -2061,7 +2229,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     latency_ms = int((time.time() - started) * 1000)
                     REQUEST_COUNT.labels(_tool, _instance, decision).inc()
                     REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
-                    state.audit_logger.log_event(
+                    _log_audit_event(
                         request_id=request_id,
                         actor=actor,
                         tool=_tool,
@@ -2071,6 +2239,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         latency_ms=latency_ms,
                         rows=rows,
                         error_code=error_code,
+                        auth_ctx=_auth_ctx,
                     )
 
             registered.append(analyze_db_data_model_name)
@@ -2095,6 +2264,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 error_code = None
                 rows = 0
                 sql_marker = "ANALYZE_SEC_CONFIG"
+                _auth_ctx: dict[str, Any] | None = None
                 try:
                     if ctx is not None:
                         await ctx.debug(
@@ -2104,6 +2274,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     
                     db_name = validate_database_name(database_name)
 
+                    actor, _auth_ctx = await _resolve_actor_and_authorize(
+                        actor=actor,
+                        tool=_tool,
+                        required_privilege="read",
+                        ctx=ctx,
+                    )
                     state.session_manager.touch(actor, request_id)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
@@ -2269,7 +2445,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     latency_ms = int((time.time() - started) * 1000)
                     REQUEST_COUNT.labels(_tool, _instance, decision).inc()
                     REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
-                    state.audit_logger.log_event(
+                    _log_audit_event(
                         request_id=request_id,
                         actor=actor,
                         tool=_tool,
@@ -2279,6 +2455,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         latency_ms=latency_ms,
                         rows=rows,
                         error_code=error_code,
+                        auth_ctx=_auth_ctx,
                     )
 
             registered.append(analyze_sec_config_name)
@@ -2304,6 +2481,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 error_code = None
                 rows = 0
                 sql_marker = "SESSIONS_DASHBOARD"
+                _auth_ctx: dict[str, Any] | None = None
                 try:
                     if ctx is not None:
                         await ctx.debug(
@@ -2314,6 +2492,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     db_name = validate_database_name(database_name)
                     validate_positive_int(lookback_minutes, "lookback_minutes", 1, 1440)
 
+                    actor, _auth_ctx = await _resolve_actor_and_authorize(
+                        actor=actor,
+                        tool=_tool,
+                        required_privilege="read",
+                        ctx=ctx,
+                    )
                     state.session_manager.touch(actor, request_id)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
@@ -2417,7 +2601,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     latency_ms = int((time.time() - started) * 1000)
                     REQUEST_COUNT.labels(_tool, _instance, decision).inc()
                     REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
-                    state.audit_logger.log_event(
+                    _log_audit_event(
                         request_id=request_id,
                         actor=actor,
                         tool=_tool,
@@ -2427,6 +2611,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         latency_ms=latency_ms,
                         rows=rows,
                         error_code=error_code,
+                        auth_ctx=_auth_ctx,
                     )
 
             registered.append(sessions_dashboard_name)

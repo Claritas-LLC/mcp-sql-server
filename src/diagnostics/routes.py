@@ -51,6 +51,17 @@ def build_diagnostics_router(state: Any) -> APIRouter:
         raw = policy_path.read_bytes() if policy_path.exists() else b""
         registered_tools = list(getattr(state, "registered_tools", []))
         advanced_tools = [name for name in registered_tools if "_analyze_" in name or name.endswith("_dashboard")]
+        auth_cfg = getattr(state, "auth", None)
+        auth_summary = {
+            "auth_mode": getattr(auth_cfg, "auth_mode", "disabled"),
+            "azure_auth_enabled": bool(getattr(auth_cfg, "azure_auth_enabled", False)),
+            "azure_group_authorization_enabled": bool(
+                getattr(auth_cfg, "azure_group_authorization_enabled", False)
+            ),
+            "required_scopes": list(getattr(auth_cfg, "azure_required_scopes", []) or []),
+            "read_group_count": len(getattr(auth_cfg, "azure_read_groups", []) or []),
+            "write_group_count": len(getattr(auth_cfg, "azure_write_groups", []) or []),
+        }
         return {
             "write_mode_default": state.policy.write_mode_default,
             "rate_limit_backend": state.rate_limit_backend,
@@ -62,7 +73,12 @@ def build_diagnostics_router(state: Any) -> APIRouter:
             "advanced_tools_count": len(advanced_tools),
             "advanced_tools": advanced_tools,
             "last_secret_refresh_utc": state.last_secret_refresh_utc,
+            "auth": auth_summary,
         }
+
+    @router.get("/pool")
+    def pool() -> dict[str, Any]:
+        return {"instances": state.connection_manager.get_pool_diagnostics()}
 
     @router.get("/metrics")
     def metrics() -> Response:

@@ -28,3 +28,20 @@ instance_tool_enable_flags:
     exec_proc: true
   secondary:
     exec_proc: true
+
+auth:
+  auth_mode: disabled
+  azure_auth_enabled: false
+  azure_group_authorization_enabled: true
+  azure_tenant_id: ""
+  azure_client_id: ""
+  azure_client_secret_ref: ""
+  azure_required_scopes: []
+  azure_base_url: ""
+  azure_identifier_uri: ""
+  azure_group_claim_name: groups
+  azure_read_groups: []
+  azure_write_groups: []
+  pool_max_connections: 10
+  pool_max_keepalive_connections: 10
+  pool_timeout_seconds: 10
