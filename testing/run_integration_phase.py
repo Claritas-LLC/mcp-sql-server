@@ -211,12 +211,6 @@ def _sqlcmd(container: str, password: str, sql: str, database: str = "master") -
     )
     return result.stdout
 
-
-def write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
 def run() -> None:
     q1 = "SELECT COUNT(*) AS table_count FROM [USGISPRO_800].[sys].[tables]"
     q2 = "SELECT COUNT(*) AS table_count FROM [CITYGIS_810].[sys].[tables]"

@@ -5,8 +5,6 @@ TASK-018: Integration-level tests for dashboard payload structure and head_block
 """
 from __future__ import annotations
 
-import pytest
-
 from src.tools.dashboard_payloads import (
     DASHBOARD_STATE_SCHEMA,
     build_sessions_dashboard,

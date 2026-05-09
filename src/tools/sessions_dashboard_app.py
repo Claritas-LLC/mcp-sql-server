@@ -20,11 +20,10 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
     """
     try:
         from fastmcp import FastMCPApp
-        from prefab_ui.actions import SetState, ShowToast
+        from prefab_ui.actions import ShowToast
         from prefab_ui.actions.mcp import CallTool
         from prefab_ui.app import PrefabApp
         from prefab_ui.components import Button, Column, Form, Heading, Input, Row, Select, SelectOption, Separator, Text, ForEach
-        from prefab_ui.rx import RESULT
     except Exception as exc:  # pragma: no cover - environment-specific optional deps
         logger.warning("Interactive app dependencies unavailable; sessions app provider disabled: %s", exc)
         return False
