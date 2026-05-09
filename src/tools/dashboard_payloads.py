@@ -33,6 +33,7 @@ DASHBOARD_STATE_SCHEMA: dict[str, Any] = {
                     "login_name": {"type": "string"},
                     "host_name": {"type": "string"},
                     "program_name": {"type": "string"},
+                    "session_database_name": {"type": ["string", "null"]},
                     "status": {"type": "string"},
                     "command": {"type": ["string", "null"]},
                     "wait_type": {"type": ["string", "null"]},
@@ -118,7 +119,7 @@ DASHBOARD_STATE_SCHEMA: dict[str, Any] = {
 def _esc(value: Any) -> str:
     if value is None:
         return "&mdash;"
-    return html.escape(str(value))
+    return html.escape(str(value), quote=True)
 
 
 def _session_row_class(session: dict[str, Any], head_blockers: set[int]) -> str:
@@ -139,7 +140,10 @@ def _session_row_class(session: dict[str, Any], head_blockers: set[int]) -> str:
     if blocker_sid > 0:
         return "row-blocked"
 
+    allowed_statuses = {"running", "suspended", "sleeping", "dormant", "preconnect"}
     status = str(session.get("status", "")).lower()
+    if status not in allowed_statuses:
+        status = "unknown"
     if status in {"running", "suspended"}:
         return "row-active"
     return "row-idle"

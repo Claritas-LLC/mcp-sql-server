@@ -70,6 +70,10 @@ class WriteGuard:
             )
 
         tool_config = self._policy.allowed_tools[tool_name]
+        if not isinstance(tool_config, dict):
+            raise PermissionError(
+                f"Invalid allowed_tools entry for {tool_name}: expected dict, got {type(tool_config).__name__} ({tool_config!r})"
+            )
         allowed_procedures = tool_config.get("allowed_procedures", [])
 
         mode = (

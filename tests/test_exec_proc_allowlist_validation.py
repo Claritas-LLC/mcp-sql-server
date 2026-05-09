@@ -91,6 +91,11 @@ class TestExecProcAllowlistValidation:
         guard.validate_procedure(
             "db_primary_sql2019_exec_proc", "usp_RunApprovedMaintenance"
         )
+        with pytest.raises(PermissionError, match="not in the allowed procedures list"):
+            guard.validate_procedure(
+                "db_primary_sql2019_exec_proc",
+                "malicious_schema.usp_RunApprovedMaintenance",
+            )
 
     def test_validation_error_message_clarity(self, policy_with_allowlist):
         """Error message should clearly indicate what was denied."""

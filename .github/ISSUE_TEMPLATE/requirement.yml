@@ -11,6 +11,8 @@ body:
       placeholder: REQ-2026-001
     validations:
       required: true
+      pattern: "^REQ-[0-9]{4}-[0-9]{3}$"
+      patternError: "Requirement ID must match REQ-YYYY-NNN (example: REQ-2026-001)."
 
   - type: textarea
     id: statement

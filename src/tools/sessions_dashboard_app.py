@@ -16,6 +16,15 @@ from src.tools.query_catalog import (
 logger = get_logger(__name__)
 
 
+def _redact_login_name(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "redacted"
+    if len(raw) <= 2:
+        return "*" * len(raw)
+    return f"{raw[0]}***{raw[-1]}"
+
+
 def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
     """Register interactive sessions dashboard app provider.
 
@@ -80,15 +89,29 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
         state.rate_limiter.allow(actor)
         state.write_guard.enforce("sessions_dashboard_app_fetch", "SELECT 1")
 
+        include_locks_bool = include_locks
+        if isinstance(include_locks, str):
+            include_locks_bool = include_locks.strip().lower() in {
+                "true",
+                "1",
+                "yes",
+                "on",
+            }
+
         sessions = state.connection_manager.execute_catalog_query(
             instance_id,
             db_name,
             active_sessions_query(200),
             200,
         )
+        masked_sessions: list[dict[str, Any]] = []
+        for row in sessions["rows"]:
+            masked_row = dict(row)
+            masked_row["login_name"] = _redact_login_name(row.get("login_name"))
+            masked_sessions.append(masked_row)
         lock_rows = {"rows": []}
         blocking_chain_rows = {"rows": []}
-        if include_locks:
+        if include_locks_bool:
             lock_rows = state.connection_manager.execute_catalog_query(
                 instance_id,
                 db_name,
@@ -102,6 +125,7 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
                 200,
             )
 
+        seen_blockers: set[int] = set()
         head_blockers: list[int] = []
         # Compute true head blockers: sessions that block others but are not themselves blocked
         blocking_ids = set()
@@ -116,17 +140,21 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
                     pass
             if blocking_session_id is not None and blocking_session_id > 0:
                 try:
-                    blocking_ids.add(int(blocking_session_id))
+                        blocking_ids.add(int(blocking_session_id))
                 except (TypeError, ValueError):
                     pass
-        head_blockers = sorted(blocking_ids - blocked_ids)
+        for blocker_id in sorted(blocking_ids - blocked_ids):
+            if blocker_id not in seen_blockers:
+                seen_blockers.add(blocker_id)
+                head_blockers.append(blocker_id)
+        total_blockers = len(seen_blockers)
 
         return {
             "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "instance_number": instance_number,
             "database_name": db_name,
             "lookback_minutes": lookback_minutes,
-            "active_sessions": sessions["rows"],
+            "active_sessions": masked_sessions,
             "lock_chains": lock_rows["rows"],
             "blocking_chains": blocking_chain_rows["rows"],
             "head_blockers": head_blockers[:25],
@@ -136,7 +164,7 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
                     "action": "Investigate head blockers and long wait chains."
                     if head_blockers
                     else "No immediate lock chain action required.",
-                    "rationale": f"Detected {len(head_blockers)} unique blocking session(s).",
+                    "rationale": f"Detected {total_blockers} unique blocking session(s).",
                 }
             ],
         }
@@ -176,8 +204,8 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
                         required=True,
                     )
                     with Select(name="include_locks", label="Include Locks"):
-                        SelectOption("Yes", value="true")
-                        SelectOption("No", value="false")
+                        SelectOption("Yes", value=True)
+                        SelectOption("No", value=False)
                 Button("Refresh")
 
             Separator()

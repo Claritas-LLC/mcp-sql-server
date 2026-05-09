@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 _STORE_LOCK = threading.RLock()
 _DASHBOARD_PAGES: dict[str, dict[str, object]] = {}
+_MAX_TTL_SECONDS = 7 * 24 * 60 * 60
 
 
 def _now_epoch() -> float:
@@ -20,7 +21,27 @@ def _validate_request_id(request_id: str) -> None:
     if not isinstance(request_id, str) or not request_id.strip():
         raise ValueError("request_id must be a non-empty string")
     if not re.match(r"^[a-zA-Z0-9_-]{1,255}$", request_id):
-        raise ValueError(f"request_id contains invalid characters: {request_id}")
+        raise ValueError("request_id contains invalid characters")
+
+
+def _validate_html(html: str) -> str:
+    if not isinstance(html, str):
+        raise ValueError("html must be a string")
+    if not html.strip():
+        raise ValueError("html must be a non-empty string")
+    return html
+
+
+def _validate_ttl_seconds(ttl_seconds: int) -> int:
+    try:
+        ttl = int(ttl_seconds)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ttl_seconds must be an integer") from exc
+    if ttl < 1:
+        raise ValueError("ttl_seconds must be >= 1")
+    if ttl > _MAX_TTL_SECONDS:
+        raise ValueError(f"ttl_seconds must be <= {_MAX_TTL_SECONDS}")
+    return ttl
 
 
 def _public_base_url() -> str:
@@ -44,9 +65,11 @@ def register_dashboard_page(request_id: str, html: str, ttl_seconds: int = 900) 
     Pages are stored in-memory with TTL and are retrievable via
     `/diagnostics/dashboards/{request_id}`.
     """
+    html = _validate_html(html)
+    ttl = _validate_ttl_seconds(ttl_seconds)
     _validate_request_id(request_id)
     now_epoch = _now_epoch()
-    expires_epoch = now_epoch + max(ttl_seconds, 1)
+    expires_epoch = now_epoch + ttl
     with _STORE_LOCK:
         _cleanup_expired(now_epoch)
         _DASHBOARD_PAGES[request_id] = {
@@ -82,6 +105,9 @@ def get_dashboard_page_expiry_utc(request_id: str) -> str | None:
         if entry is None:
             return None
         expires_epoch = float(entry.get("expires_epoch", 0.0))
+        if expires_epoch <= now_epoch:
+            _DASHBOARD_PAGES.pop(request_id, None)
+            return None
         return datetime.fromtimestamp(expires_epoch, tz=timezone.utc).isoformat()
 
 

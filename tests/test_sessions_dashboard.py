@@ -6,6 +6,8 @@ TASK-018: Integration-level tests for dashboard payload structure and head_block
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from src.tools.dashboard_payloads import (
     DASHBOARD_STATE_SCHEMA,
     build_sessions_dashboard,
@@ -337,8 +339,6 @@ def test_full_payload_generated_at_utc_is_iso_format() -> None:
     )
     ts = result["data"]["generated_at_utc"]
     # Should be parseable as ISO 8601 datetime
-    from datetime import datetime
-
     parsed = datetime.fromisoformat(ts)
     assert parsed.tzinfo is not None
 
@@ -471,15 +471,16 @@ def test_full_payload_html_marks_head_blocker_row() -> None:
 
 
 def test_full_payload_html_escapes_script_in_session_fields() -> None:
+    xss = "<script>alert(1)</script>"
     result = build_sessions_dashboard_full(
         instance_number=1,
-        database_name="master",
+        database_name=xss,
         sessions=[
             {
                 "session_id": 13,
-                "login_name": "<script>alert(1)</script>",
-                "host_name": "host",
-                "program_name": "client",
+                "login_name": xss,
+                "host_name": xss,
+                "program_name": xss,
                 "status": "idle",
                 "session_database_name": "master",
                 "open_transaction_count": 0,
@@ -492,10 +493,30 @@ def test_full_payload_html_escapes_script_in_session_fields() -> None:
         ],
         lock_chains=[],
         tran_locks=[],
-        waiting_tasks=[],
+        waiting_tasks=[
+            {
+                "session_id": 13,
+                "blocking_session_id": 11,
+                "wait_type": "LCK_M_X",
+                "wait_duration_ms": 1200,
+                "resource_description": xss,
+            }
+        ],
         head_blockers=[],
+        blocking_chains=[
+            {
+                "session_id": 13,
+                "blocking_session_id": 11,
+                "wait_type": "LCK_M_X",
+                "wait_time": 1200,
+                "status": "suspended",
+                "login_name": xss,
+                "host_name": xss,
+                "command": "UPDATE",
+            }
+        ],
     )
-    assert "<script>alert(1)</script>" not in result["html"]
+    assert xss not in result["html"]
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in result["html"]
 
 

@@ -1,6 +1,16 @@
 from __future__ import annotations
 
 
+def _validate_top_n(top_n: int) -> int:
+    try:
+        value = int(top_n)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("top_n must be an integer between 1 and 10000") from exc
+    if value < 1 or value > 10000:
+        raise ValueError("top_n must be between 1 and 10000")
+    return value
+
+
 def table_size_query(top_n: int) -> str:
     return (
         f"SELECT TOP {top_n} s.name AS schema_name, t.name AS table_name, "
@@ -79,6 +89,7 @@ def backup_recency_query() -> str:
 
 
 def active_sessions_query(top_n: int) -> str:
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} s.session_id, s.login_name, s.host_name, s.program_name, s.status, "
         "DB_NAME(s.database_id) AS session_database_name, "
@@ -92,6 +103,7 @@ def active_sessions_query(top_n: int) -> str:
 
 
 def lock_chain_query(top_n: int) -> str:
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} wt.session_id, wt.blocking_session_id, wt.wait_type, wt.wait_duration_ms, wt.resource_description "
         "FROM sys.dm_os_waiting_tasks wt "
@@ -102,6 +114,7 @@ def lock_chain_query(top_n: int) -> str:
 
 def blocking_chain_query(top_n: int) -> str:
     """Blocked-session rows used to render chaining details in webpage view."""
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} "
         "r.session_id, "
@@ -366,8 +379,16 @@ def datatype_inconsistency_query(top_n: int) -> str:
         "  ON c_parent.object_id = fkc.referenced_object_id AND c_parent.column_id = fkc.referenced_column_id "
         "JOIN sys.types tp_parent ON tp_parent.user_type_id = c_parent.user_type_id "
         "WHERE tp_child.name != tp_parent.name "
-        "   OR c_child.max_length != c_parent.max_length "
-        "   OR c_child.precision != c_parent.precision "
+        "   OR ("
+        "      tp_child.name IN ('char','varchar','nchar','nvarchar','binary','varbinary') "
+        "      AND tp_parent.name IN ('char','varchar','nchar','nvarchar','binary','varbinary') "
+        "      AND c_child.max_length != c_parent.max_length"
+        "   ) "
+        "   OR ("
+        "      tp_child.name IN ('decimal','numeric') "
+        "      AND tp_parent.name IN ('decimal','numeric') "
+        "      AND (c_child.precision != c_parent.precision OR c_child.scale != c_parent.scale)"
+        "   ) "
         "ORDER BY child_schema, child_table, child_column"
     )
 

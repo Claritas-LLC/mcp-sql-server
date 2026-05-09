@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import time
 import uuid
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from fastmcp import Context, FastMCP
 from fastmcp.server.dependencies import get_access_token
@@ -57,6 +59,18 @@ from src.tools.tool_registry import generate_tool_specs
 logger = get_logger(__name__)
 
 
+def _sanitize_dashboard_url(url: str) -> str:
+    try:
+        parsed = urlsplit(url)
+    except Exception:
+        return "<invalid-url>"
+    parts = [p for p in parsed.path.split("/") if p]
+    if parts:
+        parts[-1] = "<request-id>"
+    safe_path = "/" + "/".join(parts) if parts else "/"
+    return urlunsplit((parsed.scheme, parsed.netloc, safe_path, "", ""))
+
+
 # ---------------------------------------------------------------------------
 # Private async subtool helpers – used exclusively by _analyze_db_data_model
 # ---------------------------------------------------------------------------
@@ -85,8 +99,12 @@ async def _subtool_analyze_indexes(
                 f"[{request_id}] Subtool: missing index DMV scan",
                 extra={"request_id": request_id, "db": db_name},
             )
-        result = connection_manager.execute_catalog_query(
-            instance_id, db_name, missing_index_dmv_query(50), 50
+        result = await asyncio.to_thread(
+            connection_manager.execute_catalog_query,
+            instance_id,
+            db_name,
+            missing_index_dmv_query(50),
+            50,
         )
         rows = result["rows"]
         if schema_filter:
@@ -136,8 +154,12 @@ async def _subtool_analyze_indexes(
 
     # 2. FK columns without a supporting index
     try:
-        result = connection_manager.execute_catalog_query(
-            instance_id, db_name, missing_fk_index_query(), 200
+        result = await asyncio.to_thread(
+            connection_manager.execute_catalog_query,
+            instance_id,
+            db_name,
+            missing_fk_index_query(),
+            200,
         )
         rows = result["rows"]
         if schema_filter:
@@ -181,8 +203,12 @@ async def _subtool_analyze_indexes(
 
     # 3. Redundant index pairs sharing the same leading key column
     try:
-        result = connection_manager.execute_catalog_query(
-            instance_id, db_name, redundant_indexes_query(100), 100
+        result = await asyncio.to_thread(
+            connection_manager.execute_catalog_query,
+            instance_id,
+            db_name,
+            redundant_indexes_query(100),
+            100,
         )
         rows = result["rows"]
         if schema_filter:
@@ -227,8 +253,12 @@ async def _subtool_analyze_indexes(
 
     # 4. Unused nonclustered indexes (never read since last restart, but still maintained)
     try:
-        result = connection_manager.execute_catalog_query(
-            instance_id, db_name, unused_indexes_query(100), 100
+        result = await asyncio.to_thread(
+            connection_manager.execute_catalog_query,
+            instance_id,
+            db_name,
+            unused_indexes_query(100),
+            100,
         )
         rows = result["rows"]
         if schema_filter:
@@ -2962,6 +2992,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     dashboard_url = register_dashboard_page(
                         request_id, full_payload["html"], ttl_seconds=900
                     )
+                    sanitized_dashboard_url = _sanitize_dashboard_url(dashboard_url)
                     expires_at_utc = get_dashboard_page_expiry_utc(request_id)
 
                     if ctx is not None:
@@ -2974,11 +3005,11 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 "sessions": len(sessions["rows"]),
                                 "head_blockers": len(head_blockers),
                                 "decision": decision,
-                                "dashboard_url": dashboard_url,
+                                "dashboard_url": sanitized_dashboard_url,
                             },
                         )
                     logger.info(
-                        f"Transaction {request_id}: {_tool} - {len(sessions['rows'])} sessions analyzed - URL: {dashboard_url}"
+                        f"Transaction {request_id}: {_tool} - {len(sessions['rows'])} sessions analyzed - URL: {sanitized_dashboard_url}"
                     )
 
                     return {

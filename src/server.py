@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 from contextlib import asynccontextmanager
@@ -75,47 +76,52 @@ def build_fastapi_app() -> FastAPI:
             max_keepalive_connections=max_keepalive_connections,
         ),
     )
-    conn_mgr = ConnectionManager(cfg.instances, secret_resolver=secret_resolver)
-    limiter = build_rate_limiter(
-        backend=rate_limit_backend,
-        actor_rpm=cfg.rate_limit.actor.requests_per_minute,
-        actor_burst=cfg.rate_limit.actor.burst,
-        global_rpm=cfg.rate_limit.global_.requests_per_minute,
-        global_burst=cfg.rate_limit.global_.burst,
-        redis_url=redis_url,
-        redis_namespace=redis_namespace,
-    )
-    state = AppState(
-        version="1.0.0",
-        config=cfg,
-        policy=cfg.policy,
-        auth=cfg.auth,
-        policy_path=policy_path,
-        audit_path=audit_path,
-        connection_manager=conn_mgr,
-        write_guard=WriteGuard(cfg.policy),
-        rate_limiter=limiter,
-        audit_logger=AuditLogger(file_path=audit_path),
-        session_manager=SessionManager(
-            session_ttl_minutes=cfg.rate_limit.session.session_ttl_minutes,
-            inactivity_timeout_minutes=cfg.rate_limit.session.inactivity_timeout_minutes,
-            concurrent_sessions_limit=cfg.rate_limit.session.concurrent_sessions_limit,
-        ),
-        rate_limit_backend=rate_limit_backend,
-        registered_tools=[],
-        tool_flag_env_applied=has_tool_flag_env,
-        auth_http_client=shared_http_client,
-        last_secret_refresh_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    )
+    try:
+        conn_mgr = ConnectionManager(cfg.instances, secret_resolver=secret_resolver)
+        limiter = build_rate_limiter(
+            backend=rate_limit_backend,
+            actor_rpm=cfg.rate_limit.actor.requests_per_minute,
+            actor_burst=cfg.rate_limit.actor.burst,
+            global_rpm=cfg.rate_limit.global_.requests_per_minute,
+            global_burst=cfg.rate_limit.global_.burst,
+            redis_url=redis_url,
+            redis_namespace=redis_namespace,
+        )
+        state = AppState(
+            version="1.0.0",
+            config=cfg,
+            policy=cfg.policy,
+            auth=cfg.auth,
+            policy_path=policy_path,
+            audit_path=audit_path,
+            connection_manager=conn_mgr,
+            write_guard=WriteGuard(cfg.policy),
+            rate_limiter=limiter,
+            audit_logger=AuditLogger(file_path=audit_path),
+            session_manager=SessionManager(
+                session_ttl_minutes=cfg.rate_limit.session.session_ttl_minutes,
+                inactivity_timeout_minutes=cfg.rate_limit.session.inactivity_timeout_minutes,
+                concurrent_sessions_limit=cfg.rate_limit.session.concurrent_sessions_limit,
+            ),
+            rate_limit_backend=rate_limit_backend,
+            registered_tools=[],
+            tool_flag_env_applied=has_tool_flag_env,
+            auth_http_client=shared_http_client,
+            last_secret_refresh_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
 
-    auth_provider = build_auth_provider(cfg.auth, shared_http_client, secret_resolver)
-    if auth_provider is not None:
-        mcp = FastMCP("sql2019-dual-instance", auth=auth_provider)
-    else:
-        mcp = FastMCP("sql2019-dual-instance")
-    registered_tools = register_sql_tools(mcp, state)
-    register_sessions_dashboard_app_provider(mcp, state)
-    state.registered_tools = registered_tools
+        auth_provider = build_auth_provider(cfg.auth, shared_http_client, secret_resolver)
+        if auth_provider is not None:
+            mcp = FastMCP("sql2019-dual-instance", auth=auth_provider)
+        else:
+            mcp = FastMCP("sql2019-dual-instance")
+        registered_tools = register_sql_tools(mcp, state)
+        register_sessions_dashboard_app_provider(mcp, state)
+        state.registered_tools = registered_tools
+    except Exception:
+        # Ensure the async client is cleaned up if app construction fails.
+        asyncio.run(shared_http_client.aclose())
+        raise
 
     # FastMCP versions differ in mount helper names. Use getattr to stay
     # compatible across versions without triggering type-checker errors on

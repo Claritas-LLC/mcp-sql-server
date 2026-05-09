@@ -10,12 +10,12 @@ max_query_duration_ms: 15000
 allowed_tools:
   db_primary_sql2019_exec_proc:
     allowed_procedures:
-      - dbo.usp_RunApprovedMaintenance # Approved maintenance routine; DBA-reviewed proc only. DDL is not permitted by MCP policy and procedure must remain non-DDL.
-      - dbo.usp_RefreshMaterializedView # Internal refresh routine only; constrained via allowlist + audit trail. No CREATE/ALTER/DROP paths allowed.
+      - dbo.usp_RunApprovedMaintenance # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
+      - dbo.usp_RefreshMaterializedView # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
   db_secondary_sql2019_exec_proc:
     allowed_procedures:
-      - dbo.usp_RunApprovedMaintenance # Approved maintenance routine; DBA-reviewed proc only. DDL is not permitted by MCP policy and procedure must remain non-DDL.
-      - dbo.usp_RefreshMaterializedView # Internal refresh routine only; constrained via allowlist + audit trail. No CREATE/ALTER/DROP paths allowed.
+      - dbo.usp_RunApprovedMaintenance # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
+      - dbo.usp_RefreshMaterializedView # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
 instance_enable_flags:
   primary: true
   secondary: true

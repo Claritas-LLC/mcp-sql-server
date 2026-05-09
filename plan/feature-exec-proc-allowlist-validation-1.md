@@ -139,9 +139,27 @@ GOAL-006: Pre-deployment validation and rollout readiness.
 - RISK-001: Misconfigured allowlist may block legitimate users.
   - Mitigation: Clear documentation, dry-run validation, monthly security review process.
 - RISK-002: Existing deployments without allowed_tools will deny all procedures (fail-safe).
-  - Mitigation: Non-breaking change; empty tool config defaults to deny-all.
+  - Mitigation: This is a breaking change for deployments that have not populated `allowed_tools` in `runtime-policy.yaml`. Migrate policy before rollout, or use an explicit legacy opt-in during a short grace period.
 - RISK-003: Schema-qualified name edge cases.
   - Mitigation: 15 unit tests cover common patterns; documented assumptions.
+
+### Migration Guidance
+
+- Update `runtime-policy.yaml` to define explicit `allowed_tools` entries for each `*_exec_proc` tool before enabling rollout.
+- If immediate migration is not possible, use an explicit temporary legacy opt-in (for example `enable-legacy-allowlist: true`) during a bounded grace period and track its removal date.
+- Validate migrated policy in pre-production by exercising all approved procedures and confirming denied procedures fail as expected.
+
+### Backward Compatibility
+
+- Recommended temporary compatibility strategy: allow a short, explicit grace-period toggle (for example `enable-legacy-allowlist: true`) while operators populate `allowed_tools`.
+- Default target behavior remains fail-safe deny when `allowed_tools` is missing or empty, per CON-001 policy direction.
+- Rollout plan: announce deprecation window, enable warnings, then remove legacy toggle after migration completion.
+
+### Deployment Communication
+
+- Notify operators that procedure validation is now enforced from `runtime-policy.yaml` / `allowed_tools` and may block previously allowed calls.
+- Publish timeline milestones: warning start, grace-period end, strict enforcement date.
+- Include sample policy snippets and troubleshooting guidance for denied procedure errors.
 
 ## 9. Rollout Checklist
 
@@ -151,6 +169,10 @@ GOAL-006: Pre-deployment validation and rollout readiness.
 - [x] Documentation updated
 - [x] Audit logging verified
 - [x] Fail-safe default (deny) confirmed
+- [ ] Migration guide published for deployments missing `allowed_tools`
+- [ ] Communication plan sent to operators and on-call teams
+- [ ] Rollback procedure documented and tested for production incidents
+- [ ] Monitoring/alerting added for allowlist-related denials and error-rate spikes
 
 ## 10. Related Documentation
 

@@ -17,7 +17,7 @@ jobs:
         with:
           script: |
             const prBody = context.payload.pull_request.body || "";
-            const hasRequirement = /\b(?:Implements|Closes|Fixes|Resolves)\b(?:\s*:|\s+)\s*#\d+\b/i.test(prBody);
+            const hasRequirement = /\b(?:Implements|Closes|Fixes|Resolves)\b(?:\s*:|\s+)\s*(?:https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+|[\w.-]+\/[\w.-]+#\d+|#\d+)\b/i.test(prBody);
 
             if (!hasRequirement) {
               core.setFailed('PR must reference at least one requirement issue. Add one of: \'Implements #<issue>\', \'Closes #<issue>\', \'Fixes #<issue>\', or \'Resolves #<issue>\' to the PR body.');

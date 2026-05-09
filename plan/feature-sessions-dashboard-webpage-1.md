@@ -37,7 +37,7 @@ The JSON `data` envelope is preserved so downstream LLM consumers still get stru
 - **REQ-010**: A metadata header bar must show instance number, database, generated timestamp, and stat pills for Sessions / Lock Holders / Waiting Tasks / Chain Rows.
 - **REQ-011**: No external CSS framework, JS library, or CDN resource may be loaded. All styling and interactivity must be inside `<style>` / `<script>` blocks.
 - **REQ-012**: A `recommendations` panel must appear at the bottom of the page using priority-colored cards.
-- **SEC-001**: All SQL string columns inserted into HTML (`login_name`, `host_name`, `program_name`, `command`, `wait_type`, `resource_description`) must pass through `html.escape()` to prevent stored XSS.
+- **SEC-001**: All SQL-derived values inserted into HTML content or attributes must pass through `html.escape()`, except verified numeric types rendered as integers. This includes `database_name` (header/attributes), `status`, recommendation fields (`action`, `rationale`), and stringified numerics (`session_id`, `blocking_session_id`, wait/cpu durations, transaction counts) when rendered as strings.
 - **SEC-002**: No session credential, password hash, or secret column may be selected or rendered.
 - **CON-001**: `build_sessions_dashboard_full()` in `src/tools/dashboard_payloads.py` remains the single source of truth for HTML generation; `_sessions_dashboard` in `sql_tools.py` calls it and publishes the generated HTML under a retrievable URL.
 - **CON-002**: `sessions_dashboard_app.py` (FastMCPApp provider) must continue to function; it uses its own `fetch_sessions_dashboard_data` app-tool independently.
