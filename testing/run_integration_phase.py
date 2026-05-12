@@ -12,15 +12,45 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def _resolve_sqlcmd_binary(container: str) -> str:
+    candidates = [
+        "/opt/mssql-tools18/bin/sqlcmd",
+        "/opt/mssql-tools/bin/sqlcmd",
+    ]
+    for candidate in candidates:
+        probe = subprocess.run(
+            ["docker", "exec", container, "test", "-x", candidate],
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0:
+            return candidate
+    raise RuntimeError(f"sqlcmd not found in container {container}")
+
+
 def _sqlcmd(container: str, password: str, sql: str, database: str = "master") -> str:
-    cmd = (
-        f"if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then "
-        f"/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P '{password}' -No -d {database} -W -s '|' -Q \"{sql}\"; "
-        "else "
-        f"/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P '{password}' -No -d {database} -W -s '|' -Q \"{sql}\"; fi"
-    )
+    sqlcmd_binary = _resolve_sqlcmd_binary(container)
     result = subprocess.run(
-        ["docker", "exec", container, "/bin/bash", "-lc", cmd],
+        [
+            "docker",
+            "exec",
+            container,
+            sqlcmd_binary,
+            "-S",
+            "localhost",
+            "-U",
+            "sa",
+            "-P",
+            password,
+            "-No",
+            "-d",
+            database,
+            "-W",
+            "-s",
+            "|",
+            "-Q",
+            sql,
+        ],
         check=True,
         capture_output=True,
         text=True,
@@ -207,68 +237,6 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
-
-
-def _sqlcmd(container: str, password: str, sql: str, database: str = "master") -> str:
-    cmd = (
-        f"if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then "
-        f"/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P '{password}' -No -d {database} -W -s '|' -Q \"{sql}\"; "
-        "else "
-        f"/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P '{password}' -No -d {database} -W -s '|' -Q \"{sql}\"; fi"
-    )
-    result = subprocess.run(
-        ["docker", "exec", container, "/bin/bash", "-lc", cmd],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout
-
-
-def run() -> None:
-    q1 = "SELECT COUNT(*) AS table_count FROM [USGISPRO_800].[sys].[tables]"
-    q2 = "SELECT COUNT(*) AS table_count FROM [CITYGIS_810].[sys].[tables]"
-
-    ping1 = _sqlcmd(
-        "mcp-sql2019-1", "YourStrong!Passw0rd1", "SELECT @@SERVERNAME AS instance_name"
-    )
-    ping2 = _sqlcmd(
-        "mcp-sql2019-2", "YourStrong!Passw0rd2", "SELECT @@SERVERNAME AS instance_name"
-    )
-    r1 = _sqlcmd("mcp-sql2019-1", "YourStrong!Passw0rd1", q1)
-    r2 = _sqlcmd("mcp-sql2019-2", "YourStrong!Passw0rd2", q2)
-
-    payload = {
-        "phase": "integration",
-        "executed_at_utc": datetime.now(timezone.utc).isoformat(),
-        "instances": [
-            {"instance_number": 1, "health_raw": ping1},
-            {"instance_number": 2, "health_raw": ping2},
-        ],
-        "cross_database_queries": [
-            {
-                "instance_number": 1,
-                "database_context": "master",
-                "sql": q1,
-                "result_raw": r1,
-            },
-            {
-                "instance_number": 2,
-                "database_context": "master",
-                "sql": q2,
-                "result_raw": r2,
-            },
-        ],
-        "assertions": {
-            "instance1_accessible": "instance_name" in ping1,
-            "instance2_accessible": "instance_name" in ping2,
-            "instance1_table_count_positive": "table_count" in r1,
-            "instance2_table_count_positive": "table_count" in r2,
-        },
-    }
-
-    payload["status"] = "passed" if all(payload["assertions"].values()) else "failed"
-    write_json(Path("testing/artifacts/integration/integration-summary.json"), payload)
 
 
 if __name__ == "__main__":

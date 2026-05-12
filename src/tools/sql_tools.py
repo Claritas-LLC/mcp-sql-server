@@ -332,8 +332,12 @@ async def _subtool_analyze_normalization(
                 f"[{request_id}] Subtool: normalization column-overlap scan",
                 extra={"request_id": request_id, "db": db_name},
             )
-        result = connection_manager.execute_catalog_query(
-            instance_id, db_name, normalization_column_overlap_query(), 200
+        result = await asyncio.to_thread(
+            connection_manager.execute_catalog_query,
+            instance_id,
+            db_name,
+            normalization_column_overlap_query(),
+            200,
         )
         rows = result["rows"]
         if schema_filter:
@@ -418,8 +422,12 @@ async def _subtool_analyze_anomalies(
                 f"[{request_id}] Subtool: update anomaly scan",
                 extra={"request_id": request_id, "db": db_name},
             )
-        result = connection_manager.execute_catalog_query(
-            instance_id, db_name, update_heavy_tables_query(50), 50
+        result = await asyncio.to_thread(
+            connection_manager.execute_catalog_query,
+            instance_id,
+            db_name,
+            update_heavy_tables_query(50),
+            50,
         )
         rows = result["rows"]
         if schema_filter:
@@ -606,8 +614,12 @@ async def _subtool_analyze_datatype_consistency(
                 f"[{request_id}] Subtool: FK datatype consistency scan",
                 extra={"request_id": request_id, "db": db_name},
             )
-        result = connection_manager.execute_catalog_query(
-            instance_id, db_name, datatype_inconsistency_query(200), 200
+        result = await asyncio.to_thread(
+            connection_manager.execute_catalog_query,
+            instance_id,
+            db_name,
+            datatype_inconsistency_query(200),
+            200,
         )
         rows = result["rows"]
         if schema_filter:

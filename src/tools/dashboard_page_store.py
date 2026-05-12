@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 import re
 import threading
@@ -53,10 +54,17 @@ def _cleanup_expired(now_epoch: float) -> None:
     expired_ids = [
         request_id
         for request_id, entry in _DASHBOARD_PAGES.items()
-        if float(entry.get("expires_epoch", 0.0)) <= now_epoch
+        if _entry_expires_epoch(entry) <= now_epoch
     ]
     for request_id in expired_ids:
         _DASHBOARD_PAGES.pop(request_id, None)
+
+
+def _entry_expires_epoch(entry: dict[str, object]) -> float:
+    expires_epoch = entry.get("expires_epoch", 0.0)
+    if isinstance(expires_epoch, (int, float)) and not isinstance(expires_epoch, bool):
+        return float(expires_epoch)
+    return 0.0
 
 
 def register_dashboard_page(request_id: str, html: str, ttl_seconds: int = 900) -> str:
@@ -65,18 +73,12 @@ def register_dashboard_page(request_id: str, html: str, ttl_seconds: int = 900) 
     Pages are stored in-memory with TTL and are retrievable via
     `/diagnostics/dashboards/{request_id}`.
     """
-    html = _validate_html(html)
-    ttl = _validate_ttl_seconds(ttl_seconds)
-    _validate_request_id(request_id)
-    now_epoch = _now_epoch()
-    expires_epoch = now_epoch + ttl
-    with _STORE_LOCK:
-        _cleanup_expired(now_epoch)
-        _DASHBOARD_PAGES[request_id] = {
-            "html": html,
-            "expires_epoch": expires_epoch,
-        }
-    return f"{_public_base_url()}/diagnostics/dashboards/{request_id}"
+    return register_dashboard_page_with_metadata(
+        request_id,
+        html,
+        ttl_seconds=ttl_seconds,
+        metadata=None,
+    )
 
 
 def register_dashboard_page_with_metadata(
@@ -94,63 +96,57 @@ def register_dashboard_page_with_metadata(
     expires_epoch = now_epoch + ttl
     with _STORE_LOCK:
         _cleanup_expired(now_epoch)
-        _DASHBOARD_PAGES[request_id] = {
+        entry: dict[str, object] = {
             "html": html,
             "expires_epoch": expires_epoch,
-            "metadata": dict(metadata or {}),
         }
+        if metadata is not None:
+            entry["metadata"] = copy.deepcopy(metadata)
+        _DASHBOARD_PAGES[request_id] = entry
     return f"{_public_base_url()}/diagnostics/dashboards/{request_id}"
+
+
+def _get_valid_entry(request_id: str) -> dict[str, object] | None:
+    _validate_request_id(request_id)
+    now_epoch = _now_epoch()
+    with _STORE_LOCK:
+        _cleanup_expired(now_epoch)
+        entry = _DASHBOARD_PAGES.get(request_id)
+        if entry is None:
+            return None
+        expires_epoch = _entry_expires_epoch(entry)
+        if expires_epoch <= now_epoch:
+            _DASHBOARD_PAGES.pop(request_id, None)
+            return None
+        return entry
 
 
 def get_dashboard_page(request_id: str) -> str | None:
     """Return stored dashboard HTML if present and not expired; else None."""
-    _validate_request_id(request_id)
-    now_epoch = _now_epoch()
-    with _STORE_LOCK:
-        _cleanup_expired(now_epoch)
-        entry = _DASHBOARD_PAGES.get(request_id)
-        if entry is None:
-            return None
-        expires_epoch = float(entry.get("expires_epoch", 0.0))
-        if expires_epoch <= now_epoch:
-            _DASHBOARD_PAGES.pop(request_id, None)
-            return None
-        return str(entry.get("html", ""))
+    entry = _get_valid_entry(request_id)
+    if entry is None:
+        return None
+    return str(entry.get("html", ""))
 
 
 def get_dashboard_page_metadata(request_id: str) -> dict[str, object] | None:
     """Return stored dashboard metadata if present and not expired."""
-    _validate_request_id(request_id)
-    now_epoch = _now_epoch()
-    with _STORE_LOCK:
-        _cleanup_expired(now_epoch)
-        entry = _DASHBOARD_PAGES.get(request_id)
-        if entry is None:
-            return None
-        expires_epoch = float(entry.get("expires_epoch", 0.0))
-        if expires_epoch <= now_epoch:
-            _DASHBOARD_PAGES.pop(request_id, None)
-            return None
-        metadata = entry.get("metadata")
-        if not isinstance(metadata, dict):
-            return None
-        return dict(metadata)
+    entry = _get_valid_entry(request_id)
+    if entry is None:
+        return None
+    metadata = entry.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    return copy.deepcopy(metadata)
 
 
 def get_dashboard_page_expiry_utc(request_id: str) -> str | None:
     """Return page expiry timestamp in UTC ISO-8601, if present and not expired."""
-    _validate_request_id(request_id)
-    now_epoch = _now_epoch()
-    with _STORE_LOCK:
-        _cleanup_expired(now_epoch)
-        entry = _DASHBOARD_PAGES.get(request_id)
-        if entry is None:
-            return None
-        expires_epoch = float(entry.get("expires_epoch", 0.0))
-        if expires_epoch <= now_epoch:
-            _DASHBOARD_PAGES.pop(request_id, None)
-            return None
-        return datetime.fromtimestamp(expires_epoch, tz=timezone.utc).isoformat()
+    entry = _get_valid_entry(request_id)
+    if entry is None:
+        return None
+    expires_epoch = _entry_expires_epoch(entry)
+    return datetime.fromtimestamp(expires_epoch, tz=timezone.utc).isoformat()
 
 
 def clear_dashboard_pages() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -33,28 +34,31 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
     """
     try:
         from fastmcp import FastMCPApp
-        from prefab_ui.actions import ShowToast
-        from prefab_ui.actions.mcp import CallTool
-        from prefab_ui.app import PrefabApp
-        from prefab_ui.components import (
-            Button,
-            Column,
-            Form,
-            Heading,
-            Input,
-            Row,
-            Select,
-            SelectOption,
-            Separator,
-            Text,
-            ForEach,
-        )
+        prefab_actions = importlib.import_module("prefab_ui.actions")
+        prefab_mcp = importlib.import_module("prefab_ui.actions.mcp")
+        prefab_app = importlib.import_module("prefab_ui.app")
+        prefab_components = importlib.import_module("prefab_ui.components")
     except Exception as exc:  # pragma: no cover - environment-specific optional deps
         logger.warning(
             "Interactive app dependencies unavailable; sessions app provider disabled: %s",
             exc,
         )
         return False
+
+    ShowToast = prefab_actions.ShowToast
+    CallTool = prefab_mcp.CallTool
+    PrefabApp = prefab_app.PrefabApp
+    Button = prefab_components.Button
+    Column = prefab_components.Column
+    Form = prefab_components.Form
+    Heading = prefab_components.Heading
+    Input = prefab_components.Input
+    Row = prefab_components.Row
+    Select = prefab_components.Select
+    SelectOption = prefab_components.SelectOption
+    Separator = prefab_components.Separator
+    Text = prefab_components.Text
+    ForEach = prefab_components.ForEach
 
     app = FastMCPApp("SQL Sessions Dashboard")
 

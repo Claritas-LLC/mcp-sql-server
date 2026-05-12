@@ -21,6 +21,7 @@ DASHBOARD_STATE_SCHEMA: dict[str, Any] = {
             "properties": {
                 "loading": {"type": "boolean"},
                 "error": {"type": ["string", "null"]},
+                "refresh_url": {"type": ["string", "null"]},
             },
             "required": ["loading", "error"],
         },
@@ -36,6 +37,7 @@ DASHBOARD_STATE_SCHEMA: dict[str, Any] = {
                     "session_database_name": {"type": ["string", "null"]},
                     "status": {"type": "string"},
                     "command": {"type": ["string", "null"]},
+                    "open_transaction_count": {"type": ["integer", "null"]},
                     "sql_command": {"type": ["string", "null"]},
                     "login_time": {"type": ["string", "null"]},
                     "start_time": {"type": ["string", "null"]},
@@ -125,21 +127,28 @@ def _esc(value: Any) -> str:
     return html.escape(str(value), quote=True)
 
 
+def _coerce_optional_int(value: Any) -> int:
+    if isinstance(value, bool) or value is None:
+        return -1
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return -1
+    return -1
+
+
 def _session_row_class(session: dict[str, Any], head_blockers: set[int]) -> str:
     session_id = session.get("session_id")
-    try:
-        sid = int(session_id)
-    except (TypeError, ValueError):
-        sid = -1
+    sid = _coerce_optional_int(session_id)
 
     if sid in head_blockers:
         return "row-head-blocker"
 
     blocker = session.get("blocking_session_id")
-    try:
-        blocker_sid = int(blocker)
-    except (TypeError, ValueError):
-        blocker_sid = 0
+    blocker_sid = _coerce_optional_int(blocker)
     if blocker_sid > 0:
         return "row-blocked"
 
@@ -308,10 +317,8 @@ def _html_refresh_script(refresh_url: str | None) -> str:
         "    try {"
         "      const response = await fetch(refreshUrl, { headers: { 'X-Requested-With': 'fetch' } });"
         "      if (!response.ok) throw new Error('Refresh failed');"
-        "      const html = await response.text();"
-        "      document.open();"
-        "      document.write(html);"
-        "      document.close();"
+        "      if (status) status.textContent = 'Dashboard refreshed';"
+        "      window.location.reload();"
         "    } catch (error) {"
         "      button.disabled = false;"
         "      if (status) status.textContent = 'Refresh failed. Try again.';"
@@ -330,9 +337,8 @@ def _html_chain_section(
 
     wait_by_session: dict[int, str] = {}
     for row in waiting_tasks:
-        try:
-            sid = int(row.get("session_id"))
-        except (TypeError, ValueError):
+        sid = _coerce_optional_int(row.get("session_id"))
+        if sid < 0:
             continue
         if sid not in wait_by_session:
             wait_by_session[sid] = str(row.get("resource_description") or "")
@@ -341,10 +347,9 @@ def _html_chain_section(
     blocking_by_session: dict[int, int] = {}
     for row in blocking_chains:
         grouped.setdefault(str(row.get("blocking_session_id")), []).append(row)
-        try:
-            sid = int(row.get("session_id"))
-            bsid = int(row.get("blocking_session_id"))
-        except (TypeError, ValueError):
+        sid = _coerce_optional_int(row.get("session_id"))
+        bsid = _coerce_optional_int(row.get("blocking_session_id"))
+        if sid < 0 or bsid < 0:
             continue
         if sid > 0 and bsid > 0:
             blocking_by_session[sid] = bsid
@@ -377,9 +382,8 @@ def _html_chain_section(
             "<table><thead><tr><th>Blocked SID</th><th>Login</th><th>Host</th><th>Command</th><th>Wait Type</th><th>Wait (ms)</th><th>Resource</th></tr></thead><tbody>"
         )
         for row in rows:
-            try:
-                sid = int(row.get("session_id"))
-            except (TypeError, ValueError):
+            sid = _coerce_optional_int(row.get("session_id"))
+            if sid < 0:
                 sid = -1
             depth = _depth_for_session(sid) if sid > 0 else 0
             chunks.append(

@@ -11,6 +11,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 from starlette.responses import Response
 
 from src.diagnostics.usage_summary import summarize_audit_events
+from src.tools.input_validation import validate_database_name
 from src.tools.dashboard_page_store import (
     get_dashboard_page,
     get_dashboard_page_metadata,
@@ -31,9 +32,47 @@ def _refresh_dashboard_html(state: Any, request_id: str) -> str:
     if metadata is None:
         raise HTTPException(status_code=404, detail="dashboard_page_not_found_or_expired")
 
-    instance_id = str(metadata.get("instance_id") or "")
-    instance_number = int(metadata.get("instance_number") or 0)
-    database_name = str(metadata.get("database_name") or "master")
+    instance_id_value = metadata.get("instance_id")
+    if not isinstance(instance_id_value, str) or not instance_id_value.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid dashboard metadata: instance_id must be a non-empty string",
+        )
+    instance_id = instance_id_value.strip()
+
+    instance_number_value = metadata.get("instance_number")
+    if isinstance(instance_number_value, int) and not isinstance(instance_number_value, bool):
+        instance_number = instance_number_value
+    elif isinstance(instance_number_value, str):
+        try:
+            instance_number = int(instance_number_value)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid dashboard metadata: instance_number must be an integer",
+            ) from exc
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid dashboard metadata: instance_number must be an integer",
+        )
+    if instance_number < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid dashboard metadata: instance_number must be positive",
+        )
+
+    database_name_value = metadata.get("database_name", "master")
+    if database_name_value is None:
+        database_name = "master"
+    elif not isinstance(database_name_value, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid dashboard metadata: database_name must be a string",
+        )
+    else:
+        database_name = validate_database_name(database_name_value)
+
     include_locks = bool(metadata.get("include_locks", True))
 
     state.write_guard.enforce("sessions_dashboard_page_refresh", "SELECT 1")
