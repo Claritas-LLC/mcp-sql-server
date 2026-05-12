@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import ipaddress
+import socket
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +14,46 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+def _is_private_or_internal_ip(ip_text: str) -> bool:
+    try:
+        ip_obj = ipaddress.ip_address(ip_text)
+    except ValueError:
+        return True
+    return (
+        ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_multicast
+        or ip_obj.is_reserved
+        or ip_obj.is_unspecified
+    )
+
+
+def _validate_local_mcp_base_url(base_url: str) -> str:
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("Only http/https schemes are allowed")
+    host = (parsed.hostname or "").lower()
+    allowed_hosts = {"localhost", "127.0.0.1", "::1"}
+    if host not in allowed_hosts:
+        raise ValueError("Only localhost MCP endpoints are allowed")
+
+    try:
+        resolved = socket.getaddrinfo(parsed.hostname, parsed.port or 80, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise ValueError("Failed to resolve MCP endpoint") from exc
+
+    # For localhost-only allowlist, only loopback addresses are acceptable.
+    for info in resolved:
+        ip_text = info[4][0]
+        ip_obj = ipaddress.ip_address(ip_text)
+        if not ip_obj.is_loopback:
+            if _is_private_or_internal_ip(ip_text):
+                raise ValueError("Endpoint resolves to non-loopback internal IP")
+            raise ValueError("Endpoint resolves to non-loopback address")
+    return base_url
 
 
 def _sqlcmd(container: str, password: str, sql: str, database: str = "master") -> str:
@@ -31,6 +74,7 @@ def _sqlcmd(container: str, password: str, sql: str, database: str = "master") -
 
 def _mcp_tool_call(base_url: str, tool_name: str, arguments: dict) -> dict:
     """Call an MCP tool over HTTP (streamable-http transport, JSON-RPC 2.0)."""
+    safe_base_url = _validate_local_mcp_base_url(base_url)
     payload = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -40,7 +84,7 @@ def _mcp_tool_call(base_url: str, tool_name: str, arguments: dict) -> dict:
         }
     ).encode()
     req = urllib.request.Request(
-        f"{base_url}/mcp/",
+        f"{safe_base_url}/mcp/",
         data=payload,
         headers={
             "Content-Type": "application/json",

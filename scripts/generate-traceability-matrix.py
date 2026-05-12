@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import os
 import re
+import socket
 import sys
+import ipaddress
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
@@ -19,9 +22,43 @@ class RequirementRow:
     linked_prs: str
 
 
+def _is_private_or_internal_ip(ip_text: str) -> bool:
+    try:
+        ip_obj = ipaddress.ip_address(ip_text)
+    except ValueError:
+        return True
+    return (
+        ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_multicast
+        or ip_obj.is_reserved
+        or ip_obj.is_unspecified
+    )
+
+
+def _validate_github_api_url(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError("Only https scheme is allowed")
+    if (parsed.hostname or "").lower() != "api.github.com":
+        raise ValueError("Only api.github.com is allowed")
+
+    try:
+        resolved = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise ValueError("Failed to resolve target host") from exc
+    for info in resolved:
+        ip_text = info[4][0]
+        if _is_private_or_internal_ip(ip_text):
+            raise ValueError("Target resolves to private/internal IP")
+    return url
+
+
 def _api_get(url: str, token: str) -> dict | list:
+    safe_url = _validate_github_api_url(url)
     req = urllib.request.Request(
-        url,
+        safe_url,
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",

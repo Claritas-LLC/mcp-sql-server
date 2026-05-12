@@ -10,7 +10,9 @@ import src.tools.dashboard_page_store as page_store
 from src.tools.dashboard_page_store import (
     clear_dashboard_pages,
     get_dashboard_page,
+    get_dashboard_page_metadata,
     register_dashboard_page,
+    register_dashboard_page_with_metadata,
 )
 
 
@@ -71,3 +73,20 @@ def test_dashboard_page_expires_after_ttl(monkeypatch) -> None:
 
     monkeypatch.setattr(page_store, "_now_epoch", lambda: 10_000_000_000.0)
     assert get_dashboard_page("req-expire") is None
+
+
+def test_register_dashboard_page_with_metadata_round_trip() -> None:
+    clear_dashboard_pages()
+
+    _ = register_dashboard_page_with_metadata(
+        "req-meta",
+        "<html><body>dashboard</body></html>",
+        ttl_seconds=900,
+        metadata={"instance_id": "primary", "database_name": "master"},
+    )
+
+    assert get_dashboard_page("req-meta") == "<html><body>dashboard</body></html>"
+    assert get_dashboard_page_metadata("req-meta") == {
+        "instance_id": "primary",
+        "database_name": "master",
+    }

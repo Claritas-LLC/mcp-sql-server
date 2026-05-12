@@ -22,6 +22,7 @@ from src.tools.dashboard_payloads import build_sessions_dashboard_full
 from src.tools.dashboard_page_store import (
     get_dashboard_page_expiry_utc,
     register_dashboard_page,
+    register_dashboard_page_with_metadata,
 )
 from src.tools.input_validation import (
     validate_database_name,
@@ -2978,6 +2979,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         + len(blocking_chain_rows["rows"])
                     )
 
+                    refresh_url = f"/diagnostics/dashboards/{request_id}/refresh"
                     full_payload = build_sessions_dashboard_full(
                         instance_number=_instance_number,
                         database_name=db_name,
@@ -2987,10 +2989,20 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         waiting_tasks=waiting_rows["rows"],
                         head_blockers=head_blockers,
                         blocking_chains=blocking_chain_rows["rows"],
+                        refresh_url=refresh_url,
                     )
 
-                    dashboard_url = register_dashboard_page(
-                        request_id, full_payload["html"], ttl_seconds=900
+                    dashboard_url = register_dashboard_page_with_metadata(
+                        request_id,
+                        full_payload["html"],
+                        ttl_seconds=900,
+                        metadata={
+                            "instance_id": _instance,
+                            "instance_number": _instance_number,
+                            "database_name": db_name,
+                            "lookback_minutes": lookback_minutes,
+                            "include_locks": include_locks,
+                        },
                     )
                     sanitized_dashboard_url = _sanitize_dashboard_url(dashboard_url)
                     expires_at_utc = get_dashboard_page_expiry_utc(request_id)

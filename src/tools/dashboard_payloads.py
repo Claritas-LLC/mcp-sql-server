@@ -36,6 +36,9 @@ DASHBOARD_STATE_SCHEMA: dict[str, Any] = {
                     "session_database_name": {"type": ["string", "null"]},
                     "status": {"type": "string"},
                     "command": {"type": ["string", "null"]},
+                    "sql_command": {"type": ["string", "null"]},
+                    "login_time": {"type": ["string", "null"]},
+                    "start_time": {"type": ["string", "null"]},
                     "wait_type": {"type": ["string", "null"]},
                     "wait_time": {"type": ["integer", "null"]},
                     "cpu_time": {"type": ["integer", "null"]},
@@ -166,12 +169,17 @@ def _html_inline_styles() -> str:
   body { margin: 0; background: var(--bg); color: var(--text); font-family: Segoe UI, Arial, sans-serif; }
   .page { max-width: 1400px; margin: 0 auto; padding: 16px; }
   .meta { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 14px; }
+    .toolbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 10px 0 0; }
   .badge { border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; border: 1px solid var(--border); background: #fff; }
   .badge-active { background: #dcfce7; color: #166534; }
   .badge-idle { background: #e2e8f0; color: #334155; }
   .badge-blocked { background: #fee2e2; color: #991b1b; }
   .badge-blocker { background: #ffedd5; color: #9a3412; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 10px 0; }
+    .button { border: 1px solid #0f172a; background: #0f172a; color: #fff; border-radius: 8px; padding: 8px 14px; font: inherit; font-weight: 700; cursor: pointer; }
+    .button[disabled] { opacity: 0.6; cursor: progress; }
+    .mono { font-family: ui-monospace, Consolas, monospace; }
+    .sql-text { max-width: 420px; white-space: pre-wrap; word-break: break-word; }
   table { width: 100%; border-collapse: collapse; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
   th, td { border-bottom: 1px solid var(--border); text-align: left; padding: 8px; vertical-align: top; }
   th { background: #f1f5f9; font-weight: 700; }
@@ -198,7 +206,16 @@ def _html_header(
     lock_count: int,
     wait_count: int,
     chain_count: int,
+    refresh_url: str | None,
 ) -> str:
+    toolbar = ""
+    if refresh_url:
+        toolbar = (
+            '<div class="toolbar">'
+            f'<button id="refresh-dashboard" class="button" type="button" data-refresh-url="{_esc(refresh_url)}">Refresh</button>'
+            '<span id="refresh-status" class="muted">Point-in-time snapshot</span>'
+            "</div>"
+        )
     return (
         '<header class="card"><h1>SQL Server Sessions Dashboard</h1>'
         f'<div class="muted">Instance {instance_number} / Database {_esc(database_name)}</div>'
@@ -209,6 +226,7 @@ def _html_header(
         f'<span class="badge">Waiting Tasks: {wait_count}</span>'
         f'<span class="badge">Chain Rows: {chain_count}</span>'
         "</div></header>"
+        f"{toolbar}"
     )
 
 
@@ -239,7 +257,7 @@ def _html_sessions_table(
 
         rows_html.append(
             '<tr class="%s">'
-            "<td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
+            "<td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class=\"sql-text\">%s</td><td class=\"mono\">%s</td><td class=\"mono\">%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
             "</tr>"
             % (
                 css_class,
@@ -250,6 +268,9 @@ def _html_sessions_table(
                 _esc(session.get("program_name")),
                 _esc(session.get("session_database_name")),
                 _esc(session.get("command")),
+                _esc(session.get("sql_command")),
+                _esc(session.get("login_time")),
+                _esc(session.get("start_time")),
                 _esc(session.get("wait_type")),
                 _esc(session.get("wait_time")),
                 _esc(session.get("cpu_time")),
@@ -266,8 +287,38 @@ def _html_sessions_table(
         '<section class="card" id="sessions"><h2>Sessions</h2>'
         "<table>"
         f"{caption}"
-        "<thead><tr><th>Status</th><th>SID</th><th>Login</th><th>Host</th><th>Program</th><th>Database</th><th>Command</th><th>Wait Type</th><th>Wait (ms)</th><th>CPU (ms)</th><th>Txns</th><th>Blocking SID</th></tr></thead>"
+        "<thead><tr><th>Status</th><th>SID</th><th>Login</th><th>Host</th><th>Program</th><th>Database</th><th>Command</th><th>SQL Command</th><th>Session Created</th><th>Statement Started</th><th>Wait Type</th><th>Wait (ms)</th><th>CPU (ms)</th><th>Txns</th><th>Blocking SID</th></tr></thead>"
         f"<tbody>{''.join(rows_html)}</tbody></table></section>"
+    )
+
+
+def _html_refresh_script(refresh_url: str | None) -> str:
+    if not refresh_url:
+        return ""
+    return (
+        "<script>"
+        "document.addEventListener('DOMContentLoaded', () => {"
+        "  const button = document.getElementById('refresh-dashboard');"
+        "  const status = document.getElementById('refresh-status');"
+        "  if (!button) return;"
+        "  button.addEventListener('click', async () => {"
+        "    const refreshUrl = button.getAttribute('data-refresh-url');"
+        "    button.disabled = true;"
+        "    if (status) status.textContent = 'Refreshing dashboard...';"
+        "    try {"
+        "      const response = await fetch(refreshUrl, { headers: { 'X-Requested-With': 'fetch' } });"
+        "      if (!response.ok) throw new Error('Refresh failed');"
+        "      const html = await response.text();"
+        "      document.open();"
+        "      document.write(html);"
+        "      document.close();"
+        "    } catch (error) {"
+        "      button.disabled = false;"
+        "      if (status) status.textContent = 'Refresh failed. Try again.';"
+        "    }"
+        "  });"
+        "});"
+        "</script>"
     )
 
 
@@ -417,6 +468,7 @@ def build_sessions_dashboard_full(
     waiting_tasks: list[dict[str, Any]],
     head_blockers: list[int],
     blocking_chains: list[dict[str, Any]] | None = None,
+    refresh_url: str | None = None,
 ) -> dict[str, Any]:
     """Build the full dashboard payload aligned with DASHBOARD_STATE_SCHEMA.
 
@@ -464,6 +516,7 @@ def build_sessions_dashboard_full(
         lock_count=len(tran_locks),
         wait_count=len(waiting_tasks),
         chain_count=len(chain_rows),
+        refresh_url=refresh_url,
     )
 
     html_doc = (
@@ -477,6 +530,7 @@ def build_sessions_dashboard_full(
         f"{_html_chain_section(chain_rows, waiting_tasks)}"
         f"{_html_recommendations(recommendations)}"
         f"{_html_footer(generated_at_utc)}"
+        f"{_html_refresh_script(refresh_url)}"
         "</main></body></html>"
     )
 
@@ -487,7 +541,7 @@ def build_sessions_dashboard_full(
             "generated_at_utc": generated_at_utc,
             "instance_number": instance_number,
             "database_name": database_name,
-            "ui_meta": {"loading": False, "error": None},
+            "ui_meta": {"loading": False, "error": None, "refresh_url": refresh_url},
             "sessions": sessions,
             "locks": tran_locks,
             "blockers": waiting_tasks,

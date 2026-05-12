@@ -145,6 +145,7 @@ def test_build_sessions_dashboard_full_ui_meta_defaults() -> None:
     ui_meta = result["data"]["ui_meta"]
     assert ui_meta["loading"] is False
     assert ui_meta["error"] is None
+    assert ui_meta["refresh_url"] is None
 
 
 def test_build_sessions_dashboard_full_head_blockers_passthrough() -> None:
@@ -385,6 +386,9 @@ def test_full_payload_html_contains_sessions_table_values() -> None:
                 "session_database_name": "master",
                 "open_transaction_count": 0,
                 "command": "SELECT",
+                "sql_command": "SELECT TOP 1 * FROM sys.objects",
+                "login_time": "2026-05-12T10:30:00+00:00",
+                "start_time": "2026-05-12T10:31:00+00:00",
                 "wait_type": None,
                 "wait_time": None,
                 "cpu_time": None,
@@ -398,6 +402,27 @@ def test_full_payload_html_contains_sessions_table_values() -> None:
     )
     assert "55" in result["html"]
     assert ">sa<" in result["html"]
+    assert "SELECT TOP 1 * FROM sys.objects" in result["html"]
+    assert "2026-05-12T10:30:00+00:00" in result["html"]
+    assert "2026-05-12T10:31:00+00:00" in result["html"]
+
+
+def test_full_payload_html_contains_refresh_button_when_refresh_url_present() -> None:
+    result = build_sessions_dashboard_full(
+        instance_number=1,
+        database_name="master",
+        sessions=[],
+        lock_chains=[],
+        tran_locks=[],
+        waiting_tasks=[],
+        head_blockers=[],
+        refresh_url="/diagnostics/dashboards/req-1/refresh",
+    )
+    assert 'id="refresh-dashboard"' in result["html"]
+    assert "/diagnostics/dashboards/req-1/refresh" in result["html"]
+    assert "SQL Command" in result["html"]
+    assert "Session Created" in result["html"]
+    assert "Statement Started" in result["html"]
 
 
 def test_full_payload_html_is_complete_document() -> None:

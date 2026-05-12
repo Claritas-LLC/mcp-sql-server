@@ -79,6 +79,29 @@ def register_dashboard_page(request_id: str, html: str, ttl_seconds: int = 900) 
     return f"{_public_base_url()}/diagnostics/dashboards/{request_id}"
 
 
+def register_dashboard_page_with_metadata(
+    request_id: str,
+    html: str,
+    *,
+    ttl_seconds: int = 900,
+    metadata: dict[str, object] | None = None,
+) -> str:
+    """Store generated dashboard HTML plus metadata used for live refresh."""
+    html = _validate_html(html)
+    ttl = _validate_ttl_seconds(ttl_seconds)
+    _validate_request_id(request_id)
+    now_epoch = _now_epoch()
+    expires_epoch = now_epoch + ttl
+    with _STORE_LOCK:
+        _cleanup_expired(now_epoch)
+        _DASHBOARD_PAGES[request_id] = {
+            "html": html,
+            "expires_epoch": expires_epoch,
+            "metadata": dict(metadata or {}),
+        }
+    return f"{_public_base_url()}/diagnostics/dashboards/{request_id}"
+
+
 def get_dashboard_page(request_id: str) -> str | None:
     """Return stored dashboard HTML if present and not expired; else None."""
     _validate_request_id(request_id)
@@ -93,6 +116,25 @@ def get_dashboard_page(request_id: str) -> str | None:
             _DASHBOARD_PAGES.pop(request_id, None)
             return None
         return str(entry.get("html", ""))
+
+
+def get_dashboard_page_metadata(request_id: str) -> dict[str, object] | None:
+    """Return stored dashboard metadata if present and not expired."""
+    _validate_request_id(request_id)
+    now_epoch = _now_epoch()
+    with _STORE_LOCK:
+        _cleanup_expired(now_epoch)
+        entry = _DASHBOARD_PAGES.get(request_id)
+        if entry is None:
+            return None
+        expires_epoch = float(entry.get("expires_epoch", 0.0))
+        if expires_epoch <= now_epoch:
+            _DASHBOARD_PAGES.pop(request_id, None)
+            return None
+        metadata = entry.get("metadata")
+        if not isinstance(metadata, dict):
+            return None
+        return dict(metadata)
 
 
 def get_dashboard_page_expiry_utc(request_id: str) -> str | None:

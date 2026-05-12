@@ -43,6 +43,9 @@ class _FakeConnectionManager:
                         "session_database_name": database_name,
                         "open_transaction_count": 1,
                         "command": "SELECT",
+                        "sql_command": "SELECT name FROM sys.databases",
+                        "login_time": "2026-05-12T10:00:00+00:00",
+                        "start_time": "2026-05-12T10:01:00+00:00",
                         "wait_type": None,
                         "wait_time": 0,
                         "cpu_time": 2,
@@ -133,3 +136,5 @@ def test_sessions_dashboard_response_includes_dashboard_url() -> None:
     assert result.get("content_type") == "text/html"
     assert isinstance(result.get("html"), str)
     assert isinstance(result.get("data"), dict)
+    assert "refresh-dashboard" in result["html"]
+    assert "SQL Command" in result["html"]
