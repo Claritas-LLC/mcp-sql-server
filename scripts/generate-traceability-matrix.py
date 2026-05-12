@@ -5,12 +5,8 @@ from __future__ import annotations
 
 import os
 import re
-import socket
 import sys
-import ipaddress
-import urllib.error
-import urllib.parse
-import urllib.request
+import httpx
 from dataclasses import dataclass
 
 
@@ -22,52 +18,18 @@ class RequirementRow:
     linked_prs: str
 
 
-def _is_private_or_internal_ip(ip_text: str) -> bool:
-    try:
-        ip_obj = ipaddress.ip_address(ip_text)
-    except ValueError:
-        return True
-    return (
-        ip_obj.is_private
-        or ip_obj.is_loopback
-        or ip_obj.is_link_local
-        or ip_obj.is_multicast
-        or ip_obj.is_reserved
-        or ip_obj.is_unspecified
-    )
-
-
-def _validate_github_api_url(url: str) -> str:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https":
-        raise ValueError("Only https scheme is allowed")
-    if (parsed.hostname or "").lower() != "api.github.com":
-        raise ValueError("Only api.github.com is allowed")
-
-    try:
-        resolved = socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
-    except OSError as exc:
-        raise ValueError("Failed to resolve target host") from exc
-    for info in resolved:
-        ip_text = info[4][0]
-        if _is_private_or_internal_ip(ip_text):
-            raise ValueError("Target resolves to private/internal IP")
-    return url
-
-
-def _api_get(url: str, token: str) -> dict | list:
-    safe_url = _validate_github_api_url(url)
-    req = urllib.request.Request(
-        safe_url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "traceability-matrix-generator",
-        },
-    )
-    with urllib.request.urlopen(req) as resp:
-        return __import__("json").loads(resp.read().decode("utf-8"))
+def _api_get(path: str, token: str) -> dict | list:
+    url = f"https://api.github.com{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "traceability-matrix-generator",
+    }
+    with httpx.Client(timeout=30.0, headers=headers) as client:
+        response = client.get(url)
+        response.raise_for_status()
+        return response.json()
 
 
 def _extract_refs(text: str) -> list[int]:
@@ -88,15 +50,18 @@ def main() -> int:
 
     try:
         issues = _api_get(
-            f"https://api.github.com/repos/{owner}/{name}/issues?state=all&labels=requirement&per_page=100",
+            f"/repos/{owner}/{name}/issues?state=all&labels=requirement&per_page=100",
             token,
         )
         prs = _api_get(
-            f"https://api.github.com/repos/{owner}/{name}/pulls?state=all&per_page=100",
+            f"/repos/{owner}/{name}/pulls?state=all&per_page=100",
             token,
         )
-    except urllib.error.HTTPError as exc:
-        print(f"ERROR: GitHub API request failed ({exc.code})", file=sys.stderr)
+    except httpx.HTTPStatusError as exc:
+        print(f"ERROR: GitHub API request failed ({exc.response.status_code})", file=sys.stderr)
+        return 1
+    except httpx.HTTPError as exc:
+        print(f"ERROR: GitHub API request failed ({exc})", file=sys.stderr)
         return 1
 
     req_to_prs: dict[int, list[int]] = {}
