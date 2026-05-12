@@ -1,3 +1,7 @@
+# SQL Server instances with connection pooling.
+# Pool settings (pool_max, pool_acquire_timeout_sec) use conservative defaults.
+# Monitor actual usage via /diagnostics/pool and tune based on observed peak concurrency.
+# Suggested range: pool_max 10-50 (depending on workload), pool_acquire_timeout_sec 5-30 (seconds).
 instances:
   - id: primary
     host: 10.125.1.7
@@ -9,12 +13,15 @@ instances:
     connect_timeout_sec: 5
     command_timeout_sec: 30
     pool_min: 2
-    pool_max: 20
+    pool_max: 10  # Conservative default; increase if /diagnostics/pool shows high utilization
+    pool_enabled: true
+    pool_idle_timeout_sec: 300
+    pool_acquire_timeout_sec: 5  # Conservative default; increase if acquire timeout errors occur
     enabled: true
 
   - id: secondary
     host: 10.125.1.8
-    port: 2433
+    port: 1433
     database: master
     auth_secret_ref: secret/sql/secondary
     encrypt: true
@@ -22,5 +29,8 @@ instances:
     connect_timeout_sec: 5
     command_timeout_sec: 30
     pool_min: 2
-    pool_max: 20
+    pool_max: 10
+    pool_enabled: true
+    pool_idle_timeout_sec: 300
+    pool_acquire_timeout_sec: 5
     enabled: true

@@ -17,9 +17,52 @@
 - Run multiple FastMCP replicas behind a reverse proxy.
 - Use shared rate-limit storage (Redis or equivalent) for consistent enforcement.
 - Keep audit output centralized using log forwarding sidecar/agent.
+- Monitor `/diagnostics/pool` per replica because SQL pool state is process-local.
 
 ## Database-Side Considerations
 
 - Maintain index health and statistics update cadence.
 - Separate reporting-heavy operations to secondary instance where possible.
 - Limit result sets and enforce command timeout ceilings from policy.
+
+## Auth and Pool Rollout Sequence
+
+1. Enable pool settings first and validate `/diagnostics/pool` shows reuse without saturation.
+2. Enable Azure token verification next and confirm `/diagnostics/security` reflects expected auth mode and scope counts.
+3. Enable group authorization last after validating read/write group mappings in non-production.
+
+## Operational Rollback
+
+- If SQL connectivity regresses under load, set instance `pool_enabled: false` and restart affected replicas.
+- If Entra token validation blocks all callers unexpectedly, set `auth.azure_auth_enabled: false` and restart.
+- If only group mapping is misconfigured, set `auth.azure_group_authorization_enabled: false` and restart.
+
+## Interactive App Architecture (FastMCPApp)
+
+The Sessions Dashboard is delivered as a **FastMCPApp** — an interactive front end running inside the MCP server process:
+
+| Concern | Detail |
+|---|---|
+| **Entry tool** | `db_{instance_number}_sql2019_sessions_dashboard` — the MCP tool an LLM calls to get a dashboard URL. |
+| **App backend** | `fetch_sessions_dashboard_data` (app-tool) — executes all four DMV queries and populates state. |
+| **State model** | `DASHBOARD_STATE_SCHEMA` in `src/tools/dashboard_payloads.py` — validated sections: `sessions`, `locks`, `blockers`, `blocking_chains`, `head_blockers`, `recommendations`, `ui_meta`. |
+| **Page delivery** | Generated pages are retrievable at `/diagnostics/dashboards/{request_id}` via in-memory TTL-backed storage. |
+| **Registration** | `register_sessions_dashboard_app_provider(mcp, state)` called once in `server.py`. |
+| **Scaling note** | FastMCPApp state is per-process. Under horizontal scaling, each replica maintains its own live state; there is no shared app state needed because queries are stateless DMV snapshots. |
+
+## Docker Runtime Validation
+
+To validate the full server stack (including interactive app routing) using the runtime Docker Compose:
+
+```powershell
+# Start stack
+docker compose -f docker/docker-compose.runtime.yml up -d
+
+# Confirm FastMCP health endpoint is served
+Invoke-WebRequest -Uri http://localhost:8085/diagnostics/health | Select-Object -ExpandProperty StatusCode
+
+# Stop stack
+docker compose -f docker/docker-compose.runtime.yml down
+```
+
+Expected: HTTP 200 on `/diagnostics/health`. The dashboard URL is returned in the `dashboard_url` field of the `db_{instance_number}_sql2019_sessions_dashboard` tool response and is served by `/diagnostics/dashboards/{request_id}` until TTL expiry.

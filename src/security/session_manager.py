@@ -5,7 +5,12 @@ import time
 
 
 class SessionManager:
-    def __init__(self, session_ttl_minutes: int, inactivity_timeout_minutes: int, concurrent_sessions_limit: int):
+    def __init__(
+        self,
+        session_ttl_minutes: int,
+        inactivity_timeout_minutes: int,
+        concurrent_sessions_limit: int,
+    ):
         self._ttl = session_ttl_minutes * 60
         self._idle = inactivity_timeout_minutes * 60
         self._limit = concurrent_sessions_limit

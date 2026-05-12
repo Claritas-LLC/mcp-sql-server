@@ -79,8 +79,9 @@ Supported instances:
 ## Controlled Write Tools
 
 No new controlled-write tools are included in Batch 1.
-Existing write-capable tool remains:
+Existing write-capable tools remain:
 - `db_primary_sql2019_exec_proc`
+- `db_secondary_sql2019_exec_proc`
 
 Any future write-capable additions require:
 - Security owner approval

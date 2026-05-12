@@ -1,6 +1,7 @@
 import pytest
 
-from src.config_loader import apply_policy_env_overrides
+from src.config_loader import apply_auth_env_overrides, apply_policy_env_overrides
+from src.models import AuthConfig
 from src.models import RuntimePolicy
 
 
@@ -41,10 +42,53 @@ def test_apply_policy_env_overrides_no_values_returns_original() -> None:
 def test_apply_policy_env_overrides_invalid_json_raises() -> None:
     policy = _base_policy()
     with pytest.raises(ValueError, match="FASTMCP_TOOL_ENABLE_FLAGS_JSON"):
-        apply_policy_env_overrides(policy, {"FASTMCP_TOOL_ENABLE_FLAGS_JSON": "{bad-json"})
+        apply_policy_env_overrides(
+            policy, {"FASTMCP_TOOL_ENABLE_FLAGS_JSON": "{bad-json"}
+        )
 
 
 def test_apply_policy_env_overrides_invalid_structure_raises() -> None:
     policy = _base_policy()
     with pytest.raises(ValueError, match="string keys to boolean values"):
-        apply_policy_env_overrides(policy, {"FASTMCP_TOOL_ENABLE_FLAGS_JSON": '{"x": "yes"}'})
+        apply_policy_env_overrides(
+            policy, {"FASTMCP_TOOL_ENABLE_FLAGS_JSON": '{"x": "yes"}'}
+        )
+
+
+def test_apply_auth_env_overrides_defaults_unchanged() -> None:
+    auth = AuthConfig()
+    overridden = apply_auth_env_overrides(auth, {})
+    assert overridden.auth_mode == "disabled"
+    assert overridden.pool_max_connections == 10
+    assert overridden.pool_max_keepalive_connections == 10
+    assert overridden.pool_timeout_seconds == 10
+
+
+def test_apply_auth_env_overrides_with_values() -> None:
+    auth = AuthConfig()
+    overridden = apply_auth_env_overrides(
+        auth,
+        {
+            "FASTMCP_AUTH_MODE": "azure_token_verifier",
+            "FASTMCP_AZURE_TENANT_ID": "tenant-123",
+            "FASTMCP_AZURE_CLIENT_ID": "client-123",
+            "FASTMCP_AZURE_REQUIRED_SCOPES": "read, write",
+            "FASTMCP_POOL_MAX_CONNECTIONS": "25",
+            "FASTMCP_POOL_MAX_KEEPALIVE": "8",
+            "FASTMCP_POOL_TIMEOUT_SECONDS": "12",
+        },
+    )
+
+    assert overridden.auth_mode == "azure_token_verifier"
+    assert overridden.azure_tenant_id == "tenant-123"
+    assert overridden.azure_client_id == "client-123"
+    assert overridden.azure_required_scopes == ["read", "write"]
+    assert overridden.pool_max_connections == 25
+    assert overridden.pool_max_keepalive_connections == 8
+    assert overridden.pool_timeout_seconds == 12
+
+
+def test_apply_auth_env_overrides_invalid_pool_raises() -> None:
+    auth = AuthConfig()
+    with pytest.raises(ValueError, match="FASTMCP_POOL_MAX_CONNECTIONS"):
+        apply_auth_env_overrides(auth, {"FASTMCP_POOL_MAX_CONNECTIONS": "not-an-int"})

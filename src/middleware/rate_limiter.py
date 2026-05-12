@@ -8,12 +8,13 @@ from typing import Protocol
 
 
 class RateLimiter(Protocol):
-    def allow(self, actor: str) -> None:
-        ...
+    def allow(self, actor: str) -> None: ...
 
 
 class SlidingWindowRateLimiter:
-    def __init__(self, actor_rpm: int, actor_burst: int, global_rpm: int, global_burst: int):
+    def __init__(
+        self, actor_rpm: int, actor_burst: int, global_rpm: int, global_burst: int
+    ):
         self._actor_rpm = actor_rpm
         self._actor_burst = actor_burst
         self._global_rpm = global_rpm
@@ -95,7 +96,9 @@ return 1
         try:
             from redis import Redis
         except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("Redis backend requested but redis package is not installed") from exc
+            raise RuntimeError(
+                "Redis backend requested but redis package is not installed"
+            ) from exc
 
         self._redis = Redis.from_url(redis_url, decode_responses=False)
         self._actor_limit = actor_rpm + actor_burst
@@ -130,7 +133,9 @@ return 1
         if code == 3:
             raise PermissionError("RATE_LIMIT_EXCEEDED: global quota exceeded")
         if code != 1:
-            raise PermissionError("RATE_LIMIT_EXCEEDED: backend returned unknown result")
+            raise PermissionError(
+                "RATE_LIMIT_EXCEEDED: backend returned unknown result"
+            )
 
 
 def build_rate_limiter(
@@ -146,7 +151,9 @@ def build_rate_limiter(
     normalized = backend.strip().lower()
     if normalized == "redis":
         if not redis_url:
-            raise ValueError("FASTMCP_REDIS_URL is required when FASTMCP_RATE_LIMIT_BACKEND=redis")
+            raise ValueError(
+                "FASTMCP_REDIS_URL is required when FASTMCP_RATE_LIMIT_BACKEND=redis"
+            )
         return RedisSlidingWindowRateLimiter(
             redis_url=redis_url,
             actor_rpm=actor_rpm,

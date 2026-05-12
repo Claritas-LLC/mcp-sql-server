@@ -21,6 +21,9 @@ Remote FastMCP server for dual SQL Server 2019 instances with strong read-only c
 - tests: unit tests
 - testing: integration and operational test harnesses
 - docs: tool catalog, runbooks, and run instructions
+- docs/runbooks/scaling-strategy.md: runbook for scaling and load-validation operations
+- docs/runbooks/security-maintenance.md: runbook for security posture checks and maintenance
+- docs/access-levels-and-controlled-write.md: access model and controlled-write enforcement reference
 
 ## Quick Start (Local)
 
@@ -49,6 +52,13 @@ python -m src.server
 - http://localhost:8080/
 - http://localhost:8080/diagnostics/health
 - http://localhost:8080/diagnostics/security
+- http://localhost:8080/diagnostics/pool
+
+Primary rollout verification checks:
+
+- `/diagnostics/health`: confirms service and instance connectivity.
+- `/diagnostics/security`: confirms auth mode, required scope count, group-authorization posture, and registered tool inventory.
+- `/diagnostics/pool`: confirms per-instance SQL pool sizing and reuse counters.
 
 ## Docker Runtime
 
@@ -58,6 +68,11 @@ Use the runtime compose flow documented in docs/run-mcp-server-with-docker.md.
 docker compose -f docker/docker-compose.runtime.yml up -d
 ```
 
+## Operational Runbooks
+
+- [Scaling strategy](docs/runbooks/scaling-strategy.md) - guidance for dashboard scaling and load validation.
+- [Security maintenance](docs/runbooks/security-maintenance.md) - maintenance checks for security posture and operational hygiene.
+
 ## Testing
 
 Run unit tests:
@@ -65,6 +80,11 @@ Run unit tests:
 ```powershell
 pytest -q
 ```
+
+Current validation snapshot:
+
+- Full test suite: `143 passed`
+- See [testing/artifacts/phase5-entra-pooling-summary.md](testing/artifacts/phase5-entra-pooling-summary.md) for rollout verification notes.
 
 ## Security Notes
 
@@ -81,6 +101,24 @@ See CONTRIBUTING.md for branch, PR, and test expectations.
 
 - CI runs on pull requests and pushes to master/main.
 - Release tags follow v* (example: v1.2).
+- Latest release notes: [docs/release-notes-v1.3.0.md](docs/release-notes-v1.3.0.md)
+
+## CMMI-Oriented Platform Integration
+
+This repository includes GitHub-native process controls aligned to CMMI implementation patterns:
+
+- Requirements management: requirement issue template and PR traceability sections
+- Configuration management: branch protection, CODEOWNERS, signed commits, and protected release tags
+- Verification and validation: CI checks, PR gates, and traceability check workflow
+- Measurement and analysis: scheduled traceability matrix generation
+- Audit trail: issue/PR history, commit history, and workflow logs retained in GitHub
+
+Artifacts:
+
+- .github/ISSUE_TEMPLATE/requirement.yml
+- .github/workflows/traceability-check.yml
+- .github/workflows/traceability-matrix.yml
+- docs/traceability-matrix.md
 
 ## CMMI-Oriented Platform Integration
 
@@ -101,4 +139,4 @@ Artifacts:
 
 ## License
 
-No license file is currently included. Add one before open-source distribution.
+Licensed under the MIT License. See [LICENSE](LICENSE).

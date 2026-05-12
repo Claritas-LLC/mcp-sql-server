@@ -4,7 +4,7 @@
     "top_queries_report": true
   },
   "secondary": {
-    "exec_proc": false,
-    "top_queries_report": false
+    "exec_proc": true,
+    "top_queries_report": true
   }
 }

@@ -1,11 +1,21 @@
 write_mode_default: deny
 allowed_write_tools:
   - db_primary_sql2019_exec_proc
+  - db_secondary_sql2019_exec_proc
 blocked_sql_patterns:
   - "(?i)\\b(drop|alter|truncate|create)\\b"
   - "(?i)\\bxp_cmdshell\\b"
 max_result_rows: 5000
 max_query_duration_ms: 15000
+allowed_tools:
+  db_primary_sql2019_exec_proc:
+    allowed_procedures:
+      - dbo.usp_RunApprovedMaintenance # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
+      - dbo.usp_RefreshMaterializedView # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
+  db_secondary_sql2019_exec_proc:
+    allowed_procedures:
+      - dbo.usp_RunApprovedMaintenance # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
+      - dbo.usp_RefreshMaterializedView # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
 instance_enable_flags:
   primary: true
   secondary: true
@@ -17,4 +27,21 @@ instance_tool_enable_flags:
   primary:
     exec_proc: true
   secondary:
-    exec_proc: false
+    exec_proc: true
+
+auth:
+  auth_mode: disabled
+  azure_auth_enabled: false
+  azure_group_authorization_enabled: false
+  azure_tenant_id: ""
+  azure_client_id: ""
+  azure_client_secret_ref: ""
+  azure_required_scopes: []
+  azure_base_url: ""
+  azure_identifier_uri: ""
+  azure_group_claim_name: groups
+  azure_read_groups: []
+  azure_write_groups: []
+  pool_max_connections: 10
+  pool_max_keepalive_connections: 10
+  pool_timeout_seconds: 10

@@ -30,6 +30,10 @@ class AuditLogger:
         latency_ms: int,
         rows: int,
         error_code: str | None,
+        auth_mode: str | None = None,
+        auth_subject: str | None = None,
+        privilege_level: str | None = None,
+        group_match_result: dict[str, Any] | None = None,
     ) -> None:
         event: dict[str, Any] = {
             "ts_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -43,6 +47,14 @@ class AuditLogger:
             "rows": rows,
             "error_code": error_code,
         }
+        if auth_mode is not None:
+            event["auth_mode"] = auth_mode
+        if auth_subject is not None:
+            event["auth_subject"] = auth_subject
+        if privilege_level is not None:
+            event["privilege_level"] = privilege_level
+        if group_match_result is not None:
+            event["group_match_result"] = group_match_result
         line = json.dumps(event, separators=(",", ":"), ensure_ascii=True)
         with self._lock:
             with self._path.open("a", encoding="utf-8") as handle:

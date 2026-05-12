@@ -1,6 +1,10 @@
 import pytest
 
-from src.tools.analysis_contracts import build_finding, build_recommendation, build_report_envelope
+from src.tools.analysis_contracts import (
+    build_finding,
+    build_recommendation,
+    build_report_envelope,
+)
 from src.tools.input_validation import (
     validate_database_name,
     validate_identifier,
@@ -186,8 +190,16 @@ def test_report_envelope_has_required_keys() -> None:
         findings=[],
         recommendations=[],
     )
-    for key in ("instance_number", "database_name", "tool", "generated_at_utc",
-                "summary", "severity_counts", "findings", "recommendations"):
+    for key in (
+        "instance_number",
+        "database_name",
+        "tool",
+        "generated_at_utc",
+        "summary",
+        "severity_counts",
+        "findings",
+        "recommendations",
+    ):
         assert key in report, f"Missing key: {key}"
 
 

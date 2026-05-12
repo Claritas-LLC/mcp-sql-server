@@ -11,7 +11,9 @@ def build_fk_graph(rows: list[dict[str, Any]]) -> dict[str, Any]:
         referenced = f"{row.get('referenced_schema')}.{row.get('referenced_table')}"
         nodes.add(parent)
         nodes.add(referenced)
-        edges.append({"from": parent, "to": referenced, "fk_name": str(row.get("fk_name", ""))})
+        edges.append(
+            {"from": parent, "to": referenced, "fk_name": str(row.get("fk_name", ""))}
+        )
 
     adjacency: dict[str, set[str]] = {}
     for edge in edges:

@@ -31,16 +31,21 @@ def _sqlcmd(container: str, password: str, sql: str, database: str = "master") -
 
 def _mcp_tool_call(base_url: str, tool_name: str, arguments: dict) -> dict:
     """Call an MCP tool over HTTP (streamable-http transport, JSON-RPC 2.0)."""
-    payload = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {"name": tool_name, "arguments": arguments},
-    }).encode()
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        }
+    ).encode()
     req = urllib.request.Request(
         f"{base_url}/mcp/",
         data=payload,
-        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
         method="POST",
     )
     try:
@@ -84,8 +89,12 @@ def run() -> None:
     q1 = "SELECT COUNT(*) AS table_count FROM [USGISPRO_800].[sys].[tables]"
     q2 = "SELECT COUNT(*) AS table_count FROM [CITYGIS_810].[sys].[tables]"
 
-    ping1 = _sqlcmd("mcp-sql2019-1", "YourStrong!Passw0rd1", "SELECT @@SERVERNAME AS instance_name")
-    ping2 = _sqlcmd("mcp-sql2019-2", "YourStrong!Passw0rd2", "SELECT @@SERVERNAME AS instance_name")
+    ping1 = _sqlcmd(
+        "mcp-sql2019-1", "YourStrong!Passw0rd1", "SELECT @@SERVERNAME AS instance_name"
+    )
+    ping2 = _sqlcmd(
+        "mcp-sql2019-2", "YourStrong!Passw0rd2", "SELECT @@SERVERNAME AS instance_name"
+    )
     r1 = _sqlcmd("mcp-sql2019-1", "YourStrong!Passw0rd1", q1)
     r2 = _sqlcmd("mcp-sql2019-2", "YourStrong!Passw0rd2", q2)
 
@@ -93,7 +102,8 @@ def run() -> None:
     # MCP advanced tool integration checks
     # ------------------------------------------------------------------
     tab_health_1 = _mcp_tool_call(
-        base_url, "db_1_sql2019_analyze_tab_health",
+        base_url,
+        "db_1_sql2019_analyze_tab_health",
         {"database_name": "master", "top_n": 5, "view_mode": "COMPACT"},
     )
     tab_health_assertions_1 = _assert_mcp_tool_result(
@@ -101,7 +111,8 @@ def run() -> None:
     )
 
     tab_health_2 = _mcp_tool_call(
-        base_url, "db_2_sql2019_analyze_tab_health",
+        base_url,
+        "db_2_sql2019_analyze_tab_health",
         {"database_name": "master", "top_n": 5, "view_mode": "COMPACT"},
     )
     tab_health_assertions_2 = _assert_mcp_tool_result(
@@ -109,7 +120,8 @@ def run() -> None:
     )
 
     data_model_1 = _mcp_tool_call(
-        base_url, "db_1_sql2019_analyze_db_data_model",
+        base_url,
+        "db_1_sql2019_analyze_db_data_model",
         {"database_name": "master", "top_n": 10, "view_mode": "FULL"},
     )
     data_model_assertions_1 = _assert_mcp_tool_result(
@@ -117,7 +129,8 @@ def run() -> None:
     )
 
     sec_config_1 = _mcp_tool_call(
-        base_url, "db_1_sql2019_analyze_sec_config",
+        base_url,
+        "db_1_sql2019_analyze_sec_config",
         {"database_name": "master", "top_n": 10, "view_mode": "FULL"},
     )
     sec_config_assertions_1 = _assert_mcp_tool_result(
@@ -125,7 +138,8 @@ def run() -> None:
     )
 
     sessions_1 = _mcp_tool_call(
-        base_url, "db_1_sql2019_sessions_dashboard",
+        base_url,
+        "db_1_sql2019_sessions_dashboard",
         {"top_n": 10, "view_mode": "COMPACT"},
     )
     sessions_assertions_1 = _assert_mcp_tool_result(
@@ -212,17 +226,16 @@ def _sqlcmd(container: str, password: str, sql: str, database: str = "master") -
     return result.stdout
 
 
-def write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
 def run() -> None:
     q1 = "SELECT COUNT(*) AS table_count FROM [USGISPRO_800].[sys].[tables]"
     q2 = "SELECT COUNT(*) AS table_count FROM [CITYGIS_810].[sys].[tables]"
 
-    ping1 = _sqlcmd("mcp-sql2019-1", "YourStrong!Passw0rd1", "SELECT @@SERVERNAME AS instance_name")
-    ping2 = _sqlcmd("mcp-sql2019-2", "YourStrong!Passw0rd2", "SELECT @@SERVERNAME AS instance_name")
+    ping1 = _sqlcmd(
+        "mcp-sql2019-1", "YourStrong!Passw0rd1", "SELECT @@SERVERNAME AS instance_name"
+    )
+    ping2 = _sqlcmd(
+        "mcp-sql2019-2", "YourStrong!Passw0rd2", "SELECT @@SERVERNAME AS instance_name"
+    )
     r1 = _sqlcmd("mcp-sql2019-1", "YourStrong!Passw0rd1", q1)
     r2 = _sqlcmd("mcp-sql2019-2", "YourStrong!Passw0rd2", q2)
 
