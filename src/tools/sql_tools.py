@@ -239,7 +239,7 @@ async def _subtool_analyze_indexes(
             recommendations.append(
                 build_recommendation(
                     priority="low",
-                    action="Review each redundant pair; drop the less selective index after confirming no exclusive usage.",
+                    action="Review each redundant pair; remove the less selective index after confirming no exclusive usage.",
                     rationale="Redundant indexes increase INSERT/UPDATE/DELETE maintenance cost and waste storage.",
                 )
             )

@@ -113,7 +113,7 @@ def test_validate_database_name_whitespace_raises_invalid_input() -> None:
 
 def test_validate_database_name_semicolon_raises_invalid_input() -> None:
     with pytest.raises(ValueError, match="INVALID_INPUT"):
-        validate_database_name("master; DROP TABLE foo--")
+        validate_database_name("master; SELECT 1--")
 
 
 def test_validate_database_name_comment_raises_invalid_input() -> None:
@@ -132,7 +132,7 @@ def test_validate_identifier_blank_raises() -> None:
 
 def test_validate_identifier_injection_raises() -> None:
     with pytest.raises(ValueError, match="INVALID_INPUT"):
-        validate_identifier("Orders; DROP TABLE Orders--", "table_name")
+        validate_identifier("Orders; SELECT 1--", "table_name")
 
 
 def test_validate_positive_int_below_minimum_raises() -> None:
