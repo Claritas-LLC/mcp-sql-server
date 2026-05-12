@@ -93,10 +93,12 @@ def active_sessions_query(top_n: int) -> str:
     return (
         f"SELECT TOP {top_n} s.session_id, s.login_name, s.host_name, s.program_name, s.status, "
         "DB_NAME(s.database_id) AS session_database_name, "
-        "s.open_transaction_count, "
-        "r.command, r.wait_type, r.wait_time, r.cpu_time, r.blocking_session_id "
+        "s.open_transaction_count, s.login_time, s.last_request_start_time, "
+        "r.command, r.wait_type, r.wait_time, r.cpu_time, r.blocking_session_id, r.start_time, "
+        "SUBSTRING(st.text, 1, 500) AS sql_command "
         "FROM sys.dm_exec_sessions s "
         "LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id "
+        "OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) st "
         "WHERE s.is_user_process = 1 "
         "ORDER BY r.wait_time DESC, s.session_id"
     )

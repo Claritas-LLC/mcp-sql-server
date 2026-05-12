@@ -210,22 +210,38 @@ def register_sessions_dashboard_app_provider(mcp: FastMCP, state: Any) -> bool:
 
             Separator()
             Heading("Summary", level=3)
-            Text(
-                "Instance: {dashboard.instance_number} | DB: {dashboard.database_name}"
-            )
-            Text("Generated: {dashboard.generated_at_utc}")
-            Text("Head blockers: {dashboard.head_blockers}")
+            with Row(gap=4):
+                Text(
+                    "Instance: {dashboard.instance_number} | DB: {dashboard.database_name}"
+                )
+                Text("Head blockers: {dashboard.head_blockers}")
+            Text("Last refreshed: {dashboard.generated_at_utc}", css_class="text-sm text-gray-600")
 
             Separator()
             Heading("Active Sessions", level=3)
+            # Column headers
+            with Row(gap=2, align="center", css_class="font-bold bg-gray-100 p-2 rounded"):
+                Text("Session ID", css_class="w-16")
+                Text("Login", css_class="w-24")
+                Text("Database", css_class="w-24")
+                Text("Status", css_class="w-16")
+                Text("Command", css_class="w-24")
+                Text("Wait Type", css_class="w-24")
+                Text("SQL Command", css_class="flex-1 truncate")
+                Text("Session Created", css_class="w-32")
+                Text("Statement Started", css_class="w-32")
+            # Data rows
             with ForEach("dashboard.active_sessions") as sess:
-                with Row(gap=2, align="center"):
-                    Text("Session:")
-                    Text(sess.session_id)
-                    Text("Login:")
-                    Text(sess.login_name)
-                    Text("Wait:")
-                    Text(sess.wait_type)
+                with Row(gap=2, align="start", css_class="border-b p-2 hover:bg-gray-50"):
+                    Text(sess.session_id, css_class="w-16 font-mono")
+                    Text(sess.login_name, css_class="w-24")
+                    Text(sess.session_database_name, css_class="w-24 text-sm")
+                    Text(sess.status, css_class="w-16 text-sm")
+                    Text(sess.command, css_class="w-24 text-sm")
+                    Text(sess.wait_type, css_class="w-24 text-sm text-orange-600")
+                    Text(sess.sql_command, css_class="flex-1 font-mono text-xs truncate" )
+                    Text(sess.login_time, css_class="w-32 font-mono text-xs")
+                    Text(sess.start_time, css_class="w-32 font-mono text-xs")
 
             Separator()
             Heading("Lock Chains", level=3)
