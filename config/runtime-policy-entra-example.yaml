@@ -1,0 +1,99 @@
+# Runtime Policy with Azure Entra Authentication Enabled
+# Use this as a reference to update config/runtime-policy.yaml for ACA deployment
+
+write_mode_default: deny
+
+allowed_write_tools:
+  - db_primary_sql2019_exec_proc
+  - db_secondary_sql2019_exec_proc
+
+blocked_sql_patterns:
+  - "(?i)\\b(drop|alter|truncate|create)\\b"
+  - "(?i)\\bxp_cmdshell\\b"
+
+max_result_rows: 5000
+max_query_duration_ms: 15000
+
+allowed_tools:
+  db_primary_sql2019_exec_proc:
+    allowed_procedures:
+      - dbo.usp_RunApprovedMaintenance
+      - dbo.usp_RefreshMaterializedView
+  db_secondary_sql2019_exec_proc:
+    allowed_procedures:
+      - dbo.usp_RunApprovedMaintenance
+      - dbo.usp_RefreshMaterializedView
+
+instance_enable_flags:
+  primary: true
+  secondary: true
+
+tool_enable_flags:
+  top_queries_report: true
+  active_sessions_report: true
+  index_health_report: true
+
+instance_tool_enable_flags:
+  primary:
+    exec_proc: true
+  secondary:
+    exec_proc: true
+
+# ============================================================
+# AZURE ENTRA AUTHENTICATION CONFIGURATION
+# ============================================================
+auth:
+  # Auth mode - kept for backward compat, but Entra takes precedence when enabled
+  auth_mode: disabled
+  
+  # *** ENABLE THIS TO USE ENTRA AUTH ***
+  azure_auth_enabled: true
+  
+  # Control whether group membership determines read/write access
+  # If true: requires azure_read_groups and azure_write_groups to be configured
+  # If false: all authenticated users get read-only access by default
+  azure_group_authorization_enabled: false
+  
+  # Your Azure/Entra tenant ID (from app registration)
+  # Format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+  azure_tenant_id: "{{ ENTRA_TENANT_ID }}"
+  
+  # Your app registration's client ID
+  # Format: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+  azure_client_id: "{{ ENTRA_CLIENT_ID }}"
+  
+  # Secret reference for app registration client secret
+  # Resolver will read from env var: SECRET_ENTRA_CLIENT_SECRET
+  azure_client_secret_ref: "secret/entra/client-secret"
+  
+  # Required scopes that must be in the token
+  # Include the scope you defined in Entra "Expose an API"
+  azure_required_scopes:
+    - "api://mcp-sql-server/access"
+  
+  # Azure login base URL (leave empty to use default Azure Public Cloud)
+  azure_base_url: ""
+  
+  # Identifier URI (app ID URI) from app registration
+  # Must match the URI in Entra "Expose an API"
+  azure_identifier_uri: "api://mcp-sql-server"
+  
+  # Claim name for group membership (standard: "groups")
+  # Only used if azure_group_authorization_enabled=true
+  azure_group_claim_name: "groups"
+  
+  # Group UUIDs that get READ-ONLY access
+  # Example: ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"]
+  # Only used if azure_group_authorization_enabled=true
+  azure_read_groups: []
+  
+  # Group UUIDs that get READ+WRITE access
+  # Example: ["33333333-3333-3333-3333-333333333333"]
+  # Only used if azure_group_authorization_enabled=true
+  azure_write_groups: []
+  
+  # HTTP connection pool settings for token verification
+  # Increase if you have high concurrency or slow token endpoint
+  pool_max_connections: 10
+  pool_max_keepalive_connections: 10
+  pool_timeout_seconds: 10
