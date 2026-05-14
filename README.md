@@ -12,6 +12,19 @@ Remote FastMCP server for dual SQL Server 2019 instances with strong read-only c
 - Diagnostics endpoints for runtime posture and tool usage
 - Docker runtime and compose files for local and remote operation
 
+## Important Documentation
+
+- [Tool catalog](docs/mcp-tool-catalog.md) - canonical list of exposed tools and contracts.
+- [Access levels and controlled write](docs/access-levels-and-controlled-write.md) - authorization model and write guardrails.
+- [Run with Docker](docs/run-mcp-server-with-docker.md) - local and remote Docker runtime instructions.
+- [Azure Container Apps deployment](docs/azure-container-apps-deployment.md) - Azure deployment flow and operational guidance.
+- [Deployment checklist](docs/DEPLOYMENT-CHECKLIST.md) - pre-deploy and post-deploy validation steps.
+- [Security maintenance runbook](docs/runbooks/security-maintenance.md) - weekly/monthly/quarterly security operations.
+- [Scaling strategy runbook](docs/runbooks/scaling-strategy.md) - scaling and load-validation operations.
+- [Connectivity and diagnostics spec](docs/mcp-sql2019-connectivity-discovery-diagnostics-spec.md) - discovery and diagnostics behavior reference.
+- [Security policy](SECURITY.md) - reporting and hardening policy.
+- [Contributing guide](CONTRIBUTING.md) - branch, PR, and testing expectations.
+
 ## Repository Structure
 
 - src: service runtime, tool registration, middleware, diagnostics
@@ -102,23 +115,6 @@ See CONTRIBUTING.md for branch, PR, and test expectations.
 - CI runs on pull requests and pushes to master/main.
 - Release tags follow v* (example: v1.2).
 - Latest release notes: [docs/release-notes-v1.3.0.md](docs/release-notes-v1.3.0.md)
-
-## CMMI-Oriented Platform Integration
-
-This repository includes GitHub-native process controls aligned to CMMI implementation patterns:
-
-- Requirements management: requirement issue template and PR traceability sections
-- Configuration management: branch protection, CODEOWNERS, signed commits, and protected release tags
-- Verification and validation: CI checks, PR gates, and traceability check workflow
-- Measurement and analysis: scheduled traceability matrix generation
-- Audit trail: issue/PR history, commit history, and workflow logs retained in GitHub
-
-Artifacts:
-
-- .github/ISSUE_TEMPLATE/requirement.yml
-- .github/workflows/traceability-check.yml
-- .github/workflows/traceability-matrix.yml
-- docs/traceability-matrix.md
 
 ## CMMI-Oriented Platform Integration
 
