@@ -28,6 +28,8 @@ class WriteGuard:
             "UPDATE",
             "DELETE",
             "MERGE",
+            "EXEC",
+            "EXECUTE",
             "CREATE",
             "ALTER",
             "DROP",

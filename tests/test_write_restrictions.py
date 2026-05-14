@@ -31,3 +31,22 @@ def test_denies_ddl_pattern() -> None:
     guard = _guard()
     with pytest.raises(PermissionError):
         guard.enforce("db_primary_sql2019_exec_proc", "DROP TABLE dbo.X")
+
+
+def test_denies_exec_for_non_allowlisted_tool() -> None:
+    guard = _guard()
+    with pytest.raises(PermissionError):
+        guard.enforce(
+            "db_1_sql2019_execute_query", "EXEC USGISPRO_800.dbo.gisadmin_GetActiveCompanies"
+        )
+
+
+def test_allows_exec_for_allowlisted_write_tool() -> None:
+    guard = _guard()
+    guard.enforce("db_primary_sql2019_exec_proc", "EXEC dbo.usp_RunApprovedMaintenance")
+
+
+def test_denies_execute_keyword_for_non_allowlisted_tool() -> None:
+    guard = _guard()
+    with pytest.raises(PermissionError):
+        guard.enforce("db_1_sql2019_execute_query", "EXECUTE dbo.usp_RunApprovedMaintenance")
