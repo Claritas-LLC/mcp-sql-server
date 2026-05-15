@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import re
+import logging
 
 from src.models import RuntimePolicy
+
+
+# Define logger at the module level
+logger = logging.getLogger(__name__)
 
 
 class WriteGuard:
@@ -71,11 +76,12 @@ class WriteGuard:
                 f"Procedure execution not configured for tool {tool_name}"
             )
 
-        tool_config = self._policy.allowed_tools[tool_name]
+        tool_config = self._policy.allowed_tools.get(tool_name, {})
         if not isinstance(tool_config, dict):
             raise PermissionError(
                 f"Invalid allowed_tools entry for {tool_name}: expected dict, got {type(tool_config).__name__} ({tool_config!r})"
             )
+
         allowed_procedures = tool_config.get("allowed_procedures", [])
 
         mode = (
@@ -104,7 +110,25 @@ class WriteGuard:
             for p in allowed_procedures
         ]
 
-        if normalized_proc not in normalized_allowed:
+        # Debug logging to trace validation
+        logger.debug(f"Validating procedure '{proc_name}' for tool '{tool_name}'")
+        logger.debug(f"Allowed procedures: {allowed_procedures}")
+        logger.debug(f"Normalized procedure: {normalized_proc}")
+        logger.debug(f"Normalized allowed list: {normalized_allowed}")
+
+        # Check tool-specific allowlist if available
+        tool_allowlist = tool_config.get("allowlist", [])
+        normalized_allowlist = [
+            self._normalize_proc_name(p, mode=mode, default_schema=default_schema)
+            for p in tool_allowlist
+        ]
+        logger.debug(f"Tool-specific allowlist: {tool_allowlist}")
+        logger.debug(f"Normalized tool-specific allowlist: {normalized_allowlist}")
+
+        if (
+            normalized_proc not in normalized_allowed
+            and normalized_proc not in normalized_allowlist
+        ):
             raise PermissionError(
                 f"Procedure {proc_name} is not in the allowed procedures list for tool {tool_name}"
             )
