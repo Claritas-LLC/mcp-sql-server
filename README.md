@@ -44,17 +44,33 @@ Remote FastMCP server for dual SQL Server 2019 instances with strong read-only c
 1. Create and activate a Python 3.11+ virtual environment.
 2. Install dependencies:
 
+Windows (PowerShell):
+
 ```powershell
 pip install -e .[dev]
 ```
 
+Linux/macOS:
+
+```bash
+pip install -e '.[dev]'
+```
+
 3. Copy environment and config templates:
+
+Windows (PowerShell):
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-4. Configure instances in config/instances.yaml.
+Linux/macOS:
+
+```bash
+cp .env.example .env
+```
+
+4. Configure instances in `config/instances.yaml` (this repository already includes it; no `instances.yaml.example` file is provided). For parity with the `.env.example` -> `.env` pattern above, use the existing file as your local runtime file and use `config/instances.runtime.example.yaml` as the format/key reference.
 5. Run the service:
 
 ```powershell

@@ -30,31 +30,80 @@ The service enforces `config/runtime-policy.yaml` via `FASTMCP_POLICY_PATH`.
 
 ## Update Procedure (Docker)
 
-1. Edit `config/runtime-policy.yaml`.
-2. Optionally update `policy/sql-allowlist.yaml` to keep review metadata in sync.
-3. Restart the runtime container so policy is reloaded.
+1. Create timestamped backups before making changes.
+
+```powershell
+$ts = Get-Date -Format "yyyyMMdd-HHmmss"
+Copy-Item config/runtime-policy.yaml "config/runtime-policy.yaml.bak-$ts"
+Copy-Item policy/sql-allowlist.yaml "policy/sql-allowlist.yaml.bak-$ts"
+```
+
+2. Edit `config/runtime-policy.yaml`.
+3. Optionally update `policy/sql-allowlist.yaml` to keep review metadata in sync.
+4. Validate YAML syntax before applying the change (before restart).
+
+```powershell
+python -c "import pathlib, yaml; [yaml.safe_load(pathlib.Path(p).read_text(encoding='utf-8')) for p in ['config/runtime-policy.yaml','policy/sql-allowlist.yaml']]; print('YAML OK')"
+```
+
+5. Restart the runtime container so policy is reloaded.
+
+Note: restarting `mcp-sqlserver` causes brief service disruption (short unavailability and dropped in-flight connections).
 
 ```powershell
 docker compose -f docker/docker-compose.runtime.yml restart mcp-sqlserver
 ```
 
-4. Validate diagnostics:
+6. Validate diagnostics:
 
 - `http://localhost:8085/diagnostics/health`
 - `http://localhost:8085/diagnostics/security`
 
-5. Execute a smoke test against an allowlisted procedure using `db_primary_sql2019_exec_proc`.
+7. Execute a smoke test against an allowlisted procedure using `db_primary_sql2019_exec_proc`.
+8. If apply fails, roll back and restart:
+
+```powershell
+Copy-Item "config/runtime-policy.yaml.bak-<timestamp>" config/runtime-policy.yaml -Force
+Copy-Item "policy/sql-allowlist.yaml.bak-<timestamp>" policy/sql-allowlist.yaml -Force
+docker compose -f docker/docker-compose.runtime.yml restart mcp-sqlserver
+```
+
+After rollback, run diagnostics (`/diagnostics/health`, `/diagnostics/security`) and the same `db_primary_sql2019_exec_proc` smoke test again.
 
 ## Update Procedure (Local Python Runtime)
 
-1. Edit `config/runtime-policy.yaml`.
-2. Restart the process.
+1. Create a timestamped backup before making changes.
+
+```powershell
+$ts = Get-Date -Format "yyyyMMdd-HHmmss"
+Copy-Item config/runtime-policy.yaml "config/runtime-policy.yaml.bak-$ts"
+```
+
+2. Edit `config/runtime-policy.yaml`.
+3. Validate YAML syntax before applying the change (before restart).
+
+```powershell
+python -c "import pathlib, yaml; yaml.safe_load(pathlib.Path('config/runtime-policy.yaml').read_text(encoding='utf-8')); print('YAML OK')"
+```
+
+4. Restart the process.
 
 ```powershell
 python -m src.server
 ```
 
-3. Run smoke tests with your MCP client.
+5. Run diagnostics and smoke tests with your MCP client:
+
+- `http://localhost:8085/diagnostics/health`
+- `http://localhost:8085/diagnostics/security`
+- `db_primary_sql2019_exec_proc` allowlisted-procedure smoke test
+
+6. If apply fails, roll back by restoring the backup and restarting:
+
+```powershell
+Copy-Item "config/runtime-policy.yaml.bak-<timestamp>" config/runtime-policy.yaml -Force
+python -m src.server
+```
 
 ## Demonstration Example (Non-Production)
 
