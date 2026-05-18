@@ -428,5 +428,23 @@ class ConnectionManager:
         with self.connect(instance_id) as conn:
             cur = conn.cursor()
             cur.execute(statement, params)
+            has_result_set = bool(cur.description)
+            columns: list[str] = []
+            rows: list[dict[str, Any]] = []
+
+            if has_result_set:
+                columns = self._normalize_column_names(
+                    [d[0] for d in cur.description or []]
+                )
+                fetched = cur.fetchall()
+                rows = [dict(zip(columns, row, strict=False)) for row in fetched]
+
             conn.commit()
-            return {"status": "ok", "procedure": proc_name, "rowcount": cur.rowcount}
+            return {
+                "status": "ok",
+                "procedure": proc_name,
+                "rowcount": cur.rowcount,
+                "has_result_set": has_result_set,
+                "columns": columns,
+                "rows": rows,
+            }

@@ -5,6 +5,8 @@
 - `.env.example` -> copy to `.env`
 - `config/instances.runtime.example.yaml` -> copy values into `config/instances.yaml`
 - `docker/docker-compose.runtime.yml` -> runtime compose file
+- `config/runtime-policy.yaml` -> authoritative runtime policy for controlled-write tools
+- `policy/sql-allowlist.yaml` -> review/reference mirror of approved procedures (not runtime enforced)
 
 ## Steps
 
@@ -81,6 +83,18 @@ docker compose -f docker/docker-compose.runtime.yml restart mcp-sqlserver
 ```
 
 4. Test the execution via the MCP tool (Inspector or your client).
+
+### SQL Permission Requirement
+
+Policy allowlisting and SQL permissions are separate gates. After allowlisting a procedure, ensure the SQL login used by MCP has EXECUTE permission on that procedure (or on a tightly scoped approved schema).
+
+Example:
+
+```sql
+GRANT EXECUTE ON OBJECT::USGISPRO_800.dbo.usp_CaptureProcOutput TO [mcp_service_login];
+```
+
+Without this grant, SQL Server can still return permission errors (for example, error 229) even when runtime policy allows the call.
 
 ### Important: What This Does NOT Allow
 

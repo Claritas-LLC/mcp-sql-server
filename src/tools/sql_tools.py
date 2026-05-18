@@ -21,7 +21,6 @@ from src.tools.analysis_contracts import (
 from src.tools.dashboard_payloads import build_sessions_dashboard_full
 from src.tools.dashboard_page_store import (
     get_dashboard_page_expiry_utc,
-    register_dashboard_page,
     register_dashboard_page_with_metadata,
 )
 from src.tools.input_validation import (
@@ -1125,14 +1124,16 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 - actor: caller identity.
 
                 Output:
-                - status payload containing procedure and rowcount.
+                - status payload containing procedure metadata and optional result set.
                 """
                 request_id = str(uuid.uuid4())
                 started = time.time()
                 decision = "allow"
                 error_code = None
                 sql = f"EXEC {proc_name}"
+                audit_rows = 0
                 _auth_ctx: dict[str, Any] | None = None
+                result: dict[str, Any] = {}
                 try:
                     if ctx is not None:
                         await ctx.debug(
@@ -1158,9 +1159,17 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     state.write_guard.enforce(
                         _tool, "UPDATE __policy_probe__ SET x = 1"
                     )
-                    result = state.connection_manager.execute_proc(
+                    raw_result = state.connection_manager.execute_proc(
                         _instance, proc_name, params
                     )
+                    if not isinstance(raw_result, dict):
+                        raise RuntimeError(
+                            "EXEC_PROC_RESULT_INVALID: expected mapping result"
+                        )
+                    result = raw_result
+                    result_rows = result.get("rows")
+                    if isinstance(result_rows, list):
+                        audit_rows = len(result_rows)
 
                     if ctx is not None:
                         await ctx.info(
@@ -1226,7 +1235,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         sql=sql,
                         decision=decision,
                         latency_ms=latency_ms,
-                        rows=0,
+                        rows=audit_rows,
                         error_code=error_code,
                         auth_ctx=_auth_ctx,
                     )

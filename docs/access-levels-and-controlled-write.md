@@ -38,7 +38,7 @@ Primary policy reference:
 - `config/runtime-policy.yaml`
 
 Procedure allowlist reference:
-- `policy/sql-allowlist.yaml`
+- `policy/sql-allowlist.yaml` (reference mirror, not a runtime-enforced source)
 
 ## How Controlled-Write Is Enforced
 
@@ -69,10 +69,16 @@ Code path:
 - `WriteGuard.validate_procedure(...)` in `src/middleware/write_guard.py`
 
 Policy paths:
-- `config/runtime-policy.yaml` (allowed_tools section)
-- `policy/sql-allowlist.yaml`
+- `config/runtime-policy.yaml` (allowed_tools section, authoritative)
+- `policy/sql-allowlist.yaml` (reference mirror)
 
-### Layer 4: Runtime controls and observability
+### Layer 4: SQL Server permissions
+
+- Runtime allowlisting does not grant SQL rights.
+- The SQL login used by MCP must have EXECUTE permission on approved procedures (or an approved schema).
+- If SQL permissions are missing, execution fails even when policy allows the procedure.
+
+### Layer 5: Runtime controls and observability
 
 Each request is wrapped with:
 

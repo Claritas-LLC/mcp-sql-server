@@ -1,6 +1,5 @@
 {
   "top_queries_report": true,
   "active_sessions_report": true,
-  "index_health_report": true,
-  "exec_proc": false
+  "index_health_report": true
 }

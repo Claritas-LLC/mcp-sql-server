@@ -12,15 +12,12 @@ allowed_tools:
     allowed_procedures:
       - dbo.usp_RunApprovedMaintenance # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
       - USGISPRO_800.dbo.gisadmin_GetActiveCompanies
+      - USGISPRO_800.dbo.usp_CaptureProcOutput
       - dbo.usp_RefreshMaterializedView # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
   db_secondary_sql2019_exec_proc:
     allowed_procedures:
       - dbo.usp_RunApprovedMaintenance # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
       - dbo.usp_RefreshMaterializedView # Allowlist controls which procedures can be invoked. It does NOT inspect/prevent DDL or DML inside the stored procedure body; procedures must be separately audited for DDL safety.
-tools:
-  db_1_sql2019_execute_query:
-    allowlist:
-      - exec USGISPRO_800.dbo.gisadmin_GetActiveCompanies
 instance_enable_flags:
   primary: true
   secondary: true

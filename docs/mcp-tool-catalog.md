@@ -86,7 +86,12 @@ Existing write-capable tools remain:
 Any future write-capable additions require:
 - Security owner approval
 - Explicit `allowed_write_tools` entry in `config/runtime-policy.yaml`
-- Corresponding `policy/sql-allowlist.yaml` procedure mapping
+- Corresponding `allowed_tools.<tool>.allowed_procedures` entry in `config/runtime-policy.yaml`
+
+Notes:
+- `config/runtime-policy.yaml` is the runtime-enforced policy source.
+- `policy/sql-allowlist.yaml` is a review/reference mirror and not loaded at runtime.
+- Procedure allowlisting does not grant database permissions. The MCP SQL principal still needs EXECUTE rights on approved procedures.
 
 ## Batch 2 Advanced Analysis Tool Set
 

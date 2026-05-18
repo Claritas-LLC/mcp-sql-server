@@ -16,6 +16,7 @@ Remote FastMCP server for dual SQL Server 2019 instances with strong read-only c
 
 - [Tool catalog](docs/mcp-tool-catalog.md) - canonical list of exposed tools and contracts.
 - [Access levels and controlled write](docs/access-levels-and-controlled-write.md) - authorization model and write guardrails.
+- [Runtime policy configuration guide](docs/runtime-policy-configuration-guide.md) - authoritative policy workflow, YAML roles, and safe update steps.
 - [Run with Docker](docs/run-mcp-server-with-docker.md) - local and remote Docker runtime instructions.
 - [Azure Container Apps deployment](docs/azure-container-apps-deployment.md) - Azure deployment flow and operational guidance.
 - [Deployment checklist](docs/DEPLOYMENT-CHECKLIST.md) - pre-deploy and post-deploy validation steps.
@@ -76,6 +77,8 @@ Primary rollout verification checks:
 ## Docker Runtime
 
 Use the runtime compose flow documented in docs/run-mcp-server-with-docker.md.
+
+Controlled-write policy is enforced from config/runtime-policy.yaml. The file policy/sql-allowlist.yaml is a review/reference mirror and is not loaded as a runtime policy source.
 
 ```powershell
 docker compose -f docker/docker-compose.runtime.yml up -d

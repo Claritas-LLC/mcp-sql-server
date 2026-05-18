@@ -3,6 +3,8 @@ allowed_tools:
     allowed_procedures:
       - dbo.usp_RunApprovedMaintenance
       - dbo.usp_RefreshMaterializedView
+      - USGISPRO_800.dbo.gisadmin_GetActiveCompanies
+      - USGISPRO_800.dbo.usp_CaptureProcOutput
   db_secondary_sql2019_exec_proc:
     allowed_procedures:
       - dbo.usp_RunApprovedMaintenance
