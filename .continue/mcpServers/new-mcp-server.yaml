@@ -1,0 +1,8 @@
+name: New MCP server
+version: 0.0.1
+schema: v1
+mcpServers:
+  - name: sqlserver
+    url: "http://98.29.71.243:8085/mcp"
+    type: "http"
+    env: {}
