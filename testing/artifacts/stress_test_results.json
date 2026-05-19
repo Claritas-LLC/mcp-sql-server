@@ -1,0 +1,607 @@
+{
+  "successful_calls": 10034,
+  "failed_calls": 0,
+  "start_time": 1779227869.1853266,
+  "history": [
+    {
+      "timestamp": "2026-05-19T21:57:54.113502+00:00",
+      "elapsed_sec": 4,
+      "successful": 0,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T21:58:54.127849+00:00",
+      "elapsed_sec": 64,
+      "successful": 300,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T21:59:54.138113+00:00",
+      "elapsed_sec": 124,
+      "successful": 590,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:00:54.160661+00:00",
+      "elapsed_sec": 184,
+      "successful": 880,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:01:54.174996+00:00",
+      "elapsed_sec": 244,
+      "successful": 1170,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:02:54.190689+00:00",
+      "elapsed_sec": 305,
+      "successful": 1470,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:03:54.232330+00:00",
+      "elapsed_sec": 365,
+      "successful": 1905,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:04:54.255979+00:00",
+      "elapsed_sec": 425,
+      "successful": 2340,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:05:54.291668+00:00",
+      "elapsed_sec": 485,
+      "successful": 2770,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:06:54.313126+00:00",
+      "elapsed_sec": 545,
+      "successful": 3205,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:07:54.337097+00:00",
+      "elapsed_sec": 605,
+      "successful": 3630,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:08:54.354886+00:00",
+      "elapsed_sec": 665,
+      "successful": 4210,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:09:54.365795+00:00",
+      "elapsed_sec": 725,
+      "successful": 4790,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:10:54.385800+00:00",
+      "elapsed_sec": 785,
+      "successful": 5370,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:11:54.411295+00:00",
+      "elapsed_sec": 845,
+      "successful": 5950,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:12:56.858604+00:00",
+      "elapsed_sec": 907,
+      "successful": 6499,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:13:56.880994+00:00",
+      "elapsed_sec": 967,
+      "successful": 7220,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:14:56.910534+00:00",
+      "elapsed_sec": 1027,
+      "successful": 7943,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:15:56.940379+00:00",
+      "elapsed_sec": 1087,
+      "successful": 8668,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    },
+    {
+      "timestamp": "2026-05-19T22:16:56.983947+00:00",
+      "elapsed_sec": 1147,
+      "successful": 9394,
+      "failed": 0,
+      "pool": {
+        "instances": {
+          "primary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 2,
+            "reused_total": 1,
+            "discarded_total": 1
+          },
+          "secondary": {
+            "enabled": true,
+            "pool_max": 10,
+            "pool_size": 1,
+            "in_use": 0,
+            "available": 1,
+            "created_total": 1,
+            "reused_total": 0,
+            "discarded_total": 0
+          }
+        }
+      }
+    }
+  ]
+}
