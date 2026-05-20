@@ -10,3 +10,8 @@ evidence/
 
 # large binaries
 *.exe
+
+# local temp and ad-hoc artifacts
+.tmp/
+file_list.txt
+testing/artifacts/stress_test_log.txt
