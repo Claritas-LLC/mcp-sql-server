@@ -1,0 +1,21 @@
+[05/19/26 09:27:59] INFO     Registered           sessions_dashboard_app.py:293
+                             interactive sessions                              
+                             dashboard app                                     
+                             provider                                          
+--- App Route Tree ---
+Path: /openapi.json, Name: openapi, Methods: {'GET', 'HEAD'}
+Path: /docs, Name: swagger_ui_html, Methods: {'GET', 'HEAD'}
+Path: /docs/oauth2-redirect, Name: swagger_ui_redirect, Methods: {'GET', 'HEAD'}
+Path: /redoc, Name: redoc_html, Methods: {'GET', 'HEAD'}
+Path: /diagnostics/health, Name: health, Methods: {'GET'}
+Path: /diagnostics/readiness, Name: readiness, Methods: {'GET'}
+Path: /diagnostics/security, Name: security, Methods: {'GET'}
+Path: /diagnostics/pool, Name: pool, Methods: {'GET'}
+Path: /diagnostics/metrics, Name: metrics, Methods: {'GET'}
+Path: /diagnostics/audit-summary, Name: audit_summary, Methods: {'GET'}
+Path: /diagnostics/tool-usage-summary, Name: tool_usage_summary, Methods: {'GET'}
+Path: /diagnostics/dashboards/{request_id}, Name: dashboard_page, Methods: {'GET'}
+Path: /diagnostics/dashboards/{request_id}/refresh, Name: refresh_dashboard_page, Methods: {'GET'}
+Path: /mcp, Name: None, Methods: None
+  Path: /, Name: StreamableHTTPASGIApp, Methods: None
+Path: /, Name: root, Methods: {'GET'}

@@ -8,7 +8,7 @@ instances:
     port: 1433
     database: master
     auth_secret_ref: secret/sql/primary
-    encrypt: true
+    encrypt: false
     trust_server_certificate: true
     connect_timeout_sec: 5
     command_timeout_sec: 30
@@ -24,7 +24,7 @@ instances:
     port: 1433
     database: master
     auth_secret_ref: secret/sql/secondary
-    encrypt: true
+    encrypt: false
     trust_server_certificate: true
     connect_timeout_sec: 5
     command_timeout_sec: 30

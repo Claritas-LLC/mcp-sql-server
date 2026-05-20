@@ -1,0 +1,41 @@
+* Host localhost:8085 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+
+  0      0   0      0   0      0      0      0                              0*   Trying [::1]:8085...
+* Established connection to localhost (::1 port 8085) from ::1 port 61287 
+* using HTTP/1.x
+> GET /mcp/?session_id=test-session HTTP/1.1
+
+> Host: localhost:8085
+
+> User-Agent: curl/8.18.0
+
+> Accept: text/event-stream
+
+> 
+
+* Request completely sent off
+< HTTP/1.1 400 Bad Request
+
+< date: Tue, 19 May 2026 13:40:41 GMT
+
+< server: uvicorn
+
+< content-type: application/json
+
+< mcp-session-id: 0488a3b810274964b27702fd004d7405
+
+< content-length: 105
+
+< 
+
+{ [105 bytes data]
+
+100    105 100    105   0      0   4375      0                              0
+100    105 100    105   0      0   4352      0                              0
+100    105 100    105   0      0   4310      0                              0
+* Connection #0 to host localhost:8085 left intact
+{"jsonrpc":"2.0","id":"server-error","error":{"code":-32600,"message":"Bad Request: Missing session ID"}}

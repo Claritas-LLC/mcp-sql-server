@@ -127,7 +127,7 @@ This implementation plan defines a deterministic, security-first deployment for 
 
 - **DEP-001**: FastMCP 3.0 runtime and compatible Python runtime.
 - **DEP-002**: SQL Server 2019 network reachability for two independently administered instances.
-- **DEP-003**: ODBC Driver 18 for SQL Server and Python SQL client library (pyodbc or equivalent).
+- **DEP-003**: ODBC Driver 17 for SQL Server and Python SQL client library (pyodbc or equivalent).
 - **DEP-004**: Docker Engine / Docker Desktop and Docker Compose plugin.
 - **DEP-005**: Prometheus-compatible scraper (or equivalent) for metrics endpoint ingestion.
 - **DEP-006**: Centralized log sink (SIEM or log platform) for audit log forwarding.

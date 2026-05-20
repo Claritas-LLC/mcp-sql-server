@@ -119,7 +119,7 @@ This plan defines the implementation of four advanced MCP tools per SQL instance
 - **DEP-004**: Existing diagnostics router in `src/diagnostics/routes.py`.
 - **DEP-005**: SQL Server 2019 DMV/catalog access permissions for monitoring queries.
 - **DEP-006**: FastMCP interactive app payload compatibility (HTML + JSON response contract).
-- **DEP-007**: Runtime ODBC dependency availability in Docker image (`msodbcsql18`).
+- **DEP-007**: Runtime ODBC dependency availability in Docker image (`msodbcsql17`).
 
 ## 5. Files
 

@@ -1,0 +1,23 @@
+[05/19/26 09:38:56] INFO     Registered           sessions_dashboard_app.py:293
+                             interactive sessions                              
+                             dashboard app                                     
+                             provider                                          
+INFO:     Started server process [35020]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8085 (Press CTRL+C to quit)
+INFO:     172.236.228.224:52024 - "GET / HTTP/1.1" 200 OK
+INFO:     3.130.168.2:33550 - "GET / HTTP/1.1" 200 OK
+WARNING:  Invalid HTTP request received.
+INFO:     3.130.168.2:59386 - "GET / HTTP/1.1" 200 OK
+WARNING:  Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+INFO:     77.91.118.18:45502 - "GET / HTTP/1.1" 200 OK
+WARNING:  Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+INFO:     35.241.84.13:49566 - "GET /login HTTP/1.1" 404 Not Found
+INFO:     45.33.109.18:59858 - "GET / HTTP/1.1" 200 OK
+INFO:     206.81.9.37:52022 - "GET / HTTP/1.1" 200 OK
+INFO:     206.81.9.37:52024 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+WARNING:  Invalid HTTP request received.

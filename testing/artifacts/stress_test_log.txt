@@ -1,0 +1,74 @@
+Starting Stress Test at 2026-05-19T21:57:49.186675+00:00
+Target: http://localhost:8085, Tool: db_primary_sql2019_analyze_db_data_model
+Starting session worker: stress-actor-01
+Starting session worker: stress-actor-02
+Starting session worker: stress-actor-03
+Starting session worker: stress-actor-04
+Starting session worker: stress-actor-05
+Starting session worker: stress-actor-06
+Starting session worker: stress-actor-07
+Starting session worker: stress-actor-08
+Starting session worker: stress-actor-09
+Starting session worker: stress-actor-10
+[stress-actor-03] Session established: d9eeaa0351b54d369a18974069685fa4
+[stress-actor-02] Session established: 35220fcb1be445069c4fd8e9037ef4ba
+[stress-actor-01] Session established: 12b9501bc4fd4df697bc593b2c4e9227
+[4s] Success: 0, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[stress-actor-04] Session established: bd801934ce4a465fba97fb75a79953ec
+[stress-actor-05] Session established: 161e758107e54b48ba2f632d11b9c0ea
+[stress-actor-06] Session established: 78f0a6954d92437ab5abede325c2cc50
+[stress-actor-08] Session established: 999a2b6de1664e51be67efd9d9865598
+[stress-actor-07] Session established: 76f23b54b89f45549094c5dec54c96cf
+[stress-actor-09] Session established: ef4be792b08f4752b6c8fa3fe840d7e1
+[stress-actor-10] Session established: 42b6f3bada3c479aa7cd563bf25e288f
+[64s] Success: 300, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[124s] Success: 590, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[184s] Success: 880, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[244s] Success: 1170, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+Starting session worker: stress-actor-11
+Starting session worker: stress-actor-12
+Starting session worker: stress-actor-13
+Starting session worker: stress-actor-14
+Starting session worker: stress-actor-15
+[stress-actor-11] Session established: 8fe3e6a9b522475faf7397b079cdc114
+[stress-actor-12] Session established: 6a7887fbf5f949c3b8cae9b3b103e894
+[stress-actor-13] Session established: 910848c8b2fe4b119a108bb3c57c996c
+[stress-actor-14] Session established: b4d46d174d314145a7a42833c505a8b0
+[stress-actor-15] Session established: bcfccd805d924693a4e4c53081bcfc3f
+[305s] Success: 1470, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[365s] Success: 1905, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[425s] Success: 2340, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[485s] Success: 2770, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[545s] Success: 3205, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+Starting session worker: stress-actor-16
+Starting session worker: stress-actor-17
+Starting session worker: stress-actor-18
+Starting session worker: stress-actor-19
+Starting session worker: stress-actor-20
+[stress-actor-16] Session established: 278ad50abc8b49afa49ac4b8c9001800
+[stress-actor-17] Session established: d527c19874b34de2a2181402008bc8c5
+[stress-actor-18] Session established: 9b2818e9936d4e37b44fd77fd1a98444
+[stress-actor-19] Session established: 6c9b26b81ff84b658f68cce7a108dd58
+[stress-actor-20] Session established: a9f37bb8e7f74144a0a6a85e0b887c2f
+[605s] Success: 3630, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[665s] Success: 4210, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[725s] Success: 4790, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[785s] Success: 5370, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[845s] Success: 5950, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+Starting session worker: stress-actor-21
+Starting session worker: stress-actor-22
+Starting session worker: stress-actor-23
+Starting session worker: stress-actor-24
+Starting session worker: stress-actor-25
+[stress-actor-21] Session established: cb9ca1d3d71549248f3eff3b00e85498
+[stress-actor-22] Session established: 5660902b71a04e8dba5cdf829271dc2a
+[stress-actor-24] Session established: 38f45fcafd944ae5932093652bb084a2
+[stress-actor-25] Session established: a87864858819497583697c4f554ececa
+[stress-actor-23] Session established: c1186dabd71f4955b48dd1a2d2f6b7ff
+[907s] Success: 6499, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[967s] Success: 7220, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[1027s] Success: 7943, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[1087s] Success: 8668, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+[1147s] Success: 9394, Fail: 0, Pool: {"instances": {"primary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 2, "reused_total": 1, "discarded_total": 1}, "secondary": {"enabled": true, "pool_max": 10, "pool_size": 1, "in_use": 0, "available": 1, "created_total": 1, "reused_total": 0, "discarded_total": 0}}}
+Stopping test...
+Results saved to testing\artifacts\stress_test_results.json

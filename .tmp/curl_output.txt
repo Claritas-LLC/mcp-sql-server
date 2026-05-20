@@ -1,0 +1,41 @@
+* Host localhost:8085 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+
+  0      0   0      0   0      0      0      0                              0*   Trying [::1]:8085...
+* Established connection to localhost (::1 port 8085) from ::1 port 60560 
+* using HTTP/1.x
+> GET /mcp/ HTTP/1.1
+
+> Host: localhost:8085
+
+> User-Agent: curl/8.18.0
+
+> Accept: */*
+
+> 
+
+* Request completely sent off
+< HTTP/1.1 406 Not Acceptable
+
+< date: Tue, 19 May 2026 13:40:10 GMT
+
+< server: uvicorn
+
+< content-type: application/json
+
+< mcp-session-id: a69d57d6ccba4cb78e4c1f7c0d07872d
+
+< content-length: 126
+
+< 
+
+{ [126 bytes data]
+
+100    126 100    126   0      0  14516      0                              0
+100    126 100    126   0      0  14331      0                              0
+100    126 100    126   0      0  13956      0                              0
+* Connection #0 to host localhost:8085 left intact
+{"jsonrpc":"2.0","id":"server-error","error":{"code":-32600,"message":"Not Acceptable: Client must accept text/event-stream"}}

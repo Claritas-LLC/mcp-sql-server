@@ -179,6 +179,8 @@ def build_fastapi_app() -> FastAPI:
 
 
 def main() -> None:
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
     host = os.getenv("FASTMCP_HOST", "0.0.0.0")
     port = int(os.getenv("FASTMCP_PORT", "8080"))
     uvicorn.run(build_fastapi_app(), host=host, port=port)

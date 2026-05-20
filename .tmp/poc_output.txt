@@ -1,0 +1,37 @@
+  + Exception Group Traceback (most recent call last):
+  |   File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\.tmp\poc_mcp_client.py", line 22, in <module>
+  |     asyncio.run(run())
+  |     ~~~~~~~~~~~^^^^^^^
+  |   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\runners.py", line 204, in run
+  |     return runner.run(main)
+  |            ~~~~~~~~~~^^^^^^
+  |   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\runners.py", line 127, in run
+  |     return self._loop.run_until_complete(task)
+  |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  |   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\base_events.py", line 719, in run_until_complete
+  |     return future.result()
+  |            ~~~~~~~~~~~~~^^
+  |   File "C:\Users\HarryValdez\OneDrive\Documents\trae\mcp-sql-server\.tmp\poc_mcp_client.py", line 6, in run
+  |     async with sse_client("http://localhost:8085/mcp/sse") as (read, write):
+  |                ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\contextlib.py", line 214, in __aenter__
+  |     return await anext(self.gen)
+  |            ^^^^^^^^^^^^^^^^^^^^^
+  |   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\mcp\client\sse.py", line 63, in sse_client
+  |     async with anyio.create_task_group() as tg:
+  |                ~~~~~~~~~~~~~~~~~~~~~~~^^
+  |   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\anyio\_backends\_asyncio.py", line 783, in __aexit__
+  |     raise BaseExceptionGroup(
+  |         "unhandled errors in a TaskGroup", self._exceptions
+  |     ) from None
+  | ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\mcp\client\sse.py", line 74, in sse_client
+    |     event_source.response.raise_for_status()
+    |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+    |   File "C:\Users\HarryValdez\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\httpx\_models.py", line 829, in raise_for_status
+    |     raise HTTPStatusError(message, request=request, response=self)
+    | httpx.HTTPStatusError: Client error '404 Not Found' for url 'http://localhost:8085/mcp/sse'
+    | For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
+    +------------------------------------

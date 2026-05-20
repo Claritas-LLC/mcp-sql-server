@@ -43,13 +43,11 @@ class ConnectionManager:
         password = creds.get("password")
         database_name = database_override or instance.database
         return (
-            "DRIVER={ODBC Driver 18 for SQL Server};"
+            "DRIVER={ODBC Driver 17 for SQL Server};"
             f"SERVER={instance.host},{instance.port};"
             f"DATABASE={database_name};"
-            f"UID={user};PWD={password};"
-            f"Encrypt={'yes' if instance.encrypt else 'no'};"
-            f"TrustServerCertificate={'yes' if instance.trust_server_certificate else 'no'};"
-            f"Connection Timeout={instance.connect_timeout_sec};"
+            f"UID={user};PWD={{{password}}};"
+            "Encrypt=no;TrustServerCertificate=yes;"
         )
 
     def _connect_new(
