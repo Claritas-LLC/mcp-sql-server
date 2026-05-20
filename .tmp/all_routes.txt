@@ -1,4 +1,0 @@
-  File "<string>", line 1
-    import os; from unittest.mock import MagicMock; import sys; sys.modules['src.db.connection_manager'] = MagicMock(); sys.modules['src.middleware.audit_logger'] = MagicMock(); from src.server import build_fastapi_app; app = build_fastapi_app(); def dump(app, prefix=''): \n for r in app.routes: \n  print(prefix+r.path); \n  if hasattr(r, 'app'): \n   if hasattr(r.app, 'routes'): dump(r.app, prefix+' ') \n   elif hasattr(r.app, 'app'): dump(r.app.app, prefix+' ')\n dump(app)
-                                                                                                                                                                                                                                                       ^^^
-SyntaxError: invalid syntax

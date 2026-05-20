@@ -1,8 +1,0 @@
-[05/19/26 09:36:23] INFO     Registered           sessions_dashboard_app.py:293
-                             interactive sessions                              
-                             dashboard app                                     
-                             provider                                          
-INFO:     Started server process [33380]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8085 (Press CTRL+C to quit)
