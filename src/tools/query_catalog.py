@@ -275,14 +275,14 @@ def missing_statistics_coverage_candidate_query(top_n: int) -> str:
         f"SELECT TOP {top_n} "
         "s.name AS schema_name, "
         "t.name AS table_name, "
-        "SUM(CASE WHEN st.stats_id > 0 AND st.is_hypothetical = 0 THEN 1 ELSE 0 END) AS usable_stats_count, "
+        "SUM(CASE WHEN st.stats_id > 0 THEN 1 ELSE 0 END) AS usable_stats_count, "
         "MAX(ISNULL(p.rows, 0)) AS row_count "
         "FROM sys.tables t "
         "JOIN sys.schemas s ON s.schema_id = t.schema_id "
         "LEFT JOIN sys.stats st ON st.object_id = t.object_id "
         "LEFT JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1) "
         "GROUP BY s.name, t.name "
-        "HAVING SUM(CASE WHEN st.stats_id > 0 AND st.is_hypothetical = 0 THEN 1 ELSE 0 END) = 0 "
+        "HAVING SUM(CASE WHEN st.stats_id > 0 THEN 1 ELSE 0 END) = 0 "
         "ORDER BY row_count DESC, s.name, t.name"
     )
 
