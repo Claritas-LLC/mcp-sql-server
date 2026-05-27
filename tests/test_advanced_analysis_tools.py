@@ -4,6 +4,7 @@ from src.tools.analysis_contracts import (
     build_finding,
     build_recommendation,
     build_report_envelope,
+    DBA_REVIEW_DISCLAIMER,
 )
 from src.tools.input_validation import (
     validate_database_name,
@@ -210,6 +211,55 @@ def test_report_envelope_has_required_keys() -> None:
         "recommendations",
     ):
         assert key in report, f"Missing key: {key}"
+
+
+def test_report_envelope_includes_disclaimer_when_recommendations_present() -> None:
+    report = build_report_envelope(
+        instance_number=1,
+        database_name="testdb",
+        tool_name="db_1_sql2019_analyze_tab_health",
+        summary={"table_count_scanned": 3},
+        findings=[],
+        recommendations=[
+            build_recommendation(
+                priority="medium", action="Rebuild index", rationale="High fragmentation"
+            ),
+        ],
+    )
+    assert "disclaimer" in report
+    assert report["disclaimer"] == DBA_REVIEW_DISCLAIMER
+
+
+def test_report_envelope_omits_disclaimer_when_no_recommendations() -> None:
+    report = build_report_envelope(
+        instance_number=1,
+        database_name="testdb",
+        tool_name="db_1_sql2019_analyze_tab_health",
+        summary={"table_count_scanned": 3},
+        findings=[
+            build_finding(code="F01", severity="info", title="OK", detail="All good"),
+        ],
+        recommendations=[],
+    )
+    assert "disclaimer" not in report
+
+
+def test_disclaimer_text_matches_constant() -> None:
+    report = build_report_envelope(
+        instance_number=2,
+        database_name="testdb",
+        tool_name="db_2_sql2019_analyze_db_data_model",
+        summary={},
+        findings=[],
+        recommendations=[
+            build_recommendation(
+                priority="low", action="Review FK", rationale="Missing index"
+            ),
+        ],
+    )
+    assert report["disclaimer"] == DBA_REVIEW_DISCLAIMER
+    assert "database administrator" in report["disclaimer"]
+    assert "DBA" in report["disclaimer"]
 
 
 # ---------------------------------------------------------------------------

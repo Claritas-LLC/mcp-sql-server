@@ -121,8 +121,7 @@ These tools are exposed with concrete numeric bindings such as `db_1_sql2019_ana
   - deterministic JSON report envelope
   - summary highlights including statistics counts and database auto-stats settings
   - `summary`, `severity_counts`, `findings`, `recommendations`
-
-### 5. `db_<instance #>_sql2019_analyze_db_data_model`
+  - **DBA review disclaimer**: when recommendations are present, the response includes a `disclaimer` field reminding users to review and approve all proposed changes with a DBA before execution.
 - Category: `read_only_analysis`
 - Purpose: Analyze logical data model quality using foreign-key graph extraction and circular dependency detection.
 - Input:
@@ -134,8 +133,7 @@ These tools are exposed with concrete numeric bindings such as `db_1_sql2019_ana
   - deterministic JSON report envelope
   - graph summary (`node_count`, `edge_count`, `circular_dependency_count`)
   - prioritized findings and recommendations
-
-### 6. `db_<instance #>_sql2019_analyze_sec_config`
+  - **DBA review disclaimer**: when recommendations are present, the response includes a `disclaimer` field with the standard DBA review requirement.
 - Category: `read_only_analysis`
 - Purpose: Assess database security/configuration posture (orphan users, elevated roles, backup recency, optional server-scope checks).
 - Input:
@@ -145,8 +143,7 @@ These tools are exposed with concrete numeric bindings such as `db_1_sql2019_ana
 - Output:
   - deterministic JSON report envelope
   - security findings with redacted evidence rows
-
-### 7. `db_<instance #>_sql2019_sessions_dashboard`
+  - **DBA review disclaimer**: when recommendations are present, the response includes a `disclaimer` field with the standard DBA review requirement.
 - Category: `interactive_dashboard`
 - Purpose: Build session activity and lock-chain dashboard payload for FastMCP interactive app clients.
 - Input:

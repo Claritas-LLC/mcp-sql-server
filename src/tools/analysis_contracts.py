@@ -8,6 +8,12 @@ Severity = Literal["critical", "high", "medium", "low", "info"]
 
 _VALID_SEVERITIES: tuple[Severity, ...] = ("critical", "high", "medium", "low", "info")
 
+DBA_REVIEW_DISCLAIMER: str = (
+    "All recommendations and proposed changes must be reviewed and approved "
+    "by a database administrator (DBA) before execution to prevent unintended "
+    "disruptions to production systems."
+)
+
 
 def _normalize_severity(value: str) -> Severity:
     normalized = value.strip().lower()
@@ -59,7 +65,7 @@ def build_report_envelope(
             sev = "info"
         severity_counts[sev] += 1
 
-    return {
+    result: dict[str, Any] = {
         "instance_number": instance_number,
         "database_name": database_name,
         "tool": tool_name,
@@ -69,3 +75,8 @@ def build_report_envelope(
         "findings": findings,
         "recommendations": recommendations,
     }
+
+    if recommendations:
+        result["disclaimer"] = DBA_REVIEW_DISCLAIMER
+
+    return result

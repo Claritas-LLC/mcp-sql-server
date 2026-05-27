@@ -432,7 +432,7 @@ ORDER BY TotalSpaceMB DESC;
 - List tools returns only tools registered for the selected instance.
 - List object returns correct object set for the specified database and type.
 - Execute query supports fully qualified references to external databases.
-- Advanced analysis tools return deterministic JSON envelopes with severity counts and recommendations.
+- Advanced analysis tools return deterministic JSON envelopes with severity counts and recommendations. When recommendations are present, the response includes a top-level `disclaimer` field reminding users that all proposed changes must be reviewed and approved by a DBA before execution.
 
 ### Operational Validation
 
