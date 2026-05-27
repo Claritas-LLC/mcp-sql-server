@@ -93,10 +93,14 @@ $SQL_SECONDARY_PASSWORD="<strong-password>"
 - [ ] Test health endpoint (no auth): `curl https://<fqdn>/diagnostics/health`
 - [ ] Test security endpoint: `curl https://<fqdn>/diagnostics/security`
   - Should show: `azure_auth_enabled: true`
-- [ ] Acquire Entra token: `$TOKEN = (az account get-access-token --resource "api://mcp-sql-server" --query accessToken -o tsv)`
-- [ ] Test MCP endpoint with auth:
+- [ ] Acquire Entra token: `$TOKEN = (az account get-access-token --scope "api://mcp-sql-server/access" --query accessToken -o tsv)`
+- [ ] Test MCP endpoint with auth (JSON-RPC):
   ```powershell
-  curl -H "Authorization: Bearer $TOKEN" https://<fqdn>/mcp
+  Invoke-WebRequest -Uri "https://<fqdn>/mcp" `
+    -Method Post `
+    -Headers @{Authorization="Bearer $TOKEN"} `
+    -Body '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}' `
+    -ContentType "application/json"
   ```
 
 ## Phase 10: Test SQL Connectivity (Optional, varies by network setup)
@@ -133,9 +137,9 @@ All required env vars are set in Step 7 `az containerapp create`. Key ones:
 | `FASTMCP_AZURE_CLIENT_SECRET_REF` | `secret/entra/client-secret` | Key Vault reference |
 | `FASTMCP_AZURE_IDENTIFIER_URI` | `api://mcp-sql-server` | Entra Expose API |
 | `FASTMCP_AZURE_REQUIRED_SCOPES` | `api://mcp-sql-server/access` | Entra scope |
-| `SECRET_SQL_PRIMARY_PASSWORD` | `@Microsoft.KeyVault(...)` | Key Vault ref |
-| `SECRET_SQL_SECONDARY_PASSWORD` | `@Microsoft.KeyVault(...)` | Key Vault ref |
-| `SECRET_ENTRA_CLIENT_SECRET` | `@Microsoft.KeyVault(...)` | Key Vault ref |
+| `SECRET_SQL_PRIMARY_PASSWORD` | `secretref:sqlpripass` | Container Apps secret mapped from Key Vault |
+| `SECRET_SQL_SECONDARY_PASSWORD` | `secretref:sqlsecpass` | Container Apps secret mapped from Key Vault |
+| `SECRET_ENTRA_CLIENT_SECRET` | `secretref:entraclisec` | Container Apps secret mapped from Key Vault |
 
 ## Troubleshooting
 

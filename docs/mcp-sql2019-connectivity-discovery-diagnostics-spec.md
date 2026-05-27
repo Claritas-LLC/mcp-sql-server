@@ -88,10 +88,11 @@ Check accessibility and runtime identity of a SQL Server 2019 instance.
 
 ### Input Parameters
 
-- instance_number: integer
-  - Required
-  - Allowed values: 1, 2
-  - For concrete tools this is implicit from tool name; include for traceability if desired.
+- actor: string
+  - Optional
+  - Default: `system`
+
+Instance binding is implicit from the concrete tool name (`db_1_...` or `db_2_...`) and is not supplied by the caller.
 
 ### Execution Behavior
 
@@ -131,9 +132,9 @@ List registered MCP tools available on the selected instance endpoint.
 
 ### Input Parameters
 
-- instance_number: integer
-  - Required
-  - Allowed values: 1, 2
+- actor: string
+  - Optional
+  - Default: `system`
 
 ### Execution Behavior
 
@@ -177,15 +178,15 @@ List objects inside a specified database by type.
 
 ### Input Parameters
 
-- instance_number: integer
-  - Required
-  - Allowed values: 1, 2
 - database_name: string
   - Required
   - Example: USGISPRO_800
 - object_type: string
   - Required
   - Allowed values: table, view, procedure, function, synonym
+- actor: string
+  - Optional
+  - Default: `system`
 
 ### Execution Behavior
 
@@ -225,7 +226,7 @@ List objects inside a specified database by type.
 From instance 1, run:
 
 - tool: db_1_sql2019_list_object
-- inputs: instance_number=1, database_name=USGISPRO_800, object_type=table
+- inputs: database_name=USGISPRO_800, object_type=table
 
 Expected result: list of tables in USGISPRO_800.
 
@@ -237,9 +238,6 @@ Execute a SQL statement with optional compact or full diagnostic view.
 
 ### Input Parameters
 
-- instance_number: integer
-  - Required
-  - Allowed values: 1, 2
 - database_name: string
   - Required
   - Connection context database.
@@ -249,6 +247,9 @@ Execute a SQL statement with optional compact or full diagnostic view.
 - view_mode: string
   - Optional (default: COMPACT)
   - Allowed values: FULL, COMPACT
+- actor: string
+  - Optional
+  - Default: `system`
 
 ### Execution Behavior
 

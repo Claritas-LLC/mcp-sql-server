@@ -1,19 +1,26 @@
 # MCP Tool Catalog
 
-This catalog defines the first expansion batch of remote MCP tools for dual SQL Server 2019 instances.
+This catalog defines the remote MCP tool families currently exposed by the dual SQL Server 2019 service.
 
 ## Naming Standard
 
-All tools follow:
-- `db_<instance>_sql2019_<toolname>`
+The server currently exposes two concrete naming families:
 
-Supported instances:
-- `primary`
-- `secondary`
+- Registry-backed tools use named instances:
+  - `db_<instance_name>_sql2019_<toolname>`
+  - Supported instance names: `primary`, `secondary`
+- Explicit per-instance discovery/query tools use numeric bindings:
+  - `db_<instance_number>_sql2019_<toolname>`
+  - Supported instance numbers: `1`, `2`
+
+Current instance mapping:
+- `db_1_*` tools are bound to instance 1.
+- `db_2_*` tools are bound to instance 2.
+- `db_primary_*` and `db_secondary_*` remain the naming model for the registry-backed report and controlled-write tools.
 
 ## Batch 1 Tool Set
 
-### 1. `db_<instance>_sql2019_top_queries_report`
+### 1. `db_<instance_name>_sql2019_top_queries_report`
 - Category: `read_only`
 - Purpose: Return top CPU/time-consuming cached queries for tuning triage.
 - Input:
@@ -32,7 +39,7 @@ Supported instances:
   - `SQL_BLOCKED_BY_POLICY`
   - `SQL_EXECUTION_ERROR`
 
-### 2. `db_<instance>_sql2019_active_sessions_report`
+### 2. `db_<instance_name>_sql2019_active_sessions_report`
 - Category: `read_only`
 - Purpose: Return active user sessions and request state.
 - Input:
@@ -51,7 +58,7 @@ Supported instances:
   - `SQL_BLOCKED_BY_POLICY`
   - `SQL_EXECUTION_ERROR`
 
-### 3. `db_<instance>_sql2019_index_health_report`
+### 3. `db_<instance_name>_sql2019_index_health_report`
 - Category: `read_only`
 - Purpose: Summarize index health and usage indicators for maintenance planning.
 - Input:
@@ -94,6 +101,8 @@ Notes:
 - Procedure allowlisting does not grant database permissions. The MCP SQL principal still needs EXECUTE rights on approved procedures.
 
 ## Batch 2 Advanced Analysis Tool Set
+
+These tools are exposed with concrete numeric bindings such as `db_1_sql2019_analyze_tab_health` and `db_2_sql2019_sessions_dashboard`.
 
 ### 4. `db_<instance #>_sql2019_analyze_tab_health`
 - Category: `read_only_analysis`
