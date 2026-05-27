@@ -158,7 +158,8 @@ List registered MCP tools available on the selected instance endpoint.
     {
       "name": "db_1_sql2019_execute_query",
       "description": "Execute SQL query on instance 1",
-      "required_parameters": ["database_name", "sql_statement", "view_mode"]
+      "required_parameters": ["database_name", "sql_statement"],
+      "optional_parameters": ["actor", "view_mode"]
     }
   ]
 }
@@ -242,14 +243,11 @@ Execute a SQL statement with optional compact or full diagnostic view.
 - database_name: string
   - Required
   - Connection context database.
-- request_datetime_utc: string
-  - Required
-  - ISO 8601 timestamp from caller.
 - sql_statement: string
   - Required
   - May include fully qualified object names.
 - view_mode: string
-  - Required
+  - Optional (default: COMPACT)
   - Allowed values: FULL, COMPACT
 
 ### Execution Behavior

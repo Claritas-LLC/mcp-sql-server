@@ -59,6 +59,9 @@ az group create --name $AZ_RG --location $AZ_LOCATION
 # Create ACR
 az acr create --resource-group $AZ_RG --name $AZ_ACR --sku Basic
 
+# Required for managed identity image pull from ACR
+az acr config authentication-as-arm update -r $AZ_ACR --status enabled
+
 # Create Key Vault
 az keyvault create --name $AZ_KEYVAULT --resource-group $AZ_RG --location $AZ_LOCATION
 
@@ -158,11 +161,15 @@ az acr build --registry $AZ_ACR --image "mcp-sql-server:latest" --file docker/Do
 $IDENTITY_NAME="mcp-sql-server-identity"
 az identity create --name $IDENTITY_NAME --resource-group $AZ_RG
 
-# Get identity principal ID
+# Get identity resource ID and principal ID
+$IDENTITY_ID="$(az identity show --name $IDENTITY_NAME --resource-group $AZ_RG --query id -o tsv)"
 $IDENTITY_PRINCIPAL_ID="$(az identity show --name $IDENTITY_NAME --resource-group $AZ_RG --query principalId -o tsv)"
+$ACR_ID="$(az acr show --resource-group $AZ_RG --name $AZ_ACR --query id -o tsv)"
+$KEYVAULT_ID="$(az keyvault show --name $AZ_KEYVAULT --resource-group $AZ_RG --query id -o tsv)"
 
-# Grant Key Vault secret read permissions to identity
-az keyvault set-policy --name $AZ_KEYVAULT --object-id $IDENTITY_PRINCIPAL_ID --secret-permissions get
+# Grant Key Vault and ACR permissions to identity (RBAC)
+az role assignment create --assignee-object-id $IDENTITY_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" --scope $KEYVAULT_ID
+az role assignment create --assignee-object-id $IDENTITY_PRINCIPAL_ID --assignee-principal-type ServicePrincipal --role "AcrPull" --scope $ACR_ID
 
 # Create the Container App
 az containerapp create `
@@ -175,9 +182,14 @@ az containerapp create `
   --cpu 1.0 `
   --memory 2.0Gi `
   --registry-server $ACR_LOGIN_SERVER `
-  --registry-username "00000000-0000-0000-0000-000000000000" `
-  --registry-password "$(az acr login --name $AZ_ACR --expose-token --output tsv --query accessToken)" `
-  --user-assigned "$IDENTITY_NAME" `
+   --registry-identity $IDENTITY_ID `
+   --user-assigned $IDENTITY_ID `
+   --secrets `
+      sqlpriuser=keyvaultref:https://$AZ_KEYVAULT.vault.azure.net/secrets/sql-primary-username,identityref:$IDENTITY_ID `
+      sqlpripass=keyvaultref:https://$AZ_KEYVAULT.vault.azure.net/secrets/sql-primary-password,identityref:$IDENTITY_ID `
+      sqlsecuser=keyvaultref:https://$AZ_KEYVAULT.vault.azure.net/secrets/sql-secondary-username,identityref:$IDENTITY_ID `
+      sqlsecpass=keyvaultref:https://$AZ_KEYVAULT.vault.azure.net/secrets/sql-secondary-password,identityref:$IDENTITY_ID `
+      entraclisec=keyvaultref:https://$AZ_KEYVAULT.vault.azure.net/secrets/entra-client-secret,identityref:$IDENTITY_ID `
   --env-vars `
     FASTMCP_HOST=0.0.0.0 `
     FASTMCP_PORT=8080 `
@@ -189,12 +201,16 @@ az containerapp create `
     FASTMCP_AZURE_IDENTIFIER_URI=$ENTRA_IDENTIFIER_URI `
     FASTMCP_AZURE_REQUIRED_SCOPES="api://mcp-sql-server/access" `
     FASTMCP_AZURE_GROUP_AUTHORIZATION_ENABLED=false `
-    SECRET_SQL_PRIMARY_USERNAME="@Microsoft.KeyVault(SecretUri=https://$AZ_KEYVAULT.vault.azure.net/secrets/sql-primary-username/)" `
-    SECRET_SQL_PRIMARY_PASSWORD="@Microsoft.KeyVault(SecretUri=https://$AZ_KEYVAULT.vault.azure.net/secrets/sql-primary-password/)" `
-    SECRET_SQL_SECONDARY_USERNAME="@Microsoft.KeyVault(SecretUri=https://$AZ_KEYVAULT.vault.azure.net/secrets/sql-secondary-username/)" `
-    SECRET_SQL_SECONDARY_PASSWORD="@Microsoft.KeyVault(SecretUri=https://$AZ_KEYVAULT.vault.azure.net/secrets/sql-secondary-password/)" `
-    SECRET_ENTRA_CLIENT_SECRET="@Microsoft.KeyVault(SecretUri=https://$AZ_KEYVAULT.vault.azure.net/secrets/entra-client-secret/)"
+   SECRET_SQL_PRIMARY_USERNAME=secretref:sqlpriuser `
+   SECRET_SQL_PRIMARY_PASSWORD=secretref:sqlpripass `
+   SECRET_SQL_SECONDARY_USERNAME=secretref:sqlsecuser `
+   SECRET_SQL_SECONDARY_PASSWORD=secretref:sqlsecpass `
+   SECRET_ENTRA_CLIENT_SECRET=secretref:entraclisec
 ```
+
+Notes:
+- `--user-assigned` and `identityref:` should use the managed identity resource ID, not just identity name.
+- Container Apps secret names are limited in length, so short secret keys are used and then mapped to the app's expected environment variable names.
 
 ## Step 8: Get App FQDN and Test
 
@@ -211,12 +227,14 @@ Invoke-WebRequest -Uri "https://$APP_FQDN/diagnostics/security" -Method Get
 
 # Test MCP endpoint with Entra token
 # First, acquire a token:
-$TOKEN = (az account get-access-token --resource "api://mcp-sql-server" --query accessToken -o tsv)
+$TOKEN = (az account get-access-token --scope "api://mcp-sql-server/access" --query accessToken -o tsv)
 
-# Then call MCP endpoint
+# Then call MCP endpoint (JSON-RPC)
 Invoke-WebRequest -Uri "https://$APP_FQDN/mcp" `
-  -Method Get `
-  -Headers @{Authorization="Bearer $TOKEN"}
+   -Method Post `
+   -Headers @{Authorization="Bearer $TOKEN"} `
+   -Body '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}' `
+   -ContentType "application/json"
 ```
 
 ## Step 9: SQL Connectivity from ACA
@@ -248,7 +266,8 @@ az containerapp logs show --name $AZ_APP --resource-group $AZ_RG --follow
 az containerapp show --name $AZ_APP --resource-group $AZ_RG
 
 # Check managed identity permissions
-az keyvault get-policy --name $AZ_KEYVAULT --object-id $IDENTITY_PRINCIPAL_ID
+az role assignment list --assignee-object-id $IDENTITY_PRINCIPAL_ID --scope $KEYVAULT_ID -o table
+az role assignment list --assignee-object-id $IDENTITY_PRINCIPAL_ID --scope $ACR_ID -o table
 ```
 
 ## Entra Auth Flow
@@ -268,7 +287,7 @@ When `azure_auth_enabled=true`:
 
 ```powershell
 # Using CLI (requires you to authenticate to Entra first)
-$TOKEN = (az account get-access-token --resource "api://mcp-sql-server" --query accessToken -o tsv)
+$TOKEN = (az account get-access-token --scope "api://mcp-sql-server/access" --query accessToken -o tsv)
 
 # Or use Python to acquire token programmatically
 python -c "
@@ -297,7 +316,8 @@ Invoke-WebRequest -Uri "https://$APP_FQDN/mcp" `
 | `AzureAuthNotConfigured` | Set `FASTMCP_AZURE_AUTH_ENABLED=true` and other auth env vars |
 | `InvalidTokenError: Bad token` | Token issuer doesn't match tenant; check `FASTMCP_AZURE_TENANT_ID` |
 | `MissingRequiredScope` | Token doesn't include required scopes; add `api://mcp-sql-server/access` to app's API permissions |
-| `KeyVaultAccessDenied` | Managed identity doesn't have permissions; run step 7 `az keyvault set-policy` |
+| `KeyVaultAccessDenied` | Managed identity doesn't have permissions; verify `Key Vault Secrets User` role assignment on Key Vault |
+| `ImagePullBackOff` | Ensure ACR has ARM token auth enabled and identity has `AcrPull` on ACR |
 | `SQL connection timeout` | SQL server not reachable from ACA; check VNet routing, NSG rules, SQL firewall |
 | Token validation hangs | Check HTTP client timeouts; default is 10 seconds in `FASTMCP_POOL_TIMEOUT_SECONDS` |
 

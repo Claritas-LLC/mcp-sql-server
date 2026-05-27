@@ -1463,15 +1463,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             ),
             "required_parameters": [
                 "database_name",
-                "request_datetime_utc",
                 "sql_statement",
-                "view_mode",
             ],
-            "optional_parameters": ["actor"],
+            "optional_parameters": ["actor", "view_mode"],
             "output_fields": [
                 "instance_number",
                 "database_name",
-                "request_datetime_utc",
                 "execution_datetime_utc",
                 "view_mode",
                 "columns",
@@ -1947,9 +1944,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         @mcp.tool(name=execute_query_name)
         async def _execute_query(
             database_name: str,
-            request_datetime_utc: str,
             sql_statement: str,
-            view_mode: str,
+            view_mode: str = "COMPACT",
             actor: str = "system",
             ctx: Context | None = None,
             _tool=execute_query_name,
@@ -1960,9 +1956,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
             Inputs:
             - database_name: execution context DB.
-            - request_datetime_utc: caller timestamp.
             - sql_statement: SQL text (supports fully qualified cross-database names).
-            - view_mode: COMPACT or FULL.
+            - view_mode: COMPACT (default) or FULL.
 
             FULL mode appends explain-plan summary when available.
             """
@@ -2009,7 +2004,6 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 output: dict[str, Any] = {
                     "instance_number": _instance_number,
                     "database_name": database_name,
-                    "request_datetime_utc": request_datetime_utc,
                     "execution_datetime_utc": datetime.now(timezone.utc).isoformat(),
                     "view_mode": normalized,
                     "columns": result["columns"],
