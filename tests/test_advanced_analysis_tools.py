@@ -13,6 +13,7 @@ from src.tools.input_validation import (
 )
 from src.tools.model_graph import build_fk_graph
 from src.tools.query_catalog import (
+    database_statistics_settings_query,
     disabled_indexes_query,
     duplicate_key_candidate_query,
     excessive_permissions_query,
@@ -22,16 +23,24 @@ from src.tools.query_catalog import (
     heap_tables_query,
     lock_chain_query,
     missing_fk_index_query,
+    missing_statistics_coverage_candidate_query,
     missing_pk_query,
     nullable_fk_columns_query,
+    low_sampled_statistics_query,
     orphan_user_query,
     server_config_flags_query,
     stale_statistics_query,
+    statistics_histogram_query,
+    statistics_never_updated_query,
     table_size_query,
     tables_without_fk_query,
     trustworthy_databases_query,
 )
 from src.tools.security_redaction import redact_sensitive_fields
+from src.tools.sql_tools import (
+    _classify_low_sample_statistics_row,
+    _classify_stale_statistics_row,
+)
 
 
 def test_report_envelope_severity_counts() -> None:
@@ -248,6 +257,37 @@ def test_stale_statistics_query_top_n() -> None:
     assert "modification_counter" in sql
 
 
+def test_statistics_never_updated_query_top_n() -> None:
+    sql = statistics_never_updated_query(7)
+    assert "TOP 7" in sql
+    assert "last_updated IS NULL" in sql
+
+
+def test_low_sampled_statistics_query_structure() -> None:
+    sql = low_sampled_statistics_query(9)
+    assert "TOP 9" in sql
+    assert "sample_ratio" in sql
+
+
+def test_database_statistics_settings_query_structure() -> None:
+    sql = database_statistics_settings_query()
+    assert "is_auto_create_stats_on" in sql
+    assert "is_auto_update_stats_on" in sql
+
+
+def test_missing_statistics_coverage_candidate_query_structure() -> None:
+    sql = missing_statistics_coverage_candidate_query(11)
+    assert "TOP 11" in sql
+    assert "usable_stats_count" in sql
+
+
+def test_statistics_histogram_query_structure() -> None:
+    sql = statistics_histogram_query("dbo", "Orders", "IX_Orders_CreatedAt")
+    assert "dm_db_stats_histogram" in sql
+    assert "OBJECT_ID('dbo.Orders')" in sql
+    assert "IX_Orders_CreatedAt" in sql
+
+
 def test_duplicate_key_candidate_query_top_n() -> None:
     sql = duplicate_key_candidate_query(5)
     assert "TOP 5" in sql
@@ -270,6 +310,61 @@ def test_missing_fk_index_query_structure() -> None:
     sql = missing_fk_index_query()
     assert "NOT EXISTS" in sql
     assert "index_columns" in sql
+
+
+def test_classify_stale_statistics_row_medium() -> None:
+    row = {
+        "schema_name": "dbo",
+        "table_name": "Orders",
+        "stat_name": "IX_Orders_Date",
+        "rows": 10000,
+        "modification_counter": 2500,
+        "last_updated": "2026-05-01T00:00:00+00:00",
+    }
+    classified = _classify_stale_statistics_row(row)
+    assert classified is not None
+    assert classified["severity"] == "medium"
+    assert classified["modification_ratio"] >= 0.2
+
+
+def test_classify_stale_statistics_row_high() -> None:
+    row = {
+        "schema_name": "dbo",
+        "table_name": "FactSales",
+        "stat_name": "IX_FactSales_Date",
+        "rows": 500000,
+        "modification_counter": 200000,
+        "last_updated": "2026-01-01T00:00:00+00:00",
+    }
+    classified = _classify_stale_statistics_row(row)
+    assert classified is not None
+    assert classified["severity"] == "high"
+
+
+def test_classify_low_sample_statistics_row_high() -> None:
+    row = {
+        "schema_name": "dbo",
+        "table_name": "FactSales",
+        "stat_name": "IX_FactSales_Product",
+        "rows": 250000,
+        "rows_sampled": 1000,
+    }
+    classified = _classify_low_sample_statistics_row(row)
+    assert classified is not None
+    assert classified["severity"] == "high"
+    assert classified["sample_ratio"] < 0.01
+
+
+def test_classify_low_sample_statistics_row_none_when_healthy() -> None:
+    row = {
+        "schema_name": "dbo",
+        "table_name": "Orders",
+        "stat_name": "IX_Orders_Status",
+        "rows": 12000,
+        "rows_sampled": 6000,
+    }
+    classified = _classify_low_sample_statistics_row(row)
+    assert classified is None
 
 
 def test_server_config_flags_query_contains_xp_cmdshell() -> None:

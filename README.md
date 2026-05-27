@@ -19,6 +19,7 @@ Remote FastMCP server for dual SQL Server 2019 instances with strong read-only c
 - [Runtime policy configuration guide](docs/runtime-policy-configuration-guide.md) - authoritative policy workflow, YAML roles, and safe update steps.
 - [Run with Docker](docs/run-mcp-server-with-docker.md) - local and remote Docker runtime instructions.
 - [Azure Container Apps deployment](docs/azure-container-apps-deployment.md) - Azure deployment flow and operational guidance.
+- [Cloud deployment strategy analysis](docs/cloud-deployment-strategy-analysis.md) - cross-cloud comparison of Azure, AWS, and Databricks hosting strategies for this MCP server.
 - [Deployment checklist](docs/DEPLOYMENT-CHECKLIST.md) - pre-deploy and post-deploy validation steps.
 - [Security maintenance runbook](docs/runbooks/security-maintenance.md) - weekly/monthly/quarterly security operations.
 - [Scaling strategy runbook](docs/runbooks/scaling-strategy.md) - scaling and load-validation operations.

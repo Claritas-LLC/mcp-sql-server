@@ -212,6 +212,108 @@ def stale_statistics_query(top_n: int) -> str:
     )
 
 
+def statistics_never_updated_query(top_n: int) -> str:
+    """Top N user-table statistics with no update timestamp yet."""
+    return (
+        f"SELECT TOP {top_n} "
+        "OBJECT_SCHEMA_NAME(s.object_id) AS schema_name, "
+        "OBJECT_NAME(s.object_id) AS table_name, "
+        "s.name AS stat_name, "
+        "sp.last_updated, "
+        "sp.rows, "
+        "sp.rows_sampled, "
+        "sp.modification_counter "
+        "FROM sys.stats s "
+        "CROSS APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp "
+        "WHERE OBJECTPROPERTY(s.object_id, 'IsUserTable') = 1 "
+        "AND sp.last_updated IS NULL "
+        "ORDER BY sp.rows DESC, sp.modification_counter DESC"
+    )
+
+
+def low_sampled_statistics_query(top_n: int) -> str:
+    """Top N user-table statistics with weakest sample ratio."""
+    return (
+        f"SELECT TOP {top_n} "
+        "OBJECT_SCHEMA_NAME(s.object_id) AS schema_name, "
+        "OBJECT_NAME(s.object_id) AS table_name, "
+        "s.name AS stat_name, "
+        "sp.last_updated, "
+        "sp.rows, "
+        "sp.rows_sampled, "
+        "sp.modification_counter, "
+        "CASE WHEN sp.rows > 0 "
+        "THEN CAST(sp.rows_sampled AS FLOAT) / CAST(sp.rows AS FLOAT) "
+        "ELSE 0 END AS sample_ratio "
+        "FROM sys.stats s "
+        "CROSS APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp "
+        "WHERE OBJECTPROPERTY(s.object_id, 'IsUserTable') = 1 "
+        "AND sp.rows > 0 "
+        "ORDER BY sample_ratio ASC, sp.rows DESC"
+    )
+
+
+def database_statistics_settings_query() -> str:
+    """Database-level automatic statistics maintenance settings."""
+    return (
+        "SELECT "
+        "name AS database_name, "
+        "is_auto_create_stats_on AS auto_create_statistics_on, "
+        "is_auto_update_stats_on AS auto_update_statistics_on, "
+        "is_auto_update_stats_async_on AS auto_update_statistics_async_on "
+        "FROM sys.databases "
+        "WHERE name = DB_NAME()"
+    )
+
+
+def missing_statistics_coverage_candidate_query(top_n: int) -> str:
+    """Top N user tables that appear to have limited usable stats coverage.
+
+    This is heuristic metadata-based analysis and does not inspect query plans.
+    """
+    return (
+        f"SELECT TOP {top_n} "
+        "s.name AS schema_name, "
+        "t.name AS table_name, "
+        "SUM(CASE WHEN st.stats_id > 0 AND st.is_hypothetical = 0 THEN 1 ELSE 0 END) AS usable_stats_count, "
+        "MAX(ISNULL(p.rows, 0)) AS row_count "
+        "FROM sys.tables t "
+        "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+        "LEFT JOIN sys.stats st ON st.object_id = t.object_id "
+        "LEFT JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1) "
+        "GROUP BY s.name, t.name "
+        "HAVING SUM(CASE WHEN st.stats_id > 0 AND st.is_hypothetical = 0 THEN 1 ELSE 0 END) = 0 "
+        "ORDER BY row_count DESC, s.name, t.name"
+    )
+
+
+def statistics_histogram_query(schema_name: str, table_name: str, stat_name: str) -> str:
+    """Read histogram distribution for one specific statistic (read-only)."""
+    safe_schema = schema_name.replace("'", "''")
+    safe_table = table_name.replace("'", "''")
+    safe_stat = stat_name.replace("'", "''")
+    return (
+        "SELECT "
+        "h.step_number, "
+        "TRY_CONVERT(nvarchar(256), h.range_high_key) AS range_high_key_text, "
+        "h.range_rows, "
+        "h.equal_rows, "
+        "h.distinct_range_rows, "
+        "h.average_range_rows "
+        "FROM sys.stats st "
+        "CROSS APPLY sys.dm_db_stats_histogram(st.object_id, st.stats_id) h "
+        "WHERE st.object_id = OBJECT_ID('"
+        + safe_schema
+        + "."
+        + safe_table
+        + "') "
+        "AND st.name = '"
+        + safe_stat
+        + "' "
+        "ORDER BY h.step_number"
+    )
+
+
 def duplicate_key_candidate_query(top_n: int) -> str:
     """Tables with multiple single-column non-unique indexes on the same column
     (duplicate index candidates)."""

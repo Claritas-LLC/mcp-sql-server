@@ -106,16 +106,20 @@ These tools are exposed with concrete numeric bindings such as `db_1_sql2019_ana
 
 ### 4. `db_<instance #>_sql2019_analyze_tab_health`
 - Category: `read_only_analysis`
-- Purpose: Analyze table/index health (size, fragmentation, missing primary keys) and produce prioritized findings.
+- Purpose: Analyze table/index health and statistics health (size, fragmentation, missing primary keys, stale/never-updated/low-sampled statistics, database auto-stats settings, optional histogram skew indicators) and produce prioritized findings.
 - Input:
   - `database_name` (str, required)
   - `schema_name` (str, optional)
   - `table_name` (str, optional)
   - `include_indexes` (bool, optional, default true)
+  - `include_statistics` (bool, optional, default true)
+  - `include_histogram_analysis` (bool, optional, default false)
+  - `histogram_top_n` (int, optional, default 10, max 100)
   - `top_n` (int, optional, default 50, max 500)
   - `actor` (str, optional)
 - Output:
   - deterministic JSON report envelope
+  - summary highlights including statistics counts and database auto-stats settings
   - `summary`, `severity_counts`, `findings`, `recommendations`
 
 ### 5. `db_<instance #>_sql2019_analyze_db_data_model`

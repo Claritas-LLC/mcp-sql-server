@@ -33,18 +33,24 @@ from src.tools.query_catalog import (
     active_sessions_query,
     backup_recency_query,
     blocking_chain_query,
+    database_statistics_settings_query,
     datatype_inconsistency_query,
     elevated_roles_query,
     fk_graph_query,
     fragmented_indexes_query,
     lock_chain_query,
+    low_sampled_statistics_query,
     missing_fk_index_query,
+    missing_statistics_coverage_candidate_query,
     missing_index_dmv_query,
     missing_pk_query,
     normalization_column_overlap_query,
     orphan_user_query,
     redundant_indexes_query,
     soft_delete_columns_query,
+    stale_statistics_query,
+    statistics_histogram_query,
+    statistics_never_updated_query,
     table_size_query,
     tran_locks_query,
     update_heavy_tables_query,
@@ -57,6 +63,118 @@ from src.tools.tool_registry import generate_tool_specs
 
 # Server-side logging
 logger = get_logger(__name__)
+
+
+STATS_MIN_ROWS_FOR_STALENESS = 1000
+STATS_MIN_MOD_COUNT = 500
+STATS_MOD_RATIO_MEDIUM = 0.20
+STATS_MOD_RATIO_HIGH = 0.35
+STATS_DAYS_STALE_MEDIUM = 30
+STATS_DAYS_STALE_HIGH = 90
+STATS_MIN_ROWS_HIGH_SEVERITY = 100000
+STATS_MIN_MOD_COUNT_HIGH = 20000
+
+STATS_LOW_SAMPLE_LOW = 0.10
+STATS_LOW_SAMPLE_MEDIUM = 0.05
+STATS_LOW_SAMPLE_HIGH = 0.01
+STATS_MIN_ROWS_FOR_SAMPLING = 10000
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _parse_utc_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    return None
+
+
+def _filter_rows_by_schema_table(
+    rows: list[dict[str, Any]],
+    schema_name: str | None,
+    table_name: str | None,
+) -> list[dict[str, Any]]:
+    filtered = rows
+    if schema_name:
+        schema_filter = schema_name.lower()
+        filtered = [
+            r for r in filtered if str(r.get("schema_name", "")).lower() == schema_filter
+        ]
+    if table_name:
+        table_filter = table_name.lower()
+        filtered = [
+            r for r in filtered if str(r.get("table_name", "")).lower() == table_filter
+        ]
+    return filtered
+
+
+def _classify_stale_statistics_row(
+    row: dict[str, Any], now_utc: datetime | None = None
+) -> dict[str, Any] | None:
+    rows_total = _safe_float(row.get("rows"))
+    modification_counter = _safe_float(row.get("modification_counter"))
+    if rows_total < STATS_MIN_ROWS_FOR_STALENESS:
+        return None
+
+    now = now_utc or datetime.now(timezone.utc)
+    last_updated = _parse_utc_datetime(row.get("last_updated"))
+    days_since_update = (now - last_updated).days if last_updated else None
+    mod_ratio = (modification_counter / rows_total) if rows_total > 0 else 0.0
+
+    is_stale = (
+        modification_counter
+        >= max(STATS_MIN_MOD_COUNT, STATS_MOD_RATIO_MEDIUM * rows_total)
+    ) or (
+        days_since_update is not None and days_since_update >= STATS_DAYS_STALE_MEDIUM
+    )
+    if not is_stale:
+        return None
+
+    is_high = (
+        modification_counter
+        >= max(STATS_MIN_MOD_COUNT_HIGH, STATS_MOD_RATIO_HIGH * rows_total)
+    ) or (
+        days_since_update is not None
+        and days_since_update >= STATS_DAYS_STALE_HIGH
+        and rows_total >= STATS_MIN_ROWS_HIGH_SEVERITY
+    )
+
+    enriched = dict(row)
+    enriched["severity"] = "high" if is_high else "medium"
+    enriched["modification_ratio"] = round(mod_ratio, 4)
+    enriched["days_since_update"] = days_since_update
+    return enriched
+
+
+def _classify_low_sample_statistics_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    rows_total = _safe_float(row.get("rows"))
+    rows_sampled = _safe_float(row.get("rows_sampled"))
+    if rows_total < STATS_MIN_ROWS_FOR_SAMPLING or rows_total <= 0:
+        return None
+
+    sample_ratio = rows_sampled / rows_total
+    if sample_ratio >= STATS_LOW_SAMPLE_LOW:
+        return None
+
+    severity = "high" if sample_ratio < STATS_LOW_SAMPLE_HIGH else "medium"
+    enriched = dict(row)
+    enriched["severity"] = severity
+    enriched["sample_ratio"] = round(sample_ratio, 4)
+    return enriched
 
 
 def _sanitize_dashboard_url(url: str) -> str:
@@ -2119,6 +2237,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 schema_name: str | None = None,
                 table_name: str | None = None,
                 include_indexes: bool = True,
+                include_statistics: bool = True,
+                include_histogram_analysis: bool = False,
+                histogram_top_n: int = 10,
                 top_n: int = 50,
                 actor: str = "system",
                 ctx: Context | None = None,
@@ -2151,6 +2272,9 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     if table_name is not None:
                         table_name = validate_identifier(table_name, "table_name")
                     size = validate_positive_int(top_n, "top_n", 1, 500)
+                    histogram_limit = validate_positive_int(
+                        histogram_top_n, "histogram_top_n", 1, 100
+                    )
 
                     actor, _auth_ctx = await _resolve_actor_and_authorize(
                         actor=actor,
@@ -2177,31 +2301,78 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         _instance, db_name, missing_pk_query(), size
                     )
 
-                    filtered_sizes = table_sizes["rows"]
-                    if schema_name:
-                        filtered_sizes = [
-                            r
-                            for r in filtered_sizes
-                            if str(r.get("schema_name")).lower() == schema_name.lower()
-                        ]
-                    if table_name:
-                        filtered_sizes = [
-                            r
-                            for r in filtered_sizes
-                            if str(r.get("table_name")).lower() == table_name.lower()
-                        ]
+                    stale_stats = {"rows": []}
+                    never_updated_stats = {"rows": []}
+                    low_sampled_stats = {"rows": []}
+                    db_stats_settings = {"rows": []}
+                    missing_stats_coverage = {"rows": []}
+                    if include_statistics:
+                        stale_stats = state.connection_manager.execute_catalog_query(
+                            _instance,
+                            db_name,
+                            stale_statistics_query(size),
+                            size,
+                        )
+                        never_updated_stats = state.connection_manager.execute_catalog_query(
+                            _instance,
+                            db_name,
+                            statistics_never_updated_query(size),
+                            size,
+                        )
+                        low_sampled_stats = state.connection_manager.execute_catalog_query(
+                            _instance,
+                            db_name,
+                            low_sampled_statistics_query(size),
+                            size,
+                        )
+                        db_stats_settings = state.connection_manager.execute_catalog_query(
+                            _instance,
+                            db_name,
+                            database_statistics_settings_query(),
+                            1,
+                        )
+                        missing_stats_coverage = (
+                            state.connection_manager.execute_catalog_query(
+                                _instance,
+                                db_name,
+                                missing_statistics_coverage_candidate_query(size),
+                                size,
+                            )
+                        )
+
+                    filtered_sizes = _filter_rows_by_schema_table(
+                        table_sizes["rows"], schema_name, table_name
+                    )
+                    filtered_fragmented = _filter_rows_by_schema_table(
+                        fragmented["rows"], schema_name, table_name
+                    )
+                    filtered_missing_pk = _filter_rows_by_schema_table(
+                        missing_pk["rows"], schema_name, table_name
+                    )
+                    filtered_stale_stats = _filter_rows_by_schema_table(
+                        stale_stats["rows"], schema_name, table_name
+                    )
+                    filtered_never_updated_stats = _filter_rows_by_schema_table(
+                        never_updated_stats["rows"], schema_name, table_name
+                    )
+                    filtered_low_sampled_stats = _filter_rows_by_schema_table(
+                        low_sampled_stats["rows"], schema_name, table_name
+                    )
+                    filtered_missing_stats_coverage = _filter_rows_by_schema_table(
+                        missing_stats_coverage["rows"], schema_name, table_name
+                    )
 
                     findings: list[dict[str, Any]] = []
                     recommendations: list[dict[str, Any]] = []
-                    if include_indexes and fragmented["rows"]:
-                        top_frag = fragmented["rows"][0]
+                    if include_indexes and filtered_fragmented:
+                        top_frag = filtered_fragmented[0]
                         findings.append(
                             build_finding(
                                 code="TAB_HEALTH_FRAGMENTED_INDEXES",
                                 severity="high",
                                 title="High index fragmentation detected",
                                 detail="One or more indexes exceed healthy fragmentation levels.",
-                                evidence=fragmented["rows"][:10],
+                                evidence=filtered_fragmented[:10],
                             )
                         )
                         recommendations.append(
@@ -2212,14 +2383,14 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                             )
                         )
 
-                    if missing_pk["rows"]:
+                    if filtered_missing_pk:
                         findings.append(
                             build_finding(
                                 code="TAB_HEALTH_MISSING_PRIMARY_KEY",
                                 severity="medium",
                                 title="Tables without primary keys",
                                 detail="Detected tables lacking primary key constraints.",
-                                evidence=missing_pk["rows"][:10],
+                                evidence=filtered_missing_pk[:10],
                             )
                         )
                         recommendations.append(
@@ -2227,6 +2398,258 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                                 priority="medium",
                                 action="Define primary keys for unconstrained tables.",
                                 rationale="Primary keys improve integrity, optimizer quality, and replication behavior.",
+                            )
+                        )
+
+                    classified_stale_stats = [
+                        enriched
+                        for enriched in (
+                            _classify_stale_statistics_row(r)
+                            for r in filtered_stale_stats
+                        )
+                        if enriched is not None
+                    ]
+                    if classified_stale_stats:
+                        has_high_stale = any(
+                            row.get("severity") == "high"
+                            for row in classified_stale_stats
+                        )
+                        findings.append(
+                            build_finding(
+                                code="TAB_HEALTH_STALE_STATISTICS",
+                                severity="high" if has_high_stale else "medium",
+                                title="Potentially stale statistics detected",
+                                detail=(
+                                    "Statistics show high change volume or extended age since last update, "
+                                    "which can degrade cardinality estimates and plan quality."
+                                ),
+                                evidence=classified_stale_stats[:10],
+                            )
+                        )
+                        recommendations.append(
+                            build_recommendation(
+                                priority="high" if has_high_stale else "medium",
+                                action=(
+                                    "Refresh stale statistics for the listed objects during a planned maintenance window."
+                                ),
+                                rationale=(
+                                    "Reducing statistics staleness improves cardinality estimates and lowers plan-regression risk."
+                                ),
+                            )
+                        )
+
+                    if filtered_never_updated_stats:
+                        has_large_never_updated = any(
+                            _safe_float(row.get("rows")) >= STATS_MIN_ROWS_HIGH_SEVERITY
+                            for row in filtered_never_updated_stats
+                        )
+                        findings.append(
+                            build_finding(
+                                code="TAB_HEALTH_STATS_NEVER_UPDATED",
+                                severity="high" if has_large_never_updated else "medium",
+                                title="Statistics with no update history detected",
+                                detail=(
+                                    "Some user-table statistics report no last-updated timestamp, indicating they may be uninitialized or stale."
+                                ),
+                                evidence=filtered_never_updated_stats[:10],
+                            )
+                        )
+                        recommendations.append(
+                            build_recommendation(
+                                priority="high" if has_large_never_updated else "medium",
+                                action=(
+                                    "Review auto stats behavior and refresh the listed statistics for active large tables."
+                                ),
+                                rationale=(
+                                    "Uninitialized statistics can produce poor row estimates and unstable query plans."
+                                ),
+                            )
+                        )
+
+                    classified_low_sample_stats = [
+                        enriched
+                        for enriched in (
+                            _classify_low_sample_statistics_row(r)
+                            for r in filtered_low_sampled_stats
+                        )
+                        if enriched is not None
+                    ]
+                    if classified_low_sample_stats:
+                        has_high_low_sample = any(
+                            row.get("severity") == "high"
+                            for row in classified_low_sample_stats
+                        )
+                        findings.append(
+                            build_finding(
+                                code="TAB_HEALTH_STATS_LOW_SAMPLE_RATIO",
+                                severity="high" if has_high_low_sample else "medium",
+                                title="Low statistics sample ratio detected",
+                                detail=(
+                                    "Some statistics were built from weak samples, which can reduce histogram quality."
+                                ),
+                                evidence=classified_low_sample_stats[:10],
+                            )
+                        )
+                        recommendations.append(
+                            build_recommendation(
+                                priority="high" if has_high_low_sample else "medium",
+                                action=(
+                                    "Consider higher-quality statistics updates (for example, larger sampling or fullscan) on critical tables."
+                                ),
+                                rationale=(
+                                    "Higher sample quality improves histogram fidelity and plan stability for skewed distributions."
+                                ),
+                            )
+                        )
+
+                    settings_row = (
+                        db_stats_settings["rows"][0] if db_stats_settings["rows"] else {}
+                    )
+                    auto_create_on = bool(settings_row.get("auto_create_statistics_on", 1))
+                    auto_update_on = bool(settings_row.get("auto_update_statistics_on", 1))
+                    if include_statistics and (not auto_create_on or not auto_update_on):
+                        severity = "high" if not auto_update_on else "medium"
+                        findings.append(
+                            build_finding(
+                                code="TAB_HEALTH_STATS_AUTO_SETTINGS_DISABLED",
+                                severity=severity,
+                                title="Database automatic statistics settings may increase risk",
+                                detail=(
+                                    "AUTO_CREATE_STATISTICS or AUTO_UPDATE_STATISTICS is disabled for this database."
+                                ),
+                                evidence=[
+                                    {
+                                        "database_name": settings_row.get("database_name", db_name),
+                                        "auto_create_statistics_on": auto_create_on,
+                                        "auto_update_statistics_on": auto_update_on,
+                                        "auto_update_statistics_async_on": bool(
+                                            settings_row.get(
+                                                "auto_update_statistics_async_on", 0
+                                            )
+                                        ),
+                                    }
+                                ],
+                            )
+                        )
+                        recommendations.append(
+                            build_recommendation(
+                                priority=severity,
+                                action=(
+                                    "Review database auto statistics settings and align with workload requirements."
+                                ),
+                                rationale=(
+                                    "Disabled automatic statistics maintenance can increase plan-quality drift over time."
+                                ),
+                            )
+                        )
+
+                    if filtered_missing_stats_coverage:
+                        has_large_missing_coverage = any(
+                            _safe_float(row.get("row_count")) >= STATS_MIN_ROWS_HIGH_SEVERITY
+                            for row in filtered_missing_stats_coverage
+                        )
+                        severity = "high" if has_large_missing_coverage else "medium"
+                        findings.append(
+                            build_finding(
+                                code="TAB_HEALTH_STATS_COVERAGE_HEURISTIC",
+                                severity=severity,
+                                title="Tables with limited statistics coverage (heuristic)",
+                                detail=(
+                                    "Metadata suggests some tables have no usable user-table statistics. "
+                                    "This is heuristic analysis and not execution-plan verified."
+                                ),
+                                evidence=filtered_missing_stats_coverage[:10],
+                            )
+                        )
+                        recommendations.append(
+                            build_recommendation(
+                                priority=severity,
+                                action=(
+                                    "Review statistics coverage for listed tables and refresh/create relevant statistics during maintenance windows."
+                                ),
+                                rationale=(
+                                    "Insufficient statistics coverage can reduce optimizer accuracy for join and predicate cardinality."
+                                ),
+                            )
+                        )
+
+                    histogram_evidence: list[dict[str, Any]] = []
+                    if (
+                        include_statistics
+                        and include_histogram_analysis
+                        and (classified_stale_stats or classified_low_sample_stats)
+                    ):
+                        candidates = (classified_stale_stats + classified_low_sample_stats)[
+                            :histogram_limit
+                        ]
+                        for candidate in candidates:
+                            schema_value = str(candidate.get("schema_name", ""))
+                            table_value = str(candidate.get("table_name", ""))
+                            stat_value = str(candidate.get("stat_name", ""))
+                            if not schema_value or not table_value or not stat_value:
+                                continue
+                            histogram_rows = state.connection_manager.execute_catalog_query(
+                                _instance,
+                                db_name,
+                                statistics_histogram_query(
+                                    schema_value,
+                                    table_value,
+                                    stat_value,
+                                ),
+                                200,
+                            )["rows"]
+                            if not histogram_rows:
+                                continue
+
+                            equal_values = [
+                                _safe_float(step.get("equal_rows"))
+                                for step in histogram_rows
+                            ]
+                            avg_equal = (
+                                sum(equal_values) / len(equal_values)
+                                if equal_values
+                                else 0.0
+                            )
+                            max_equal = max(equal_values) if equal_values else 0.0
+                            skew_ratio = (
+                                max_equal / avg_equal
+                                if avg_equal > 0
+                                else (999.0 if max_equal > 0 else 0.0)
+                            )
+                            if skew_ratio >= 10.0:
+                                histogram_evidence.append(
+                                    {
+                                        "schema_name": schema_value,
+                                        "table_name": table_value,
+                                        "stat_name": stat_value,
+                                        "histogram_step_count": len(histogram_rows),
+                                        "equal_rows_max": round(max_equal, 2),
+                                        "equal_rows_avg": round(avg_equal, 2),
+                                        "skew_ratio": round(skew_ratio, 2),
+                                    }
+                                )
+
+                    if histogram_evidence:
+                        findings.append(
+                            build_finding(
+                                code="TAB_HEALTH_STATS_HISTOGRAM_SKEW",
+                                severity="medium",
+                                title="Histogram skew indicators detected",
+                                detail=(
+                                    "Opt-in histogram inspection found strongly skewed distributions in selected statistics."
+                                ),
+                                evidence=histogram_evidence[:10],
+                            )
+                        )
+                        recommendations.append(
+                            build_recommendation(
+                                priority="medium",
+                                action=(
+                                    "Refresh skewed statistics and review parameter-sensitive query paths for the listed objects."
+                                ),
+                                rationale=(
+                                    "Large histogram skew can increase cardinality-estimation errors for selective predicates."
+                                ),
                             )
                         )
 
@@ -2243,8 +2666,12 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
                     rows = (
                         len(filtered_sizes)
-                        + len(fragmented["rows"])
-                        + len(missing_pk["rows"])
+                        + len(filtered_fragmented)
+                        + len(filtered_missing_pk)
+                        + len(filtered_stale_stats)
+                        + len(filtered_never_updated_stats)
+                        + len(filtered_low_sampled_stats)
+                        + len(filtered_missing_stats_coverage)
                     )
 
                     if ctx is not None:
@@ -2269,8 +2696,37 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         tool_name=_tool,
                         summary={
                             "table_count_scanned": len(filtered_sizes),
-                            "fragmented_index_rows": len(fragmented["rows"]),
-                            "missing_primary_key_tables": len(missing_pk["rows"]),
+                            "fragmented_index_rows": len(filtered_fragmented),
+                            "missing_primary_key_tables": len(filtered_missing_pk),
+                            "stale_statistics_count": len(classified_stale_stats),
+                            "never_updated_statistics_count": len(
+                                filtered_never_updated_stats
+                            ),
+                            "low_sampled_statistics_count": len(
+                                classified_low_sample_stats
+                            ),
+                            "missing_statistics_coverage_candidates": len(
+                                filtered_missing_stats_coverage
+                            ),
+                            "database_statistics_settings": {
+                                "auto_create_statistics_on": auto_create_on,
+                                "auto_update_statistics_on": auto_update_on,
+                                "auto_update_statistics_async_on": bool(
+                                    settings_row.get(
+                                        "auto_update_statistics_async_on", 0
+                                    )
+                                ),
+                            },
+                            "statistics_preview": {
+                                "stale_statistics": classified_stale_stats[:5],
+                                "never_updated_statistics": filtered_never_updated_stats[
+                                    :5
+                                ],
+                                "low_sampled_statistics": classified_low_sample_stats[
+                                    :5
+                                ],
+                                "histogram_skew": histogram_evidence[:5],
+                            },
                             "table_size_preview": filtered_sizes[:10],
                         },
                         findings=findings,

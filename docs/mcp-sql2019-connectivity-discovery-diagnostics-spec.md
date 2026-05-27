@@ -332,7 +332,7 @@ Expected behavior:
 
 ### Purpose
 
-Analyze table and index health for a selected database context.
+Analyze table, index, and statistics health for a selected database context.
 
 ### Input Parameters
 
@@ -340,13 +340,18 @@ Analyze table and index health for a selected database context.
 - schema_name: string (optional)
 - table_name: string (optional)
 - include_indexes: boolean (optional, default true)
+- include_statistics: boolean (optional, default true)
+- include_histogram_analysis: boolean (optional, default false)
+- histogram_top_n: integer (optional, default 10, max 100)
 - top_n: integer (optional, default 50)
 
 ### Output Highlights
 
-- summary with table/index scan counts
+- summary with table/index/statistics scan counts and auto-stats settings
 - prioritized findings with severities
 - actionable recommendations
+- statistics findings include stale, never-updated, low-sampled, and limited-coverage heuristic categories
+- optional histogram-based skew indicators are only included when `include_histogram_analysis=true`
 
 ## 4.6 db_<instance #>_sql2019_analyze_db_data_model
 
