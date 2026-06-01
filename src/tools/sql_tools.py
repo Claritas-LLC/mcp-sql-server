@@ -52,6 +52,9 @@ from src.tools.query_catalog import (
     statistics_histogram_query,
     statistics_never_updated_query,
     table_size_query,
+    top_statements_dmv_fallback_query,
+    top_statements_object_pressure_query,
+    top_statements_query_store_query,
     tran_locks_query,
     update_heavy_tables_query,
     unused_indexes_query,
@@ -1056,7 +1059,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             raise
         except Exception as exc:
             decision = "deny"
-            error_code = str(exc)
+            sql_err = _extract_sql_error(exc)
+            error_code = sql_err["code"] if sql_err else str(exc)
             if ctx is not None:
                 await ctx.error(
                     f"[{request_id}] {tool} transaction failed: {error_code}",
@@ -1191,7 +1195,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     raise
                 except Exception as exc:
                     decision = "deny"
-                    error_code = str(exc)
+                    sql_err = _extract_sql_error(exc)
+                    error_code = sql_err["code"] if sql_err else str(exc)
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Select query failed: {error_code}",
@@ -1325,7 +1330,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     raise
                 except Exception as exc:
                     decision = "deny"
-                    error_code = str(exc)
+                    sql_err = _extract_sql_error(exc)
+                    error_code = sql_err["code"] if sql_err else str(exc)
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Stored procedure {proc_name} failed: {error_code}",
@@ -1676,6 +1682,36 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             "output_fields": ["content_type", "html", "data"],
             "operational_behavior": "Collects bounded DMV data and formats a dashboard payload for MCP clients.",
         },
+        "top_statements": {
+            "description": (
+                "Analyzes top longest-running SQL statements in a database context, with execution counts "
+                "and prescriptive recommendations for index strategy, query rewrites, query hints, and "
+                "partitioning. Falls back from Query Store to DMV data when Query Store views are unavailable."
+            ),
+            "required_parameters": ["database_name"],
+            "optional_parameters": [
+                "top_n",
+                "lookback_minutes",
+                "view_mode",
+                "actor",
+            ],
+            "output_fields": [
+                "instance_number",
+                "database_name",
+                "tool",
+                "generated_at_utc",
+                "summary",
+                "severity_counts",
+                "findings",
+                "recommendations",
+                "top_statements",
+                "data_source",
+            ],
+            "operational_behavior": (
+                "Collects Query Store or DMV metrics, analyzes duration/execution/scan patterns, "
+                "and returns deterministic analysis JSON with DBA review disclaimer."
+            ),
+        },
     }
 
     for instance_id in instance_ids:
@@ -1890,18 +1926,28 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 }
             except Exception as exc:
                 decision = "deny"
-                error_code = f"SQL_EXECUTION_ERROR: {exc}"
+                sql_err = _extract_sql_error(exc)
+                if sql_err:
+                    error_code = (
+                        f"{sql_err['code']}: {sql_err['sql_message']}"
+                    )
+                else:
+                    error_code = f"SQL_EXECUTION_ERROR: {exc}"
                 state.denied_requests += 1
 
                 if ctx is not None:
+                    extra_payload: dict[str, Any] = {
+                        "request_id": request_id,
+                        "tool": _tool,
+                        "instance_number": _instance_number,
+                        "error": error_code,
+                    }
+                    if sql_err:
+                        extra_payload["sqlstate"] = sql_err["sqlstate"]
+                        extra_payload["sql_error_number"] = sql_err["sql_error_number"]
                     await ctx.error(
                         f"[{request_id}] Failed to list tools: {error_code}",
-                        extra={
-                            "request_id": request_id,
-                            "tool": _tool,
-                            "instance_number": _instance_number,
-                            "error": error_code,
-                        },
+                        extra=extra_payload,
                     )
                 logger.error(f"Transaction {request_id} ERROR: {error_code}")
 
@@ -2021,19 +2067,29 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 raise
             except Exception as exc:
                 decision = "deny"
-                error_code = f"SQL_EXECUTION_ERROR: {exc}"
+                sql_err = _extract_sql_error(exc)
+                if sql_err:
+                    error_code = (
+                        f"{sql_err['code']}: {sql_err['sql_message']}"
+                    )
+                else:
+                    error_code = f"SQL_EXECUTION_ERROR: {exc}"
                 state.denied_requests += 1
 
                 if ctx is not None:
+                    extra_payload: dict[str, Any] = {
+                        "request_id": request_id,
+                        "tool": _tool,
+                        "database": database_name,
+                        "object_type": object_type,
+                        "error": error_code,
+                    }
+                    if sql_err:
+                        extra_payload["sqlstate"] = sql_err["sqlstate"]
+                        extra_payload["sql_error_number"] = sql_err["sql_error_number"]
                     await ctx.error(
                         f"[{request_id}] Object listing failed: {error_code}",
-                        extra={
-                            "request_id": request_id,
-                            "tool": _tool,
-                            "database": database_name,
-                            "object_type": object_type,
-                            "error": error_code,
-                        },
+                        extra=extra_payload,
                     )
                 logger.error(f"Transaction {request_id} ERROR: {error_code}")
 
@@ -2193,21 +2249,30 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 raise
             except Exception as exc:
                 decision = "deny"
-                error_code = f"SQL_EXECUTION_ERROR: {exc}"
+                sql_err = _extract_sql_error(exc)
+                if sql_err:
+                    error_code = (
+                        f"{sql_err['code']}: {sql_err['sql_message']}"
+                    )
+                else:
+                    error_code = f"SQL_EXECUTION_ERROR: {exc}"
                 state.denied_requests += 1
 
                 if ctx is not None:
+                    extra_payload: dict[str, Any] = {
+                        "request_id": request_id,
+                        "tool": _tool,
+                        "database": database_name,
+                        "error": error_code,
+                    }
+                    if sql_err:
+                        extra_payload["sqlstate"] = sql_err["sqlstate"]
+                        extra_payload["sql_error_number"] = sql_err["sql_error_number"]
                     await ctx.error(
                         f"[{request_id}] Query execution failed: {error_code}",
-                        extra={
-                            "request_id": request_id,
-                            "tool": _tool,
-                            "database": database_name,
-                            "error": error_code,
-                        },
+                        extra=extra_payload,
                     )
                 logger.error(f"Transaction {request_id} ERROR: {error_code}")
-
                 raise RuntimeError(error_code) from exc
             finally:
                 latency_ms = int((time.time() - started) * 1000)
@@ -2766,17 +2831,27 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     raise
                 except Exception as exc:
                     decision = "deny"
-                    error_code = f"SQL_EXECUTION_ERROR: {exc}"
+                    sql_err = _extract_sql_error(exc)
+                    if sql_err:
+                        error_code = (
+                            f"{sql_err['code']}: {sql_err['sql_message']}"
+                        )
+                    else:
+                        error_code = f"SQL_EXECUTION_ERROR: {exc}"
                     state.denied_requests += 1
                     if ctx is not None:
+                        extra_payload: dict[str, Any] = {
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "error": error_code,
+                        }
+                        if sql_err:
+                            extra_payload["sqlstate"] = sql_err["sqlstate"]
+                            extra_payload["sql_error_number"] = sql_err["sql_error_number"]
                         await ctx.error(
                             f"[{request_id}] Analysis failed: {error_code}",
-                            extra={
-                                "request_id": request_id,
-                                "tool": _tool,
-                                "database": database_name,
-                                "error": error_code,
-                            },
+                            extra=extra_payload,
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise RuntimeError(error_code) from exc
@@ -3072,17 +3147,27 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     raise
                 except Exception as exc:
                     decision = "deny"
-                    error_code = f"SQL_EXECUTION_ERROR: {exc}"
+                    sql_err = _extract_sql_error(exc)
+                    if sql_err:
+                        error_code = (
+                            f"{sql_err['code']}: {sql_err['sql_message']}"
+                        )
+                    else:
+                        error_code = f"SQL_EXECUTION_ERROR: {exc}"
                     state.denied_requests += 1
                     if ctx is not None:
+                        extra_payload: dict[str, Any] = {
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "error": error_code,
+                        }
+                        if sql_err:
+                            extra_payload["sqlstate"] = sql_err["sqlstate"]
+                            extra_payload["sql_error_number"] = sql_err["sql_error_number"]
                         await ctx.error(
                             f"[{request_id}] Analysis failed: {error_code}",
-                            extra={
-                                "request_id": request_id,
-                                "tool": _tool,
-                                "database": database_name,
-                                "error": error_code,
-                            },
+                            extra=extra_payload,
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise RuntimeError(error_code) from exc
@@ -3328,17 +3413,27 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     raise
                 except Exception as exc:
                     decision = "deny"
-                    error_code = f"SQL_EXECUTION_ERROR: {exc}"
+                    sql_err = _extract_sql_error(exc)
+                    if sql_err:
+                        error_code = (
+                            f"{sql_err['code']}: {sql_err['sql_message']}"
+                        )
+                    else:
+                        error_code = f"SQL_EXECUTION_ERROR: {exc}"
                     state.denied_requests += 1
                     if ctx is not None:
+                        extra_payload: dict[str, Any] = {
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "error": error_code,
+                        }
+                        if sql_err:
+                            extra_payload["sqlstate"] = sql_err["sqlstate"]
+                            extra_payload["sql_error_number"] = sql_err["sql_error_number"]
                         await ctx.error(
                             f"[{request_id}] Analysis failed: {error_code}",
-                            extra={
-                                "request_id": request_id,
-                                "tool": _tool,
-                                "database": database_name,
-                                "error": error_code,
-                            },
+                            extra=extra_payload,
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise RuntimeError(error_code) from exc
@@ -3540,17 +3635,27 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     raise
                 except Exception as exc:
                     decision = "deny"
-                    error_code = f"SQL_EXECUTION_ERROR: {exc}"
+                    sql_err = _extract_sql_error(exc)
+                    if sql_err:
+                        error_code = (
+                            f"{sql_err['code']}: {sql_err['sql_message']}"
+                        )
+                    else:
+                        error_code = f"SQL_EXECUTION_ERROR: {exc}"
                     state.denied_requests += 1
                     if ctx is not None:
+                        extra_payload: dict[str, Any] = {
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "error": error_code,
+                        }
+                        if sql_err:
+                            extra_payload["sqlstate"] = sql_err["sqlstate"]
+                            extra_payload["sql_error_number"] = sql_err["sql_error_number"]
                         await ctx.error(
                             f"[{request_id}] Dashboard generation failed: {error_code}",
-                            extra={
-                                "request_id": request_id,
-                                "tool": _tool,
-                                "database": database_name,
-                                "error": error_code,
-                            },
+                            extra=extra_payload,
                         )
                     logger.error(f"Transaction {request_id} ERROR: {error_code}")
                     raise RuntimeError(error_code) from exc
@@ -3573,4 +3678,565 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
             registered.append(sessions_dashboard_name)
 
+        top_statements_name = f"db_{instance_number}_sql2019_top_statements"
+        if is_tool_enabled(state.policy, instance_id, "top_statements"):
+
+            @mcp.tool(name=top_statements_name)
+            async def _top_statements(
+                database_name: str,
+                top_n: int = 25,
+                lookback_minutes: int = 1440,
+                view_mode: str = "COMPACT",
+                actor: str = "system",
+                ctx: Context | None = None,
+                _tool=top_statements_name,
+                _instance=instance_id,
+                _instance_number=instance_number,
+            ):
+                """Analyze top longest-running SQL statements with recommendations.
+
+                Inputs:
+                - database_name: database to analyze.
+                - top_n: max statements to return (1..500).
+                - lookback_minutes: Query Store lookback window (1..10080, DMV fallback ignores).
+                - view_mode: COMPACT or FULL.
+                - actor: caller identity.
+
+                Output:
+                - longest-running statements with execution counts.
+                - findings and recommendations for index, rewrite, hint, and partition strategies.
+                """
+                request_id = str(uuid.uuid4())
+                started = time.time()
+                decision = "allow"
+                error_code = None
+                rows = 0
+                sql_marker = "TOP_STATEMENTS"
+                _auth_ctx: dict[str, Any] | None = None
+                try:
+                    if ctx is not None:
+                        await ctx.debug(
+                            f"[{request_id}] Analyzing top statements in {database_name}",
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                            },
+                        )
+
+                    db_name = validate_database_name(database_name)
+                    size = validate_positive_int(top_n, "top_n", 1, 500)
+                    lb_minutes = validate_positive_int(
+                        lookback_minutes, "lookback_minutes", 1, 10080
+                    )
+                    normalized = view_mode.strip().upper()
+                    if normalized not in {"FULL", "COMPACT"}:
+                        raise ValueError(
+                            "INVALID_INPUT: view_mode must be FULL or COMPACT"
+                        )
+
+                    actor, _auth_ctx = await _resolve_actor_and_authorize(
+                        actor=actor,
+                        tool=_tool,
+                        required_privilege="read",
+                        ctx=ctx,
+                    )
+                    state.session_manager.touch(actor, request_id)
+                    state.rate_limiter.allow(actor)
+                    state.write_guard.enforce(_tool, "SELECT 1")
+
+                    stmt_rows, obj_rows, data_source = (
+                        await _collect_top_statement_metrics(
+                            state.connection_manager,
+                            _instance,
+                            db_name,
+                            size,
+                            lb_minutes,
+                        )
+                    )
+
+                    findings, recommendations = _recommend_top_statement_actions(
+                        stmt_rows, obj_rows
+                    )
+
+                    if not findings:
+                        findings.append(
+                            build_finding(
+                                code="TOP_STMT_NO_CRITICAL_ISSUES",
+                                severity="info",
+                                title="No critical statement performance issues detected",
+                                detail="Current analysis did not identify high-severity statement patterns.",
+                                evidence=[],
+                            )
+                        )
+
+                    rows = len(stmt_rows) + len(obj_rows)
+
+                    if ctx is not None:
+                        await ctx.info(
+                            f"[{request_id}] Top statements analysis completed - {len(findings)} findings",
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "findings_count": len(findings),
+                                "statements_analyzed": len(stmt_rows),
+                                "data_source": data_source,
+                                "decision": decision,
+                            },
+                        )
+                    logger.info(
+                        f"Transaction {request_id}: {_tool} - {len(findings)} findings from {data_source}"
+                    )
+
+                    report = build_report_envelope(
+                        instance_number=_instance_number,
+                        database_name=db_name,
+                        tool_name=_tool,
+                        summary={
+                            "statements_analyzed": len(stmt_rows),
+                            "objects_checked": len(obj_rows),
+                            "lookback_minutes": lb_minutes,
+                            "data_source": data_source,
+                        },
+                        findings=findings,
+                        recommendations=recommendations,
+                    )
+                    report["top_statements"] = stmt_rows[:size]
+                    report["data_source"] = data_source
+                    return report
+                except ValueError as exc:
+                    decision = "deny"
+                    error_code = str(exc)
+                    state.denied_requests += 1
+                    if ctx is not None:
+                        await ctx.warning(
+                            f"[{request_id}] Validation error: {error_code}",
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
+                        )
+                    logger.warning(f"Transaction {request_id} denied: {error_code}")
+                    raise
+                except PermissionError as exc:
+                    decision = "deny"
+                    error_code = str(exc)
+                    state.denied_requests += 1
+                    if ctx is not None:
+                        await ctx.warning(
+                            f"[{request_id}] Analysis denied: {error_code}",
+                            extra={
+                                "request_id": request_id,
+                                "tool": _tool,
+                                "database": database_name,
+                                "error": error_code,
+                            },
+                        )
+                    logger.warning(f"Transaction {request_id} DENIED: {error_code}")
+                    raise
+                except Exception as exc:
+                    decision = "deny"
+                    sql_err = _extract_sql_error(exc)
+                    if sql_err:
+                        error_code = (
+                            f"{sql_err['code']}: {sql_err['sql_message']}"
+                        )
+                    else:
+                        error_code = f"SQL_EXECUTION_ERROR: {exc}"
+                    state.denied_requests += 1
+                    if ctx is not None:
+                        extra_payload: dict[str, Any] = {
+                            "request_id": request_id,
+                            "tool": _tool,
+                            "database": database_name,
+                            "error": error_code,
+                        }
+                        if sql_err:
+                            extra_payload["sqlstate"] = sql_err["sqlstate"]
+                            extra_payload["sql_error_number"] = sql_err["sql_error_number"]
+                        await ctx.error(
+                            f"[{request_id}] Analysis failed: {error_code}",
+                            extra=extra_payload,
+                        )
+                    logger.error(f"Transaction {request_id} ERROR: {error_code}")
+                    raise RuntimeError(error_code) from exc
+                finally:
+                    latency_ms = int((time.time() - started) * 1000)
+                    REQUEST_COUNT.labels(_tool, _instance, decision).inc()
+                    REQUEST_LATENCY.labels(_tool, _instance).observe(latency_ms)
+                    _log_audit_event(
+                        request_id=request_id,
+                        actor=actor,
+                        tool=_tool,
+                        instance=_instance,
+                        sql=sql_marker,
+                        decision=decision,
+                        latency_ms=latency_ms,
+                        rows=rows,
+                        error_code=error_code,
+                        auth_ctx=_auth_ctx,
+                    )
+
+            registered.append(top_statements_name)
+
     return registered
+
+
+# Server-side logging
+logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# SQL error extraction helper
+# ---------------------------------------------------------------------------
+
+_SQLSTATE_DESCRIPTIONS: dict[str, str] = {
+    "42S02": "Invalid object name. The table, view, or function referenced does not exist "
+             "(check typos, database context, object permissions, and whether the view/DMV exists on this SQL Server build).",
+    "42S22": "Invalid column name. One or more columns referenced in the query do not exist "
+             "on the target object.",
+    "42000": "Syntax error or access violation in the SQL statement.",
+    "42S01": "Object already exists. A CREATE operation conflicts with an existing object.",
+    "08001": "Unable to connect to the SQL Server data source.",
+    "28000": "Invalid authorization specification. Check login credentials or permissions.",
+    "08S01": "Communication link failure. The connection to SQL Server was lost.",
+    "HYT00": "Query timeout expired.",
+    "HY000": "General ODBC error. Check error details for more information.",
+}
+
+
+def _extract_sql_error(exc: BaseException) -> dict[str, Any] | None:
+    """Extract structured SQL error info from a pyodbc or DB-API exception.
+
+    Returns a dict with ``code``, ``sqlstate``, ``sql_message``,
+    ``sql_error_number``, and ``description`` keys, or ``None`` if the
+    exception is not a recognised SQL-level error.
+    """
+    try:
+        raw = exc.args
+        if isinstance(raw, (tuple, list)) and len(raw) >= 2:
+            sqlstate = str(raw[0]).strip()
+            message = str(raw[1]).strip()
+        elif isinstance(raw, (tuple, list)) and len(raw) == 1:
+            sqlstate = "HY000"
+            message = str(raw[0]).strip()
+        else:
+            sqlstate = ""
+            message = str(exc)
+        if not sqlstate:
+            return None
+        description = _SQLSTATE_DESCRIPTIONS.get(
+            sqlstate, "An unexpected SQL error occurred. Review the error details."
+        )
+        error_number: int | None = None
+        for token in message.split(")"):
+            token = token.strip("( ")
+            if token.isdigit():
+                error_number = int(token)
+                break
+        return {
+            "code": f"SQL_ERROR_{sqlstate}",
+            "sqlstate": sqlstate,
+            "sql_message": message,
+            "sql_error_number": error_number,
+            "description": description,
+        }
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# top_statements – threshold constants
+# ---------------------------------------------------------------------------
+
+TOP_STMT_DURATION_HIGH_US = 5000000        # 5 seconds
+TOP_STMT_DURATION_MEDIUM_US = 1000000      # 1 second
+TOP_STMT_EXEC_COUNT_HIGH = 10000
+TOP_STMT_SCAN_RATIO_HIGH = 0.80
+TOP_STMT_SCAN_RATIO_MEDIUM = 0.50
+TOP_STMT_ROW_COUNT_LARGE = 10000000        # 10M rows – partition candidate
+TOP_STMT_READ_PRESSURE_FACTOR = 10         # reads vs writes ratio for index hints
+
+
+# ---------------------------------------------------------------------------
+# top_statements – reusable helpers
+# ---------------------------------------------------------------------------
+
+
+async def _collect_top_statement_metrics(
+    connection_manager: Any,
+    instance_id: str,
+    database_name: str,
+    top_n: int,
+    lookback_minutes: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    """Collect statement-level metrics and object-pressure data.
+
+    Returns (statement_rows, object_pressure_rows, data_source).
+    ``data_source`` is ``"query_store"``, ``"dmv_fallback"``, or ``"unavailable"``.
+    Each query path is independently resilient — failure in one does not block
+    the others.
+    """
+    # --- statement metrics ---
+    stmt_rows: list[dict[str, Any]] = []
+    data_source = "query_store"
+    try:
+        stmt_result = connection_manager.execute_catalog_query(
+            instance_id,
+            database_name,
+            top_statements_query_store_query(top_n, lookback_minutes),
+            top_n,
+        )
+        stmt_rows = stmt_result["rows"]
+    except Exception:
+        data_source = "dmv_fallback"
+        try:
+            fallback_sql = top_statements_dmv_fallback_query(top_n)
+            fallback_result = connection_manager.execute_catalog_query(
+                instance_id, database_name, fallback_sql, top_n
+            )
+            stmt_rows = fallback_result["rows"]
+        except Exception:
+            data_source = "unavailable"
+            stmt_rows = []
+
+    # --- object pressure ---
+    obj_rows: list[dict[str, Any]] = []
+    try:
+        obj_result = connection_manager.execute_catalog_query(
+            instance_id,
+            database_name,
+            top_statements_object_pressure_query(top_n),
+            top_n,
+        )
+        obj_rows = obj_result["rows"]
+    except Exception:
+        obj_rows = []
+
+    return _normalize_top_statement_rows(stmt_rows), _normalize_object_pressure_rows(obj_rows), data_source
+
+
+def _normalize_object_pressure_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Cast object-pressure numeric fields to safe types, replacing None with 0."""
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        normalized: dict[str, Any] = {}
+        for key, val in row.items():
+            if val is None:
+                if key in ("user_seeks", "user_scans", "user_lookups", "user_updates", "row_count"):
+                    normalized[key] = 0
+                elif key == "scan_ratio":
+                    normalized[key] = 0.0
+                else:
+                    normalized[key] = val
+            else:
+                normalized[key] = val
+        result.append(normalized)
+    return result
+
+
+def _normalize_top_statement_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Cast numeric fields and truncate SQL text to stable output shape."""
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        normalized: dict[str, Any] = {}
+        for key, val in row.items():
+            if val is None:
+                normalized[key] = None
+                continue
+            if key in (
+                "weighted_avg_duration_us",
+                "max_duration_us",
+                "execution_count",
+                "weighted_avg_cpu_time_us",
+                "weighted_avg_logical_reads",
+                "weighted_avg_physical_reads",
+                "weighted_avg_log_bytes",
+            ):
+                try:
+                    normalized[key] = int(float(val))
+                except (TypeError, ValueError):
+                    normalized[key] = 0
+            elif key == "query_sql_text" and isinstance(val, str):
+                normalized[key] = val[:4000] if len(val) > 4000 else val
+            else:
+                normalized[key] = val
+        result.append(normalized)
+    return result
+
+
+def _recommend_top_statement_actions(
+    statement_rows: list[dict[str, Any]],
+    object_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Produce findings and recommendations for index, rewrite, hint, and partition strategies."""
+    findings: list[dict[str, Any]] = []
+    recommendations: list[dict[str, Any]] = []
+
+    if not statement_rows and not object_rows:
+        return findings, recommendations
+
+    # --- duration-based findings ---
+    high_duration = [
+        r
+        for r in statement_rows
+        if (r.get("weighted_avg_duration_us") or 0) >= TOP_STMT_DURATION_HIGH_US
+    ]
+    medium_duration = [
+        r
+        for r in statement_rows
+        if TOP_STMT_DURATION_MEDIUM_US
+        <= (r.get("weighted_avg_duration_us") or 0)
+        < TOP_STMT_DURATION_HIGH_US
+    ]
+    high_exec = [
+        r
+        for r in statement_rows
+        if (r.get("execution_count") or 0) >= TOP_STMT_EXEC_COUNT_HIGH
+    ]
+
+    if high_duration:
+        top_dur = high_duration[0]
+        evidence = [
+            {
+                "query_id": r.get("query_id"),
+                "duration_us": r.get("weighted_avg_duration_us"),
+                "execution_count": r.get("execution_count"),
+                "sql_fragment": (r.get("query_sql_text", "") or "")[:500],
+            }
+            for r in high_duration[:10]
+        ]
+        findings.append(
+            build_finding(
+                code="TOP_STMT_HIGH_DURATION",
+                severity="high",
+                title="Long-running statements detected",
+                detail=f"Top statement averaged {(top_dur.get('weighted_avg_duration_us') or 0) // 1000} ms and executed {top_dur.get('execution_count') or 0} times.",
+                evidence=evidence,
+            )
+        )
+        recommendations.append(
+            build_recommendation(
+                priority="high",
+                action="Review execution plans for the listed high-duration statements. "
+                "Consider index additions, query rewrites, or partitioning to reduce scan cost.",
+                rationale="Statements exceeding 5 seconds average duration indicate potential I/O or plan inefficiencies.",
+            )
+        )
+
+    if high_exec:
+        top_exec = high_exec[0]
+        findings.append(
+            build_finding(
+                code="TOP_STMT_HIGH_EXECUTION_COUNT",
+                severity="medium",
+                title="High-frequency statements identified",
+                detail=f"Top statement executed {top_exec.get('execution_count') or 0} times.",
+                evidence=[
+                    {
+                        "query_id": r.get("query_id"),
+                        "execution_count": r.get("execution_count"),
+                        "sql_fragment": (r.get("query_sql_text", "") or "")[:500],
+                    }
+                    for r in high_exec[:10]
+                ],
+            )
+        )
+        recommendations.append(
+            build_recommendation(
+                priority="medium",
+                action="Consider parameterized queries for high-frequency statements. "
+                "Evaluate plan guide or OPTIMIZE FOR hints where parameter sniffing causes variance.",
+                rationale="Thousands of executions can amplify small inefficiencies into measurable resource pressure.",
+            )
+        )
+
+    # --- object-level index / partition recommendations ---
+    high_scan = [
+        r
+        for r in object_rows
+        if (r.get("scan_ratio") or 0) >= TOP_STMT_SCAN_RATIO_HIGH
+        and (r.get("row_count") or 0) > 0
+    ]
+    large_tables = [
+        r
+        for r in object_rows
+        if (r.get("row_count") or 0) >= TOP_STMT_ROW_COUNT_LARGE
+    ]
+
+    if high_scan:
+        top_scan = high_scan[0]
+        findings.append(
+            build_finding(
+                code="TOP_STMT_HIGH_SCAN_PRESSURE",
+                severity="high" if (top_scan.get("scan_ratio") or 0) >= 0.9 else "medium",
+                title="Objects with dominant scan access patterns",
+                detail=f"Table {top_scan.get('schema_name')}.{top_scan.get('table_name')} has {(top_scan.get('scan_ratio') or 0):.0%} scan ratio.",
+                evidence=high_scan[:10],
+            )
+        )
+        recommendations.append(
+            build_recommendation(
+                priority="high" if top_scan.get("scan_ratio", 0) >= 0.9 else "medium",
+                action="Add targeted nonclustered indexes on scan-heavy tables. "
+                "Evaluate covering indexes for the correlated high-duration statements above.",
+                rationale="Scan-dominated workloads can benefit from indexes that satisfy predicates and reduce I/O.",
+            )
+        )
+
+    if large_tables:
+        top_large = large_tables[0]
+        findings.append(
+            build_finding(
+                code="TOP_STMT_LARGE_TABLE_CANDIDATE",
+                severity="medium",
+                title="Large tables identified as partition candidates",
+                detail=f"Table {top_large.get('schema_name')}.{top_large.get('table_name')} has {(top_large.get('row_count') or 0):,} rows.",
+                evidence=large_tables[:10],
+            )
+        )
+        recommendations.append(
+            build_recommendation(
+                priority="medium",
+                action="Evaluate table partitioning strategy for tables exceeding 10M rows. "
+                "Consider partition-aligned indexes and sliding-window maintenance.",
+                rationale="Partitioning reduces scan range and facilitates faster data archival/retention for large tables.",
+            )
+        )
+
+    # --- hint / rewrite catch-all for medium-duration statements ---
+    if medium_duration:
+        findings.append(
+            build_finding(
+                code="TOP_STMT_REWRITE_CANDIDATE",
+                severity="medium",
+                title="Medium-duration statements may benefit from rewrites or hints",
+                detail=f"{len(medium_duration)} statements fall in the 1s–5s average-duration range.",
+                evidence=[
+                    {
+                        "query_id": r.get("query_id"),
+                        "duration_us": (r.get("weighted_avg_duration_us") or 0),
+                        "sql_fragment": (r.get("query_sql_text", "") or "")[:500],
+                    }
+                    for r in medium_duration[:10]
+                ],
+            )
+        )
+        recommendations.append(
+            build_recommendation(
+                priority="medium",
+                action="Review query structure for medium-duration statements. "
+                "Consider CTE or temp-table rewrites, query hints (HASH/LOOP/MERGE JOIN, "
+                "MAXDOP, RECOMPILE) where plan instability is observed.",
+                rationale="Statements in the 1–5 second range often respond well to targeted tuning without schema changes.",
+            )
+        )
+
+    return findings, recommendations

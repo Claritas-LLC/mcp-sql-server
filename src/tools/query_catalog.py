@@ -622,3 +622,106 @@ def excessive_permissions_query(top_n: int) -> str:
         "GROUP BY dp.name, dp.type_desc "
         "ORDER BY explicit_grant_count DESC"
     )
+
+
+# ---------------------------------------------------------------------------
+# top_statements – query-store and DMV fallback queries
+# ---------------------------------------------------------------------------
+
+
+def top_statements_query_store_query(top_n: int, lookback_minutes: int) -> str:
+    """Top N longest-running statements from Query Store aggregated by query_id.
+
+    Uses Query Store runtime stats and query text for database-scoped analysis.
+    """
+    top_n = _validate_top_n(top_n)
+    return (
+        f"SELECT TOP {top_n} "
+        "qsq.query_id, "
+        "CAST(SUM(rs.avg_duration * rs.count_executions) "
+        "  / NULLIF(SUM(rs.count_executions), 0) AS BIGINT) AS weighted_avg_duration_us, "
+        "CAST(MAX(rs.max_duration) AS BIGINT) AS max_duration_us, "
+        "SUM(rs.count_executions) AS execution_count, "
+        "CAST(SUM(rs.avg_cpu_time * rs.count_executions) "
+        "  / NULLIF(SUM(rs.count_executions), 0) AS FLOAT) AS weighted_avg_cpu_time_us, "
+        "CAST(SUM(rs.avg_logical_io_reads * rs.count_executions) "
+        "  / NULLIF(SUM(rs.count_executions), 0) AS FLOAT) AS weighted_avg_logical_reads, "
+        "CAST(SUM(rs.avg_physical_io_reads * rs.count_executions) "
+        "  / NULLIF(SUM(rs.count_executions), 0) AS FLOAT) AS weighted_avg_physical_reads, "
+        "CAST(SUM(rs.avg_log_bytes_used * rs.count_executions) "
+        "  / NULLIF(SUM(rs.count_executions), 0) AS FLOAT) AS weighted_avg_log_bytes, "
+        "MAX(rsi.end_time) AS last_exec_time, "
+        "LEFT(TRIM(qt.query_sql_text), 4000) AS query_sql_text, "
+        "qsq.object_id AS containing_object_id, "
+        "OBJECT_SCHEMA_NAME(qsq.object_id) AS containing_schema, "
+        "OBJECT_NAME(qsq.object_id) AS containing_object "
+        "FROM sys.query_store_query qsq "
+        "JOIN sys.query_store_query_text qt "
+        "  ON qsq.query_text_id = qt.query_text_id "
+        "JOIN sys.query_store_plan qsp "
+        "  ON qsq.query_id = qsp.query_id "
+        "JOIN sys.query_store_runtime_stats rs "
+        "  ON qsp.plan_id = rs.plan_id "
+        "JOIN sys.query_store_runtime_stats_interval rsi "
+        "  ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id "
+        "WHERE rsi.start_time >= DATEADD(minute, -{lookback_minutes}, SYSUTCDATETIME()) "
+        "GROUP BY qsq.query_id, qt.query_sql_text, qsq.object_id "
+        "ORDER BY weighted_avg_duration_us DESC"
+    )
+
+
+def top_statements_dmv_fallback_query(top_n: int) -> str:
+    """Top N longest-running cached statements from plan cache DMVs.
+
+    Used when Query Store views are unavailable (42S02 fallback).
+    """
+    top_n = _validate_top_n(top_n)
+    return (
+        f"SELECT TOP {top_n} "
+        "NULL AS query_id, "
+        "qs.total_elapsed_time / NULLIF(qs.execution_count, 0) AS weighted_avg_duration_us, "
+        "qs.max_elapsed_time AS max_duration_us, "
+        "qs.execution_count, "
+        "qs.total_worker_time / NULLIF(qs.execution_count, 0) AS weighted_avg_cpu_time_us, "
+        "qs.total_logical_reads / NULLIF(qs.execution_count, 0) AS weighted_avg_logical_reads, "
+        "qs.total_physical_reads / NULLIF(qs.execution_count, 0) AS weighted_avg_physical_reads, "
+        "0 AS weighted_avg_log_bytes, "
+        "qs.last_execution_time AS last_exec_time, "
+        "LEFT(TRIM(TRY_CAST(st.text AS nvarchar(max))), 4000) AS query_sql_text, "
+        "NULL AS containing_object_id, "
+        "NULL AS containing_schema, "
+        "NULL AS containing_object "
+        "FROM sys.dm_exec_query_stats qs "
+        "CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st "
+        "WHERE qs.execution_count > 0 "
+        "ORDER BY weighted_avg_duration_us DESC"
+    )
+
+
+def top_statements_object_pressure_query(top_n: int) -> str:
+    """Top N user objects with high scan-to-seek pressure and row counts.
+
+    Used by recommendation engine for index and partition strategy heuristics.
+    """
+    top_n = _validate_top_n(top_n)
+    return (
+        f"SELECT TOP {top_n} "
+        "OBJECT_SCHEMA_NAME(ps.object_id) AS schema_name, "
+        "OBJECT_NAME(ps.object_id) AS table_name, "
+        "ISNULL(ius.user_seeks, 0) AS user_seeks, "
+        "ISNULL(ius.user_scans, 0) AS user_scans, "
+        "ISNULL(ius.user_lookups, 0) AS user_lookups, "
+        "ISNULL(ius.user_updates, 0) AS user_updates, "
+        "ps.row_count, "
+        "CAST(ISNULL(ius.user_scans, 0) AS FLOAT) "
+        "  / NULLIF(ISNULL(ius.user_seeks, 0) + ISNULL(ius.user_scans, 0), 0) AS scan_ratio "
+        "FROM sys.dm_db_partition_stats ps "
+        "JOIN sys.indexes i "
+        "  ON i.object_id = ps.object_id AND i.index_id = ps.index_id AND i.index_id <= 1 "
+        "LEFT JOIN sys.dm_db_index_usage_stats ius "
+        "  ON ius.object_id = ps.object_id AND ius.index_id = ps.index_id "
+        "  AND ius.database_id = DB_ID() "
+        "WHERE OBJECTPROPERTY(ps.object_id, 'IsUserTable') = 1 "
+        "  AND ps.row_count > 0 "
+        "ORDER BY scan_ratio DESC, ps.row_count DESC"
+    )

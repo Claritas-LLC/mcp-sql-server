@@ -143,6 +143,38 @@ These tools are exposed with concrete numeric bindings such as `db_1_sql2019_ana
 - Output:
   - deterministic JSON report envelope
   - security findings with redacted evidence rows
+  - **DBA review disclaimer**: when recommendations are present.
+
+### 5. `db_<instance #>_sql2019_top_statements`
+- Category: `read_only_analysis`
+- Purpose: Analyze top longest-running SQL statements in a database context, with execution counts and prescriptive recommendations for index strategy, query rewrites, query hints, and partitioning. Falls back from Query Store to DMV data when Query Store views are unavailable.
+- Input:
+  - `database_name` (str, required)
+  - `top_n` (int, optional, default 25, max 500)
+  - `lookback_minutes` (int, optional, default 1440, max 10080)
+  - `view_mode` (str, optional, default COMPACT)
+  - `actor` (str, optional)
+- Output:
+  - deterministic JSON report envelope
+  - `summary`, `severity_counts`, `findings`, `recommendations`
+  - `top_statements` — top N statement rows with duration/execution metrics
+  - `data_source` — `"query_store"` or `"dmv_fallback"`
+  - **DBA review disclaimer**: when recommendations are present.
+- Failure Codes:
+  - `RATE_LIMIT_EXCEEDED`
+  - `SESSION_LIMIT_EXCEEDED`
+  - `SQL_BLOCKED_BY_POLICY`
+  - `SQL_ERROR_42S02` (Query Store views unavailable — falls back to DMV)
+  - `SQL_EXECUTION_ERROR`
+- Fallback Behavior:
+  - Primary data source: Query Store (`sys.query_store_*` views).
+  - On `42S02` or other Query Store unavailability, falls back to `sys.dm_exec_query_stats` and `sys.dm_exec_sql_text`.
+  - The `data_source` output field indicates which source was used for the response.
+  - `include_server_scope` (bool, optional, default true)
+  - `actor` (str, optional)
+- Output:
+  - deterministic JSON report envelope
+  - security findings with redacted evidence rows
   - **DBA review disclaimer**: when recommendations are present, the response includes a `disclaimer` field with the standard DBA review requirement.
 - Category: `interactive_dashboard`
 - Purpose: Build session activity and lock-chain dashboard payload for FastMCP interactive app clients.

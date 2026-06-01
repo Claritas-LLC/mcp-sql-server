@@ -35,12 +35,16 @@ from src.tools.query_catalog import (
     statistics_never_updated_query,
     table_size_query,
     tables_without_fk_query,
+    top_statements_dmv_fallback_query,
+    top_statements_object_pressure_query,
+    top_statements_query_store_query,
     trustworthy_databases_query,
 )
 from src.tools.security_redaction import redact_sensitive_fields
 from src.tools.sql_tools import (
     _classify_low_sample_statistics_row,
     _classify_stale_statistics_row,
+    _recommend_top_statement_actions,
 )
 
 
@@ -451,3 +455,146 @@ def test_lock_chain_query_top_n() -> None:
     sql = lock_chain_query(25)
     assert "TOP 25" in sql
     assert "blocking_session_id" in sql
+
+
+# ---------------------------------------------------------------------------
+# top_statements – query builder structural tests
+# ---------------------------------------------------------------------------
+
+
+def test_top_statements_query_store_query_structure() -> None:
+    sql = top_statements_query_store_query(20, 1440)
+    assert "TOP 20" in sql
+    assert "sys.query_store_query" in sql
+    assert "sys.query_store_runtime_stats" in sql
+    assert "weighted_avg_duration_us" in sql
+    assert "execution_count" in sql
+    assert "DATEADD(minute" in sql
+    assert "SYSUTCDATETIME" in sql
+    assert "ORDER BY weighted_avg_duration_us DESC" in sql
+
+
+def test_top_statements_dmv_fallback_query_structure() -> None:
+    sql = top_statements_dmv_fallback_query(15)
+    assert "TOP 15" in sql
+    assert "sys.dm_exec_query_stats" in sql
+    assert "sys.dm_exec_sql_text" in sql
+    assert "weighted_avg_duration_us" in sql
+    assert "execution_count" in sql
+    assert "query_sql_text" in sql
+    assert "ORDER BY weighted_avg_duration_us DESC" in sql
+
+
+def test_top_statements_object_pressure_query_structure() -> None:
+    sql = top_statements_object_pressure_query(10)
+    assert "TOP 10" in sql
+    assert "sys.dm_db_partition_stats" in sql
+    assert "user_scans" in sql
+    assert "user_seeks" in sql
+    assert "scan_ratio" in sql
+    assert "ORDER BY scan_ratio DESC" in sql
+
+
+# ---------------------------------------------------------------------------
+# top_statements – recommendation engine tests
+# ---------------------------------------------------------------------------
+
+
+def test_recommend_empty_statements_produces_no_findings() -> None:
+    findings, recs = _recommend_top_statement_actions([], [])
+    assert findings == []
+    assert recs == []
+
+
+def test_recommend_high_duration_triggers_finding() -> None:
+    stmt_rows = [
+        {
+            "query_id": 1,
+            "weighted_avg_duration_us": 6000000,
+            "execution_count": 50,
+            "query_sql_text": "SELECT * FROM Orders WHERE ...",
+        }
+    ]
+    findings, recs = _recommend_top_statement_actions(stmt_rows, [])
+    codes = [f["code"] for f in findings]
+    assert "TOP_STMT_HIGH_DURATION" in codes
+    assert any("index" in r["action"].lower() or "scan" in r["action"].lower() for r in recs)
+
+
+def test_recommend_high_execution_count_triggers_finding() -> None:
+    stmt_rows = [
+        {
+            "query_id": 2,
+            "weighted_avg_duration_us": 500000,
+            "execution_count": 50000,
+            "query_sql_text": "EXEC dbo.LookupCustomer @id",
+        }
+    ]
+    findings, recs = _recommend_top_statement_actions(stmt_rows, [])
+    codes = [f["code"] for f in findings]
+    assert "TOP_STMT_HIGH_EXECUTION_COUNT" in codes
+    assert any("parameter" in r["action"].lower() for r in recs)
+
+
+def test_recommend_high_scan_pressure_triggers_finding() -> None:
+    obj_rows = [
+        {
+            "schema_name": "dbo",
+            "table_name": "BigTable",
+            "user_seeks": 10,
+            "user_scans": 500,
+            "scan_ratio": 0.98,
+            "row_count": 1000000,
+        }
+    ]
+    findings, recs = _recommend_top_statement_actions([], obj_rows)
+    codes = [f["code"] for f in findings]
+    assert "TOP_STMT_HIGH_SCAN_PRESSURE" in codes
+    assert any("index" in r["action"].lower() for r in recs)
+
+
+def test_recommend_large_table_triggers_partition_candidate() -> None:
+    obj_rows = [
+        {
+            "schema_name": "dbo",
+            "table_name": "FactSales",
+            "user_seeks": 1000,
+            "user_scans": 100,
+            "scan_ratio": 0.09,
+            "row_count": 15000000,
+        }
+    ]
+    findings, recs = _recommend_top_statement_actions([], obj_rows)
+    codes = [f["code"] for f in findings]
+    assert "TOP_STMT_LARGE_TABLE_CANDIDATE" in codes
+    assert any("partition" in r["action"].lower() for r in recs)
+
+
+def test_recommend_medium_duration_triggers_rewrite_hint() -> None:
+    stmt_rows = [
+        {
+            "query_id": 5,
+            "weighted_avg_duration_us": 2500000,
+            "execution_count": 200,
+            "query_sql_text": "SELECT ... FROM ... JOIN ...",
+        }
+    ]
+    findings, recs = _recommend_top_statement_actions(stmt_rows, [])
+    codes = [f["code"] for f in findings]
+    assert "TOP_STMT_REWRITE_CANDIDATE" in codes
+    assert any("hint" in r["action"].lower() or "rewrite" in r["action"].lower() for r in recs)
+
+
+def test_recommend_low_duration_no_op() -> None:
+    stmt_rows = [
+        {
+            "query_id": 10,
+            "weighted_avg_duration_us": 500000,
+            "execution_count": 10,
+            "query_sql_text": "SELECT TOP 1 ...",
+        }
+    ]
+    findings, recs = _recommend_top_statement_actions(stmt_rows, [])
+    codes = [f["code"] for f in findings]
+    assert "TOP_STMT_HIGH_DURATION" not in codes
+    assert "TOP_STMT_HIGH_EXECUTION_COUNT" not in codes

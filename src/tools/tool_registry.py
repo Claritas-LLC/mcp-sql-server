@@ -29,6 +29,7 @@ def generate_tool_specs(enabled_instances: list[str]) -> list[ToolSpec]:
                 ToolSpec(instance=instance, toolname="analyze_db_data_model"),
                 ToolSpec(instance=instance, toolname="analyze_sec_config"),
                 ToolSpec(instance=instance, toolname="sessions_dashboard"),
+                ToolSpec(instance=instance, toolname="top_statements"),
             ]
         )
     return specs

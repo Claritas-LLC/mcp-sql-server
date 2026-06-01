@@ -313,6 +313,46 @@ Expected behavior:
 - Query succeeds while connected to master because objects are fully qualified to USGISPRO_800.
 - Output contains ordered table size metrics.
 
+### Query Store Compatibility Note (SQL Server 2019)
+
+Some Query Store objects vary by SQL Server build/CU. If `sql_statement` references
+`sys.query_store_plan_statistics`, you may receive `SQL_ERROR_42S02` even when Query Store
+is enabled.
+
+Use this SQL Server 2019-compatible pattern instead:
+
+```sql
+SELECT TOP 25
+  qsq.query_id,
+  qsp.plan_id,
+  SUM(rs.count_executions) AS execution_count,
+  CAST(SUM(rs.avg_duration * rs.count_executions) / NULLIF(SUM(rs.count_executions), 0) AS BIGINT) AS weighted_avg_duration_us,
+  CAST(MAX(rs.last_duration) AS BIGINT) AS last_duration_us,
+  MAX(rsi.end_time) AS last_exec_time,
+  qt.query_sql_text
+FROM sys.query_store_query qsq
+JOIN sys.query_store_query_text qt
+  ON qsq.query_text_id = qt.query_text_id
+JOIN sys.query_store_plan qsp
+  ON qsq.query_id = qsp.query_id
+JOIN sys.query_store_runtime_stats rs
+  ON qsp.plan_id = rs.plan_id
+JOIN sys.query_store_runtime_stats_interval rsi
+  ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
+WHERE rsi.start_time >= DATEADD(hour, -24, SYSUTCDATETIME())
+GROUP BY qsq.query_id, qsp.plan_id, qt.query_sql_text
+ORDER BY weighted_avg_duration_us DESC;
+```
+
+If this still fails with 42S02, verify object availability in the target database:
+
+```sql
+SELECT name
+FROM sys.all_objects
+WHERE name LIKE 'query_store%'
+ORDER BY name;
+```
+
 ## 5. Validation Criteria
 
 ### Functional Validation

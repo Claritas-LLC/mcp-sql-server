@@ -22,4 +22,6 @@ def test_tool_names_follow_convention() -> None:
     assert "db_secondary_sql2019_analyze_db_data_model" in names
     assert "db_secondary_sql2019_analyze_sec_config" in names
     assert "db_secondary_sql2019_sessions_dashboard" in names
+    assert "db_primary_sql2019_top_statements" in names
+    assert "db_secondary_sql2019_top_statements" in names
     assert all(name.startswith("db_") and "_sql2019_" in name for name in names)
