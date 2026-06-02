@@ -25,9 +25,6 @@ services:
       FASTMCP_HOST: 0.0.0.0
       FASTMCP_PORT: 8080
       FASTMCP_LOG_LEVEL: INFO
-      FASTMCP_RATE_LIMIT_BACKEND: ${FASTMCP_RATE_LIMIT_BACKEND:-local}
-      FASTMCP_REDIS_URL: ${FASTMCP_REDIS_URL:-}
-      FASTMCP_REDIS_NAMESPACE: ${FASTMCP_REDIS_NAMESPACE:-mcp:ratelimit}
       FASTMCP_TOOL_ENABLE_FLAGS_JSON: ${FASTMCP_TOOL_ENABLE_FLAGS_JSON:-}
       FASTMCP_INSTANCE_TOOL_ENABLE_FLAGS_JSON: ${FASTMCP_INSTANCE_TOOL_ENABLE_FLAGS_JSON:-}
     healthcheck:
@@ -40,7 +37,6 @@ services:
   redis:
     image: redis:7-alpine
     container_name: mcp-sqlserver-redis
-    profiles: ["local-redis"]
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:

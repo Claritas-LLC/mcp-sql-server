@@ -225,16 +225,29 @@ Invoke-WebRequest -Uri "https://$APP_FQDN/diagnostics/health" -Method Get
 # Test security endpoint
 Invoke-WebRequest -Uri "https://$APP_FQDN/diagnostics/security" -Method Get
 
-# Test MCP endpoint with Entra token
-# First, acquire a token:
+# Test MCP endpoint with Entra token (initialize + session flow)
 $TOKEN = (az account get-access-token --scope "api://mcp-sql-server/access" --query accessToken -o tsv)
 
-# Then call MCP endpoint (JSON-RPC)
-Invoke-WebRequest -Uri "https://$APP_FQDN/mcp" `
-   -Method Post `
-   -Headers @{Authorization="Bearer $TOKEN"} `
-   -Body '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}' `
-   -ContentType "application/json"
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$initHeaders = @{
+   Authorization = "Bearer $TOKEN"
+   Accept = "application/json, text/event-stream"
+   "Content-Type" = "application/json"
+}
+
+$initBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"aca-smoke","version":"1.0"}}}'
+$init = Invoke-WebRequest -Uri "https://$APP_FQDN/mcp/" -Method Post -Headers $initHeaders -Body $initBody -WebSession $session
+$sid = $init.Headers['Mcp-Session-Id']
+
+$callHeaders = @{
+   Authorization = "Bearer $TOKEN"
+   Accept = "application/json, text/event-stream"
+   "Content-Type" = "application/json"
+   "Mcp-Session-Id" = $sid
+}
+
+$callBody = '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+Invoke-WebRequest -Uri "https://$APP_FQDN/mcp/" -Method Post -Headers $callHeaders -Body $callBody -WebSession $session
 ```
 
 ## Step 9: SQL Connectivity from ACA
@@ -301,12 +314,26 @@ print(token['access_token'])
 ### Call MCP tools with token:
 
 ```powershell
-$HEADERS = @{Authorization="Bearer $TOKEN"}
-Invoke-WebRequest -Uri "https://$APP_FQDN/mcp" `
-  -Method Post `
-  -Headers $HEADERS `
-  -Body '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}' `
-  -ContentType "application/json"
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$headers = @{
+   Authorization = "Bearer $TOKEN"
+   Accept = "application/json, text/event-stream"
+   "Content-Type" = "application/json"
+}
+
+$initBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"aca-smoke","version":"1.0"}}}'
+$init = Invoke-WebRequest -Uri "https://$APP_FQDN/mcp/" -Method Post -Headers $headers -Body $initBody -WebSession $session
+$sid = $init.Headers['Mcp-Session-Id']
+
+$callHeaders = @{
+   Authorization = "Bearer $TOKEN"
+   Accept = "application/json, text/event-stream"
+   "Content-Type" = "application/json"
+   "Mcp-Session-Id" = $sid
+}
+
+$callBody = '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+Invoke-WebRequest -Uri "https://$APP_FQDN/mcp/" -Method Post -Headers $callHeaders -Body $callBody -WebSession $session
 ```
 
 ## Troubleshooting
@@ -330,7 +357,7 @@ For production:
    az containerapp update --name $AZ_APP --resource-group $AZ_RG --scale-rule-name cpu-scale --scale-rule-type cpu-utilization --scale-rule-metadata percentage=70
    ```
 
-2. **Rate Limiting**: Switch to Redis-backed rate limiter for multi-replica scenarios
+2. **Rate Limiting**: Use Redis-backed rate limiting for multi-replica scenarios
    ```powershell
    # Create Redis
    az redis create --name mcp-redis --resource-group $AZ_RG --location $AZ_LOCATION --sku Basic --capacity 0

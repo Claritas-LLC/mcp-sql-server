@@ -1,5 +1,9 @@
 # MCP SQL Server 2019 Multi-Instance Tool Specification
 
+Status: reference design/spec document.
+
+For current runtime tool contracts and parameter shapes, use [mcp-tool-catalog.md](mcp-tool-catalog.md) as the canonical source.
+
 ## 1. Scope
 
 This specification defines four MCP tools for SQL Server 2019 operations across two managed instances:

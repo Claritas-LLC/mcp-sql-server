@@ -7,6 +7,18 @@
 - [ ] Docker CLI installed
 - [ ] Git repo cloned locally
 - [ ] PowerShell 7+ (for script examples)
+- [ ] Runtime policy reviewed (`config/runtime-policy.yaml`) and write controls validated (`write_mode_default`, `allowed_write_tools`, `allowed_tools`)
+- [ ] SQL credentials and Entra secrets present in Key Vault
+- [ ] Rollback image tag identified and available in ACR
+
+## Production Gate Criteria (Must Pass Before Go-Live)
+
+- [ ] `GET /diagnostics/health` returns overall healthy state
+- [ ] `GET /diagnostics/security` returns expected auth posture (`azure_auth_enabled`, scope config, group settings)
+- [ ] Both SQL instances pass connectivity checks through MCP (`db_1_sql2019_ping`, `db_2_sql2019_ping`)
+- [ ] Rate-limit backend is intentionally configured (`local` or `redis`) and validated
+- [ ] MCP streamable session flow validated (`initialize` + `Mcp-Session-Id` + `tools/list`)
+- [ ] Rollback command tested in non-production
 
 ## Phase 1: Entra Setup (5 minutes)
 
@@ -94,13 +106,16 @@ $SQL_SECONDARY_PASSWORD="<strong-password>"
 - [ ] Test security endpoint: `curl https://<fqdn>/diagnostics/security`
   - Should show: `azure_auth_enabled: true`
 - [ ] Acquire Entra token: `$TOKEN = (az account get-access-token --scope "api://mcp-sql-server/access" --query accessToken -o tsv)`
-- [ ] Test MCP endpoint with auth (JSON-RPC):
+- [ ] Test MCP endpoint with auth using session flow:
   ```powershell
-  Invoke-WebRequest -Uri "https://<fqdn>/mcp" `
-    -Method Post `
-    -Headers @{Authorization="Bearer $TOKEN"} `
-    -Body '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}' `
-    -ContentType "application/json"
+  $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+  $headers = @{ Authorization = "Bearer $TOKEN"; Accept = "application/json, text/event-stream"; "Content-Type" = "application/json" }
+  $initBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"deploy-check","version":"1.0"}}}'
+  $init = Invoke-WebRequest -Uri "https://<fqdn>/mcp/" -Method Post -Headers $headers -Body $initBody -WebSession $session
+  $sid = $init.Headers['Mcp-Session-Id']
+  $callHeaders = @{ Authorization = "Bearer $TOKEN"; Accept = "application/json, text/event-stream"; "Content-Type" = "application/json"; "Mcp-Session-Id" = $sid }
+  $callBody = '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+  Invoke-WebRequest -Uri "https://<fqdn>/mcp/" -Method Post -Headers $callHeaders -Body $callBody -WebSession $session
   ```
 
 ## Phase 10: Test SQL Connectivity (Optional, varies by network setup)
@@ -124,6 +139,7 @@ If deployment fails:
 - [ ] Disable Entra auth: `azure_auth_enabled: false`
 - [ ] Rebuild image and redeploy
 - [ ] Verify health endpoint: `curl https://<fqdn>/diagnostics/health`
+- [ ] If needed, redeploy prior known-good image tag and validate MCP `initialize` + `tools/list` flow
 
 ## Quick Reference: Environment Variables
 

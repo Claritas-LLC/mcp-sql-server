@@ -295,7 +295,7 @@ def statistics_histogram_query(schema_name: str, table_name: str, stat_name: str
     return (
         "SELECT "
         "h.step_number, "
-        "TRY_CONVERT(nvarchar(256), h.range_high_key) AS range_high_key_text, "
+        "TRY_CAST(h.range_high_key AS nvarchar(256)) AS range_high_key_text, "
         "h.range_rows, "
         "h.equal_rows, "
         "h.distinct_range_rows, "

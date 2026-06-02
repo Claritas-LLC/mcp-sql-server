@@ -12,29 +12,68 @@
 
 1. Copy `.env.example` to `.env` and set SQL credentials.
 2. Update `config/instances.yaml` using `config/instances.runtime.example.yaml` as the template.
-3. Start the server:
+3. Start the server (Redis is included by default in the runtime compose file):
 
 ```powershell
 docker compose -f docker/docker-compose.runtime.yml up -d
 ```
 
-4. Optional Redis-backed rate limiting:
-
-```powershell
-docker compose -f docker/docker-compose.runtime.yml --profile local-redis up -d
-```
-
-5. Verify:
+4. Verify service health:
 
 - `http://localhost:8085/`
 - `http://localhost:8085/diagnostics/health`
 - `http://localhost:8085/diagnostics/security`
+
+5. Verify active rate-limit backend and Redis URL from inside the container:
+
+```powershell
+docker exec mcp-sqlserver printenv FASTMCP_RATE_LIMIT_BACKEND
+docker exec mcp-sqlserver printenv FASTMCP_REDIS_URL
+```
+
+Expected values for Redis-backed runtime:
+
+- `FASTMCP_RATE_LIMIT_BACKEND=redis`
+- `FASTMCP_REDIS_URL=redis://mcp-sqlserver-redis:6379`
 
 ## Important Notes
 
 - The container listens on port `8080`; host port is mapped to `8085`.
 - Use `host.docker.internal` instead of `localhost` when the SQL Server runs on the Docker host.
 - Credential env vars must match the `auth_secret_ref` names in `config/instances.yaml`.
+- Runtime compose uses `env_file: ../.env`; keep Redis/auth variables in `.env` for deterministic startup.
+
+## MCP Streamable HTTP Call Pattern
+
+When invoking tools directly over HTTP, use MCP initialize + session headers.
+
+1. Send `initialize` with:
+   - `Accept: application/json, text/event-stream`
+2. Read `Mcp-Session-Id` from response headers.
+3. Send tool calls with the same `Mcp-Session-Id` header.
+
+Example (PowerShell):
+
+```powershell
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$headers = @{
+  'Accept' = 'application/json, text/event-stream'
+  'Content-Type' = 'application/json'
+}
+
+$initBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"debug","version":"1.0"}}}'
+$init = Invoke-WebRequest -Uri 'http://localhost:8085/mcp/' -Method Post -Body $initBody -Headers $headers -WebSession $session
+$sid = $init.Headers['Mcp-Session-Id']
+
+$callHeaders = @{
+  'Accept' = 'application/json, text/event-stream'
+  'Content-Type' = 'application/json'
+  'Mcp-Session-Id' = $sid
+}
+
+$callBody = '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"db_2_sql2019_top_statements","arguments":{"database_name":"master","top_n":5,"lookback_minutes":60,"view_mode":"FULL","actor":"demo"}}}'
+Invoke-WebRequest -Uri 'http://localhost:8085/mcp/' -Method Post -Body $callBody -Headers $callHeaders -WebSession $session
+```
 
 ## Procedure Execution Security (exec_proc Tool)
 
