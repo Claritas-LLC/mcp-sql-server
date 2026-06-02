@@ -11,6 +11,16 @@ def _validate_top_n(top_n: int) -> int:
     return value
 
 
+def _validate_lookback_minutes(lookback_minutes: int) -> int:
+    try:
+        value = int(lookback_minutes)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("lookback_minutes must be an integer between 1 and 10080") from exc
+    if value < 1 or value > 10080:
+        raise ValueError("lookback_minutes must be between 1 and 10080")
+    return value
+
+
 def table_size_query(top_n: int) -> str:
     return (
         f"SELECT TOP {top_n} s.name AS schema_name, t.name AS table_name, "
@@ -635,6 +645,7 @@ def top_statements_query_store_query(top_n: int, lookback_minutes: int) -> str:
     Uses Query Store runtime stats and query text for database-scoped analysis.
     """
     top_n = _validate_top_n(top_n)
+    lookback_minutes = _validate_lookback_minutes(lookback_minutes)
     return (
         f"SELECT TOP {top_n} "
         "qsq.query_id, "

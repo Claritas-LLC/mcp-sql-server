@@ -1060,7 +1060,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         except Exception as exc:
             decision = "deny"
             sql_err = _extract_sql_error(exc)
-            error_code = sql_err["code"] if sql_err else str(exc)
+            error_code = sql_err["code"] if sql_err else f"NON_SQL_ERROR:{exc.__class__.__name__}"
             if ctx is not None:
                 await ctx.error(
                     f"[{request_id}] {tool} transaction failed: {error_code}",
@@ -1196,7 +1196,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 except Exception as exc:
                     decision = "deny"
                     sql_err = _extract_sql_error(exc)
-                    error_code = sql_err["code"] if sql_err else str(exc)
+                    error_code = sql_err["code"] if sql_err else f"NON_SQL_ERROR:{exc.__class__.__name__}"
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Select query failed: {error_code}",
@@ -1331,7 +1331,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 except Exception as exc:
                     decision = "deny"
                     sql_err = _extract_sql_error(exc)
-                    error_code = sql_err["code"] if sql_err else str(exc)
+                    error_code = sql_err["code"] if sql_err else f"NON_SQL_ERROR:{exc.__class__.__name__}"
                     if ctx is not None:
                         await ctx.error(
                             f"[{request_id}] Stored procedure {proc_name} failed: {error_code}",
@@ -3760,15 +3760,26 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     )
 
                     if not findings:
-                        findings.append(
-                            build_finding(
-                                code="TOP_STMT_NO_CRITICAL_ISSUES",
-                                severity="info",
-                                title="No critical statement performance issues detected",
-                                detail="Current analysis did not identify high-severity statement patterns.",
-                                evidence=[],
+                        if data_source == "unavailable":
+                            findings.append(
+                                build_finding(
+                                    code="TOP_STMT_TELEMETRY_UNAVAILABLE",
+                                    severity="error",
+                                    title="Statement telemetry source unavailable",
+                                    detail="Both Query Store and DMV data sources are unavailable for this database. No statement performance analysis can be performed.",
+                                    evidence=[],
+                                )
                             )
-                        )
+                        else:
+                            findings.append(
+                                build_finding(
+                                    code="TOP_STMT_NO_CRITICAL_ISSUES",
+                                    severity="info",
+                                    title="No critical statement performance issues detected",
+                                    detail="Current analysis did not identify high-severity statement patterns.",
+                                    evidence=[],
+                                )
+                            )
 
                     rows = len(stmt_rows) + len(obj_rows)
 
@@ -3991,7 +4002,16 @@ async def _collect_top_statement_metrics(
             top_n,
         )
         stmt_rows = stmt_result["rows"]
-    except Exception:
+    except Exception as exc:
+        sql_state = getattr(exc, "sqlstate", None) or ""
+        exc_str = str(exc).lower()
+        is_query_store_unavailable = (
+            sql_state == "42S02"
+            or "query_store" in exc_str
+            or "invalid object name" in exc_str
+        )
+        if not is_query_store_unavailable:
+            raise
         data_source = "dmv_fallback"
         try:
             fallback_sql = top_statements_dmv_fallback_query(top_n)

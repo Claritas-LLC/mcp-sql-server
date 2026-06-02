@@ -25,15 +25,14 @@
 
 ## Required Log Fields
 
+- `timestamp`
 - `request_id`
 - `tool`
 - `instance`
 - `actor`
 - `decision`
 - `latency_ms`
-- `error_code`
-
-## Dashboard Minimum Panels
+- `error_code`## Dashboard Minimum Panels
 
 1. Request volume by tool.
 2. Error count by error code.

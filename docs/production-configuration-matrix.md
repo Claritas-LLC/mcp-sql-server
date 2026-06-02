@@ -9,8 +9,8 @@ This matrix documents critical runtime configuration used for production deploym
 | `FASTMCP_RATE_LIMIT_PATH` | Yes | `config/rate-limit.yaml` | Container env | Rate/session controls |
 | `FASTMCP_HOST` | Yes | `0.0.0.0` | Container env | Service bind host |
 | `FASTMCP_PORT` | Yes | `8080` | Container env | Service port |
-| `FASTMCP_RATE_LIMIT_BACKEND` | Yes | `local` | `.env` / env var | `local` or `redis` |
-| `FASTMCP_REDIS_URL` | Conditionally | empty | `.env` / env var | Required when backend is `redis` |
+| `FASTMCP_RATE_LIMIT_BACKEND` | Yes | `local` | `.env` / env var | `local` or `redis`. Redis container starts by default in Docker Compose; set to `redis` in `.env` to activate distributed rate limiting. |
+| `FASTMCP_REDIS_URL` | Conditionally | empty | `.env` / env var | Required when `FASTMCP_RATE_LIMIT_BACKEND` is `redis` |
 | `FASTMCP_REDIS_NAMESPACE` | No | `mcp:ratelimit` | `.env` / env var | Redis key namespace |
 | `FASTMCP_SQL_POOL_ENABLED` | No | instance config | `.env` / env var | Overrides per-instance pool setting |
 | `FASTMCP_SQL_POOL_MAX` | No | instance config | `.env` / env var | Positive integer |

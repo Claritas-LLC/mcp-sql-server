@@ -10,7 +10,10 @@ Use this runbook for production rollout of a new MCP SQL Server image/config rev
 - Prior stable image tag available.
 - Runtime policy reviewed and approved.
 - SQL and Entra secrets verified in Key Vault (or equivalent secret store).
-- On-call owner assigned.
+- [Observability and alerting baseline](observability-and-alerting-baseline.md) established: health probes, core alerts, and dashboard panels confirmed operational.
+- Backup of current runtime configuration created and verified.
+- Rollback procedure tested in a non-production environment.
+- On-call owner assigned and familiar with rollback steps.
 
 ## Inputs
 
@@ -27,9 +30,9 @@ Use this runbook for production rollout of a new MCP SQL Server image/config rev
 4. Validate diagnostics endpoints:
    - `GET /diagnostics/health`
    - `GET /diagnostics/security`
-5. Validate instance connectivity:
-   - `db_1_sql2019_ping`
-   - `db_2_sql2019_ping`
+5. Validate instance connectivity for each configured SQL instance:
+   - Pattern: `db_<instance_number>_sql2019_ping` (e.g., `db_1_sql2019_ping`, `db_2_sql2019_ping`)
+   - Rule: every instance returned in the initial `tools/list` response must be pingable
 6. Validate MCP streamable transport session flow:
    - Send `initialize` with `Accept: application/json, text/event-stream`
    - Capture `Mcp-Session-Id`
