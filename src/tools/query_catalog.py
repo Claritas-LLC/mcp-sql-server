@@ -24,27 +24,41 @@ def _validate_lookback_minutes(lookback_minutes: int) -> int:
 def table_size_query(top_n: int) -> str:
     return (
         f"SELECT TOP {top_n} s.name AS schema_name, t.name AS table_name, "
-        "SUM(p.rows) AS row_count, "
-        "CAST(SUM(a.total_pages) * 8.0 / 1024 AS DECIMAL(18,2)) AS total_space_mb "
+        "SUM(ps.row_count) AS row_count, "
+        "CAST(SUM(ps.used_page_count) * 8.0 / 1024 AS DECIMAL(18,2)) AS total_space_mb "
         "FROM sys.tables t "
         "JOIN sys.schemas s ON t.schema_id = s.schema_id "
-        "JOIN sys.indexes i ON t.object_id = i.object_id "
-        "JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id "
-        "JOIN sys.allocation_units a ON p.partition_id = a.container_id "
+        "JOIN sys.dm_db_partition_stats ps ON t.object_id = ps.object_id AND ps.index_id IN (0,1) "
         "GROUP BY s.name, t.name "
         "ORDER BY total_space_mb DESC"
     )
 
 
 def fragmented_indexes_query(top_n: int) -> str:
+    """Top N indexes with highest fragmentation, scoped to the largest tables first.
+
+    The CTE restricts the expensive dm_db_index_physical_stats scan to the
+    top {top_n} * 4 candidate tables (ordered by row count) to avoid a
+    full-database index scan on databases with thousands of objects.
+    """
+    top_n = _validate_top_n(top_n)
     return (
+        f"WITH candidate_tables AS ("
+        f"SELECT TOP {top_n * 4} t.object_id "
+        "FROM sys.tables t "
+        "JOIN sys.dm_db_partition_stats p ON t.object_id = p.object_id AND p.index_id IN (0,1) "
+        "GROUP BY t.object_id "
+        "ORDER BY SUM(p.row_count) DESC"
+        f") "
         f"SELECT TOP {top_n} OBJECT_SCHEMA_NAME(ps.object_id) AS schema_name, "
         "OBJECT_NAME(ps.object_id) AS table_name, i.name AS index_name, "
         "ps.avg_fragmentation_in_percent, ps.page_count "
-        "FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') ps "
+        "FROM candidate_tables ct "
+        "CROSS APPLY sys.dm_db_index_physical_stats(DB_ID(), ct.object_id, NULL, NULL, 'LIMITED') ps "
         "JOIN sys.indexes i ON ps.object_id = i.object_id AND ps.index_id = i.index_id "
-        "WHERE ps.index_id > 0 AND ps.page_count >= 100 "
-        "ORDER BY ps.avg_fragmentation_in_percent DESC"
+        "WHERE ps.index_id > 0 AND ps.index_level = 0 AND ps.page_count >= 100 "
+        "AND OBJECTPROPERTY(ps.object_id, 'IsUserTable') = 1 "
+        "ORDER BY ps.avg_fragmentation_in_percent DESC, ps.page_count DESC"
     )
 
 
@@ -52,9 +66,9 @@ def missing_pk_query() -> str:
     return (
         "SELECT s.name AS schema_name, t.name AS table_name "
         "FROM sys.tables t "
-        "JOIN sys.schemas s ON s.schema_id = t.schema_id "
-        "LEFT JOIN sys.key_constraints k ON k.parent_object_id = t.object_id AND k.type = 'PK' "
-        "WHERE k.object_id IS NULL "
+        "INNER JOIN sys.schemas s ON s.schema_id = t.schema_id "
+        "WHERE NOT EXISTS ( SELECT 1 FROM sys.key_constraints k WHERE k.parent_object_id = t.object_id "
+        "AND k.type = 'PK' ) "
         "ORDER BY s.name, t.name"
     )
 
@@ -66,7 +80,8 @@ def fk_graph_query() -> str:
         "OBJECT_NAME(fk.parent_object_id) AS parent_table, "
         "OBJECT_SCHEMA_NAME(fk.referenced_object_id) AS referenced_schema, "
         "OBJECT_NAME(fk.referenced_object_id) AS referenced_table "
-        "FROM sys.foreign_keys fk"
+        "FROM sys.foreign_keys fk "
+        "WHERE OBJECTPROPERTY(fk.parent_object_id, 'IsUserTable') = 1"
     )
 
 
@@ -91,10 +106,15 @@ def elevated_roles_query() -> str:
 
 def backup_recency_query() -> str:
     return (
-        "SELECT d.name AS database_name, MAX(b.backup_finish_date) AS last_backup_finish_date "
+        "SELECT d.name AS database_name, b.last_backup_finish_date "
         "FROM master.sys.databases d "
-        "LEFT JOIN msdb.dbo.backupset b ON b.database_name = d.name AND b.type = 'D' "
-        "GROUP BY d.name"
+        "OUTER APPLY ("
+        "  SELECT TOP 1 bs.backup_finish_date AS last_backup_finish_date "
+        "  FROM msdb.dbo.backupset bs "
+        "  WHERE bs.database_name = d.name AND bs.type = 'D' "
+        "  ORDER BY bs.backup_finish_date DESC"
+        ") b "
+        "ORDER BY d.name"
     )
 
 
@@ -146,6 +166,7 @@ def blocking_chain_query(top_n: int) -> str:
 
 def tran_locks_query(top_n: int) -> str:
     """Active lock holders from sys.dm_tran_locks with resource and mode details."""
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} "
         "tl.request_session_id AS session_id, "
@@ -163,6 +184,7 @@ def tran_locks_query(top_n: int) -> str:
 
 def waiting_tasks_query(top_n: int) -> str:
     """All waiting tasks from sys.dm_os_waiting_tasks with full wait context."""
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} "
         "wt.session_id, "
@@ -181,14 +203,20 @@ def waiting_tasks_query(top_n: int) -> str:
 
 
 def heap_tables_query() -> str:
-    """Tables with no clustered index (heap storage)."""
+    """Tables with no clustered index (heap storage).
+
+    Uses sys.dm_db_partition_stats (fast DMV) instead of sys.partitions
+    (heavy system table) for row counts.
+    """
     return (
-        "SELECT s.name AS schema_name, t.name AS table_name, p.rows AS row_count "
+        "SELECT s.name AS schema_name, t.name AS table_name, "
+        "SUM(ps.row_count) AS row_count "
         "FROM sys.tables t "
         "JOIN sys.schemas s ON s.schema_id = t.schema_id "
-        "JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id = 0 "
-        "WHERE p.rows > 0 "
-        "ORDER BY p.rows DESC"
+        "JOIN sys.dm_db_partition_stats ps ON t.object_id = ps.object_id AND ps.index_id = 0 "
+        "WHERE ps.row_count > 0 "
+        "GROUP BY s.name, t.name "
+        "ORDER BY SUM(ps.row_count) DESC"
     )
 
 
@@ -205,8 +233,19 @@ def disabled_indexes_query() -> str:
 
 
 def stale_statistics_query(top_n: int) -> str:
-    """Top N tables/indexes with the most out-of-date statistics."""
+    """Top N tables/indexes with the most out-of-date statistics.
+
+    Scoped to top {top_n} * 4 largest tables to avoid full catalog scan
+    on databases with thousands of statistics objects.
+    """
+    top_n = _validate_top_n(top_n)
     return (
+        f"WITH top_tables AS ("
+        f"SELECT TOP {top_n * 4} t.object_id "
+        "FROM sys.tables t "
+        "JOIN sys.dm_db_partition_stats p ON t.object_id = p.object_id AND p.index_id IN (0,1) "
+        "GROUP BY t.object_id ORDER BY SUM(p.row_count) DESC"
+        f") "
         f"SELECT TOP {top_n} "
         "OBJECT_SCHEMA_NAME(s.object_id) AS schema_name, "
         "OBJECT_NAME(s.object_id) AS table_name, "
@@ -218,13 +257,24 @@ def stale_statistics_query(top_n: int) -> str:
         "FROM sys.stats s "
         "CROSS APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp "
         "WHERE OBJECTPROPERTY(s.object_id, 'IsUserTable') = 1 "
+        "AND s.object_id IN (SELECT object_id FROM top_tables) "
         "ORDER BY sp.modification_counter DESC, sp.last_updated ASC"
     )
 
 
 def statistics_never_updated_query(top_n: int) -> str:
-    """Top N user-table statistics with no update timestamp yet."""
+    """Top N user-table statistics with no update timestamp yet.
+
+    Scoped to top {top_n} * 4 largest tables.
+    """
+    top_n = _validate_top_n(top_n)
     return (
+        f"WITH top_tables AS ("
+        f"SELECT TOP {top_n * 4} t.object_id "
+        "FROM sys.tables t "
+        "JOIN sys.dm_db_partition_stats p ON t.object_id = p.object_id AND p.index_id IN (0,1) "
+        "GROUP BY t.object_id ORDER BY SUM(p.row_count) DESC"
+        f") "
         f"SELECT TOP {top_n} "
         "OBJECT_SCHEMA_NAME(s.object_id) AS schema_name, "
         "OBJECT_NAME(s.object_id) AS table_name, "
@@ -237,13 +287,24 @@ def statistics_never_updated_query(top_n: int) -> str:
         "CROSS APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp "
         "WHERE OBJECTPROPERTY(s.object_id, 'IsUserTable') = 1 "
         "AND sp.last_updated IS NULL "
+        "AND s.object_id IN (SELECT object_id FROM top_tables) "
         "ORDER BY sp.rows DESC, sp.modification_counter DESC"
     )
 
 
 def low_sampled_statistics_query(top_n: int) -> str:
-    """Top N user-table statistics with weakest sample ratio."""
+    """Top N user-table statistics with weakest sample ratio.
+
+    Scoped to top {top_n} * 4 largest tables.
+    """
+    top_n = _validate_top_n(top_n)
     return (
+        f"WITH top_tables AS ("
+        f"SELECT TOP {top_n * 4} t.object_id "
+        "FROM sys.tables t "
+        "JOIN sys.dm_db_partition_stats p ON t.object_id = p.object_id AND p.index_id IN (0,1) "
+        "GROUP BY t.object_id ORDER BY SUM(p.row_count) DESC"
+        f") "
         f"SELECT TOP {top_n} "
         "OBJECT_SCHEMA_NAME(s.object_id) AS schema_name, "
         "OBJECT_NAME(s.object_id) AS table_name, "
@@ -259,6 +320,7 @@ def low_sampled_statistics_query(top_n: int) -> str:
         "CROSS APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp "
         "WHERE OBJECTPROPERTY(s.object_id, 'IsUserTable') = 1 "
         "AND sp.rows > 0 "
+        "AND s.object_id IN (SELECT object_id FROM top_tables) "
         "ORDER BY sample_ratio ASC, sp.rows DESC"
     )
 
@@ -280,19 +342,37 @@ def missing_statistics_coverage_candidate_query(top_n: int) -> str:
     """Top N user tables that appear to have limited usable stats coverage.
 
     This is heuristic metadata-based analysis and does not inspect query plans.
+    Scoped to top {top_n} * 4 largest tables.
     """
+    top_n = _validate_top_n(top_n)
     return (
+        f"WITH top_tables AS ("
+        f"SELECT TOP {top_n * 4} t.object_id "
+        "FROM sys.tables t "
+        "JOIN sys.dm_db_partition_stats p ON t.object_id = p.object_id AND p.index_id IN (0,1) "
+        "GROUP BY t.object_id ORDER BY SUM(p.row_count) DESC"
+        f"), table_rows AS ("
+        "SELECT p.object_id, SUM(p.row_count) AS row_count "
+        "FROM sys.dm_db_partition_stats p "
+        "WHERE p.index_id IN (0, 1) "
+        "GROUP BY p.object_id"
+        "), table_stats AS ("
+        "SELECT st.object_id, COUNT(*) AS usable_stats_count "
+        "FROM sys.stats st "
+        "WHERE st.stats_id > 0 "
+        "GROUP BY st.object_id"
+        f") "
         f"SELECT TOP {top_n} "
         "s.name AS schema_name, "
         "t.name AS table_name, "
-        "SUM(CASE WHEN st.stats_id > 0 THEN 1 ELSE 0 END) AS usable_stats_count, "
-        "MAX(ISNULL(p.rows, 0)) AS row_count "
-        "FROM sys.tables t "
+        "ISNULL(ts.usable_stats_count, 0) AS usable_stats_count, "
+        "ISNULL(tr.row_count, 0) AS row_count "
+        "FROM top_tables tt "
+        "JOIN sys.tables t ON t.object_id = tt.object_id "
         "JOIN sys.schemas s ON s.schema_id = t.schema_id "
-        "LEFT JOIN sys.stats st ON st.object_id = t.object_id "
-        "LEFT JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1) "
-        "GROUP BY s.name, t.name "
-        "HAVING SUM(CASE WHEN st.stats_id > 0 THEN 1 ELSE 0 END) = 0 "
+        "LEFT JOIN table_stats ts ON ts.object_id = t.object_id "
+        "LEFT JOIN table_rows tr ON tr.object_id = t.object_id "
+        "WHERE ISNULL(ts.usable_stats_count, 0) = 0 "
         "ORDER BY row_count DESC, s.name, t.name"
     )
 
@@ -326,7 +406,8 @@ def statistics_histogram_query(schema_name: str, table_name: str, stat_name: str
 
 def duplicate_key_candidate_query(top_n: int) -> str:
     """Tables with multiple single-column non-unique indexes on the same column
-    (duplicate index candidates)."""
+    (duplicate index candidates). Scoped to user tables only."""
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} "
         "OBJECT_SCHEMA_NAME(i.object_id) AS schema_name, "
@@ -335,7 +416,8 @@ def duplicate_key_candidate_query(top_n: int) -> str:
         "COUNT(*) AS index_count "
         "FROM sys.indexes i "
         "JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id "
-        "WHERE i.is_unique = 0 AND ic.key_ordinal = 1 "
+        "WHERE i.is_unique = 0 AND i.is_hypothetical = 0 AND ic.key_ordinal = 1 "
+        "AND OBJECTPROPERTY(i.object_id, 'IsUserTable') = 1 "
         "GROUP BY i.object_id, ic.object_id, ic.column_id "
         "HAVING COUNT(*) > 1 "
         "ORDER BY index_count DESC"
@@ -399,6 +481,7 @@ def missing_fk_index_query() -> str:
 
 def missing_index_dmv_query(top_n: int) -> str:
     """Top missing indexes by estimated improvement impact (SQL Server optimizer DMVs)."""
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} "
         "OBJECT_SCHEMA_NAME(mid.object_id) AS schema_name, "
@@ -419,6 +502,7 @@ def missing_index_dmv_query(top_n: int) -> str:
 
 def unused_indexes_query(top_n: int) -> str:
     """Nonclustered indexes that incur write overhead but have never been read since last restart."""
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} "
         "OBJECT_SCHEMA_NAME(i.object_id) AS schema_name, "
@@ -444,31 +528,36 @@ def unused_indexes_query(top_n: int) -> str:
 
 def redundant_indexes_query(top_n: int) -> str:
     """Index pairs on the same table that share the same leading key column (redundancy candidates)."""
+    top_n = _validate_top_n(top_n)
     return (
+        "WITH leading_keys AS ("
+        "  SELECT i.object_id, i.index_id, i.name, ic.column_id "
+        "  FROM sys.indexes i "
+        "  JOIN sys.index_columns ic "
+        "    ON ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.key_ordinal = 1 "
+        "  WHERE i.type_desc = 'NONCLUSTERED' "
+        "    AND i.is_disabled = 0 "
+        "    AND i.is_hypothetical = 0 "
+        "    AND OBJECTPROPERTY(i.object_id, 'IsUserTable') = 1"
+        ") "
         f"SELECT TOP {top_n} "
-        "OBJECT_SCHEMA_NAME(i1.object_id) AS schema_name, "
-        "OBJECT_NAME(i1.object_id) AS table_name, "
-        "i1.name AS index_a, "
-        "i2.name AS index_b, "
-        "COL_NAME(ic1.object_id, ic1.column_id) AS shared_leading_key_column "
-        "FROM sys.indexes i1 "
-        "JOIN sys.index_columns ic1 "
-        "  ON ic1.object_id = i1.object_id AND ic1.index_id = i1.index_id AND ic1.key_ordinal = 1 "
-        "JOIN sys.index_columns ic2 "
-        "  ON ic2.object_id = i1.object_id AND ic2.column_id = ic1.column_id AND ic2.key_ordinal = 1 "
-        "JOIN sys.indexes i2 "
-        "  ON i2.object_id = ic2.object_id AND i2.index_id = ic2.index_id "
-        "WHERE i1.type_desc = 'NONCLUSTERED' "
-        "  AND i2.type_desc = 'NONCLUSTERED' "
-        "  AND i1.index_id < i2.index_id "
-        "  AND i1.is_disabled = 0 "
-        "  AND OBJECTPROPERTY(i1.object_id, 'IsUserTable') = 1 "
+        "OBJECT_SCHEMA_NAME(a.object_id) AS schema_name, "
+        "OBJECT_NAME(a.object_id) AS table_name, "
+        "a.name AS index_a, "
+        "b.name AS index_b, "
+        "COL_NAME(a.object_id, a.column_id) AS shared_leading_key_column "
+        "FROM leading_keys a "
+        "JOIN leading_keys b "
+        "  ON b.object_id = a.object_id "
+        " AND b.column_id = a.column_id "
+        " AND b.index_id > a.index_id "
         "ORDER BY schema_name, table_name, index_a"
     )
 
 
 def datatype_inconsistency_query(top_n: int) -> str:
     """FK relationships where parent and child column base types, length, or precision differ."""
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} "
         "fk.name AS fk_name, "
@@ -538,6 +627,7 @@ def soft_delete_columns_query() -> str:
 
 def update_heavy_tables_query(top_n: int) -> str:
     """Tables where writes significantly outnumber reads (update anomaly / over-normalisation risk)."""
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} "
         "OBJECT_SCHEMA_NAME(i.object_id) AS schema_name, "
@@ -608,20 +698,18 @@ def trustworthy_databases_query() -> str:
 def guest_access_query() -> str:
     """Databases where the guest user has CONNECT permission."""
     return (
-        "SELECT d.name AS database_name "
-        "FROM sys.databases d "
-        "WHERE d.state_desc = 'ONLINE' "
-        "AND EXISTS ("
+        "SELECT DB_NAME() AS database_name "
+        "WHERE EXISTS ("
         "  SELECT 1 FROM sys.database_permissions dp "
         "  JOIN sys.database_principals guest ON guest.principal_id = dp.grantee_principal_id AND guest.name = 'guest' "
         "  WHERE dp.permission_name = 'CONNECT' AND dp.state_desc = 'GRANT'"
-        ") "
-        "ORDER BY d.name"
+        ")"
     )
 
 
 def excessive_permissions_query(top_n: int) -> str:
     """Top N principals with the most explicit database-level GRANT permissions."""
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} "
         "dp.name AS principal_name, dp.type_desc, "
@@ -716,23 +804,34 @@ def top_statements_object_pressure_query(top_n: int) -> str:
     """
     top_n = _validate_top_n(top_n)
     return (
+        "WITH table_row_counts AS ("
+        "  SELECT ps.object_id, SUM(ps.row_count) AS row_count "
+        "  FROM sys.dm_db_partition_stats ps "
+        "  WHERE ps.index_id IN (0, 1) "
+        "  GROUP BY ps.object_id"
+        "), table_usage AS ("
+        "  SELECT ius.object_id, "
+        "         SUM(ius.user_seeks) AS user_seeks, "
+        "         SUM(ius.user_scans) AS user_scans, "
+        "         SUM(ius.user_lookups) AS user_lookups, "
+        "         SUM(ius.user_updates) AS user_updates "
+        "  FROM sys.dm_db_index_usage_stats ius "
+        "  WHERE ius.database_id = DB_ID() AND ius.index_id IN (0, 1) "
+        "  GROUP BY ius.object_id"
+        ") "
         f"SELECT TOP {top_n} "
-        "OBJECT_SCHEMA_NAME(ps.object_id) AS schema_name, "
-        "OBJECT_NAME(ps.object_id) AS table_name, "
-        "ISNULL(ius.user_seeks, 0) AS user_seeks, "
-        "ISNULL(ius.user_scans, 0) AS user_scans, "
-        "ISNULL(ius.user_lookups, 0) AS user_lookups, "
-        "ISNULL(ius.user_updates, 0) AS user_updates, "
-        "ps.row_count, "
-        "CAST(ISNULL(ius.user_scans, 0) AS FLOAT) "
-        "  / NULLIF(ISNULL(ius.user_seeks, 0) + ISNULL(ius.user_scans, 0), 0) AS scan_ratio "
-        "FROM sys.dm_db_partition_stats ps "
-        "JOIN sys.indexes i "
-        "  ON i.object_id = ps.object_id AND i.index_id = ps.index_id AND i.index_id <= 1 "
-        "LEFT JOIN sys.dm_db_index_usage_stats ius "
-        "  ON ius.object_id = ps.object_id AND ius.index_id = ps.index_id "
-        "  AND ius.database_id = DB_ID() "
-        "WHERE OBJECTPROPERTY(ps.object_id, 'IsUserTable') = 1 "
-        "  AND ps.row_count > 0 "
-        "ORDER BY scan_ratio DESC, ps.row_count DESC"
+        "OBJECT_SCHEMA_NAME(tr.object_id) AS schema_name, "
+        "OBJECT_NAME(tr.object_id) AS table_name, "
+        "ISNULL(tu.user_seeks, 0) AS user_seeks, "
+        "ISNULL(tu.user_scans, 0) AS user_scans, "
+        "ISNULL(tu.user_lookups, 0) AS user_lookups, "
+        "ISNULL(tu.user_updates, 0) AS user_updates, "
+        "tr.row_count, "
+        "CAST(ISNULL(tu.user_scans, 0) AS FLOAT) "
+        "  / NULLIF(ISNULL(tu.user_seeks, 0) + ISNULL(tu.user_scans, 0), 0) AS scan_ratio "
+        "FROM table_row_counts tr "
+        "LEFT JOIN table_usage tu ON tu.object_id = tr.object_id "
+        "WHERE OBJECTPROPERTY(tr.object_id, 'IsUserTable') = 1 "
+        "  AND tr.row_count > 0 "
+        "ORDER BY scan_ratio DESC, tr.row_count DESC"
     )
