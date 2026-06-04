@@ -14,7 +14,7 @@ class _StubMCP:
     def __init__(self) -> None:
         self.tools: dict[str, Callable[..., Any]] = {}
 
-    def tool(self, name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def tool(self, name: str, **kwargs: Any) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         def _decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             self.tools[name] = func
             return func

@@ -286,7 +286,7 @@ def test_fragmented_indexes_query_structure() -> None:
 def test_missing_pk_query_structure() -> None:
     sql = missing_pk_query()
     assert "key_constraints" in sql
-    assert "IS NULL" in sql
+    assert "NOT EXISTS" in sql
 
 
 def test_fk_graph_query_contains_foreign_keys() -> None:

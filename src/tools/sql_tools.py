@@ -1111,7 +1111,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         if spec.toolname == "select":
 
-            @mcp.tool(name=tool_name)
+            @mcp.tool(name=tool_name, annotations={"readOnlyHint": True})
             async def _select(
                 sql: str,
                 actor: str = "unknown",
@@ -1230,7 +1230,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         elif spec.toolname == "exec_proc":
 
-            @mcp.tool(name=tool_name)
+            @mcp.tool(name=tool_name, annotations={"readOnlyHint": True})
             async def _exec_proc(
                 proc_name: str,
                 params: list[str | int | float | bool | None] | None = None,
@@ -1366,7 +1366,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         elif spec.toolname == "latency_report":
 
-            @mcp.tool(name=tool_name)
+            @mcp.tool(name=tool_name, annotations={"readOnlyHint": True})
             async def _latency_report(
                 actor: str = "system", _tool=tool_name, _instance=instance
             ):
@@ -1383,7 +1383,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         elif spec.toolname == "block_report":
 
-            @mcp.tool(name=tool_name)
+            @mcp.tool(name=tool_name, annotations={"readOnlyHint": True, "fastmcp": {"tags": ["blocking"]}})
             async def _block_report(
                 actor: str = "system",
                 ctx: Context | None = None,
@@ -1415,7 +1415,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         elif spec.toolname == "top_queries_report":
 
-            @mcp.tool(name=tool_name)
+            @mcp.tool(name=tool_name, annotations={"readOnlyHint": True})
             async def _top_queries_report(
                 limit: int = 20,
                 actor: str = "system",
@@ -1451,7 +1451,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         elif spec.toolname == "active_sessions_report":
 
-            @mcp.tool(name=tool_name)
+            @mcp.tool(name=tool_name, annotations={"readOnlyHint": True})
             async def _active_sessions_report(
                 limit: int = 50,
                 actor: str = "system",
@@ -1488,7 +1488,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         elif spec.toolname == "index_health_report":
 
-            @mcp.tool(name=tool_name)
+            @mcp.tool(name=tool_name, annotations={"readOnlyHint": True})
             async def _index_health_report(
                 limit: int = 50,
                 actor: str = "system",
@@ -1719,7 +1719,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         ping_tool_name = f"db_{instance_number}_sql2019_ping"
 
-        @mcp.tool(name=ping_tool_name)
+        @mcp.tool(name=ping_tool_name, annotations={"readOnlyHint": True})
         async def _ping(
             actor: str = "system",
             ctx: Context | None = None,
@@ -1835,7 +1835,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         list_tools_name = f"db_{instance_number}_sql2019_list_tools"
 
-        @mcp.tool(name=list_tools_name)
+        @mcp.tool(name=list_tools_name, annotations={"readOnlyHint": True})
         async def _list_tools(
             actor: str = "system",
             ctx: Context | None = None,
@@ -1973,7 +1973,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         list_object_name = f"db_{instance_number}_sql2019_list_object"
 
-        @mcp.tool(name=list_object_name)
+        @mcp.tool(name=list_object_name, annotations={"readOnlyHint": True})
         async def _list_object(
             database_name: str,
             object_type: str,
@@ -2115,7 +2115,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
         execute_query_name = f"db_{instance_number}_sql2019_execute_query"
 
-        @mcp.tool(name=execute_query_name)
+        @mcp.tool(name=execute_query_name, annotations={"readOnlyHint": True}, timeout=600.0)
         async def _execute_query(
             database_name: str,
             sql_statement: str,
@@ -2296,7 +2296,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         analyze_tab_health_name = f"db_{instance_number}_sql2019_analyze_tab_health"
         if is_tool_enabled(state.policy, instance_id, "analyze_tab_health"):
 
-            @mcp.tool(name=analyze_tab_health_name)
+            @mcp.tool(name=analyze_tab_health_name, annotations={"readOnlyHint": True}, timeout=600.0)
             async def _analyze_tab_health(
                 database_name: str,
                 schema_name: str | None = None,
@@ -2879,7 +2879,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         )
         if is_tool_enabled(state.policy, instance_id, "analyze_db_data_model"):
 
-            @mcp.tool(name=analyze_db_data_model_name)
+            @mcp.tool(name=analyze_db_data_model_name, annotations={"readOnlyHint": True}, timeout=600.0)
             async def _analyze_db_data_model(
                 database_name: str,
                 schema_filter: str | None = None,
@@ -3193,7 +3193,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         analyze_sec_config_name = f"db_{instance_number}_sql2019_analyze_sec_config"
         if is_tool_enabled(state.policy, instance_id, "analyze_sec_config"):
 
-            @mcp.tool(name=analyze_sec_config_name)
+            @mcp.tool(name=analyze_sec_config_name, annotations={"readOnlyHint": True}, timeout=300.0)
             async def _analyze_sec_config(
                 database_name: str,
                 include_server_scope: bool = True,
@@ -3459,7 +3459,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         sessions_dashboard_name = f"db_{instance_number}_sql2019_sessions_dashboard"
         if is_tool_enabled(state.policy, instance_id, "sessions_dashboard"):
 
-            @mcp.tool(name=sessions_dashboard_name)
+            @mcp.tool(name=sessions_dashboard_name, annotations={"readOnlyHint": True})
             async def _sessions_dashboard(
                 database_name: str = "master",
                 lookback_minutes: int = 15,
@@ -3681,7 +3681,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         top_statements_name = f"db_{instance_number}_sql2019_top_statements"
         if is_tool_enabled(state.policy, instance_id, "top_statements"):
 
-            @mcp.tool(name=top_statements_name)
+            @mcp.tool(name=top_statements_name, annotations={"readOnlyHint": True}, timeout=300.0)
             async def _top_statements(
                 database_name: str,
                 top_n: int = 25,
@@ -4006,9 +4006,10 @@ async def _collect_top_statement_metrics(
         sql_state = getattr(exc, "sqlstate", None) or ""
         exc_str = str(exc).lower()
         is_query_store_unavailable = (
-            sql_state == "42S02"
+            sql_state in ("42S02", "42000")
             or "query_store" in exc_str
             or "invalid object name" in exc_str
+            or "permission" in exc_str
         )
         if not is_query_store_unavailable:
             raise
