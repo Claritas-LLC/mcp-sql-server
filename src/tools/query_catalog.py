@@ -22,6 +22,7 @@ def _validate_lookback_minutes(lookback_minutes: int) -> int:
 
 
 def table_size_query(top_n: int) -> str:
+    top_n = _validate_top_n(top_n)
     return (
         f"SELECT TOP {top_n} s.name AS schema_name, t.name AS table_name, "
         "SUM(ps.row_count) AS row_count, "
