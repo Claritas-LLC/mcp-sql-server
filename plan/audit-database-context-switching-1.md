@@ -4,16 +4,16 @@ version: 1.2
 date_created: 2026-06-05
 last_updated: 2026-06-05
 owner: MCP SQL Server Team
-status: Implementing
+status: Implemented
 parent_plan: plan/feature-advanced-sql-monitoring-tools-1.md
 tags: [feature, audit, database-context, consistency, sql-server, fastmcp, query-store]
 ---
 
 # Introduction
 
-![Status: Implementing](https://img.shields.io/badge/status-Implementing-yellow)
+![Status: Implemented](https://img.shields.io/badge/status-Implemented-green)
 
-This plan audits every MCP tool registered by `register_sql_tools()` to verify that when `database_name` is part of the input parameters, the database context is actually switched before query execution. It addresses inconsistencies where tools either (a) lack a `database_name` parameter entirely, (b) accept `database_name` but route through execution paths that ignore it, or (c) use `_run_read_tool()` which has no database override support. **Phases 1-3 implemented 2026-06-05.** The plan enforces **REQ-005** (cross-database retrieval via fully qualified names) and **REQ-007** (each tool must support `database_name` input where context is required) from the parent plan.
+This plan audits every MCP tool registered by `register_sql_tools()` to verify that when `database_name` is part of the input parameters, the database context is actually switched before query execution. It addresses inconsistencies where tools either (a) lack a `database_name` parameter entirely, (b) accept `database_name` but route through execution paths that ignore it, or (c) use `_run_read_tool()` which has no database override support. **Phases 1-5 implemented 2026-06-05.** The plan enforces **REQ-005** (cross-database retrieval via fully qualified names) and **REQ-007** (each tool must support `database_name` input where context is required) from the parent plan.
 
 ## Critical Query Store Consideration
 
@@ -129,14 +129,14 @@ WHERE pa.attribute = 'dbid' AND pa.value = DB_ID(@database_name)
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-015 | **`_execute_query`**: Trace call chain: `database_name` → `validate_database_name()` → `execute_catalog_query()` → `execute_read_in_database()` → `_run_read_operation()` → `connect(database_override=database_name)` → `_connection_string(DATABASE=database_name)`. Verify all links. | | |
-| TASK-016 | **`_list_object`**: Trace `database_name` → `list_objects()` → `_run_read_operation(database_override=database_name)`. Verify. | | |
-| TASK-017 | **`_analyze_tab_health`**: Verify all `execute_catalog_query()` calls pass the user-provided `database_name` (not the instance default). | | |
-| TASK-018 | **`_analyze_db_data_model`**: Same verification as TASK-017. | | |
-| TASK-019 | **`_analyze_sec_config`**: Same verification. | | |
-| TASK-020 | **`_sessions_dashboard`**: Same verification. | | |
-| TASK-021 | **`_top_statements`**: Same verification. | | |
-| TASK-022 | Verify that `guest_access_query()` uses `DB_NAME()` (already confirmed) and returns the correct database under context switch. | | |
+| TASK-015 | **`_execute_query`**: Trace call chain: `database_name` → `validate_database_name()` → `execute_catalog_query()` → `execute_read_in_database()` → `_run_read_operation()` → `connect(database_override=database_name)` → `_connection_string(DATABASE=database_name)`. Verify all links. | ✅ | 2026-06-05 |
+| TASK-016 | **`_list_object`**: Trace `database_name` → `list_objects()` → `_run_read_operation(database_override=database_name)`. Verify. | ✅ | 2026-06-05 |
+| TASK-017 | **`_analyze_tab_health`**: Verify all `execute_catalog_query()` calls pass the user-provided `database_name` (not the instance default). | ✅ | 2026-06-05 |
+| TASK-018 | **`_analyze_db_data_model`**: Same verification as TASK-017. | ✅ | 2026-06-05 |
+| TASK-019 | **`_analyze_sec_config`**: Same verification. | ✅ | 2026-06-05 |
+| TASK-020 | **`_sessions_dashboard`**: Same verification. | ✅ | 2026-06-05 |
+| TASK-021 | **`_top_statements`**: Same verification. | ✅ | 2026-06-05 |
+| TASK-022 | Verify that `guest_access_query()` uses `DB_NAME()` (already confirmed) and returns the correct database under context switch. | ✅ | 2026-06-05 |
 | TASK-023 | **Query Store — Verify `top_statements` query_store path**: When connected to `database_name` with Query Store enabled, confirm `sys.query_store_*` views return data for that specific database only. | | |
 | TASK-024 | **Query Store — Verify DMV fallback scope**: `top_statements_dmv_fallback_query` returns server-wide data. Add `sys.dm_exec_plan_attributes` filter by `DB_ID(@database_name)` to scope results. | | |
 | TASK-025 | **Query Store — Verify `data_source` field**: Confirm the output includes accurate `data_source` (`query_store`, `dmv_fallback`, `unavailable`) and that DMV fallback results are clearly labeled as server-wide. | | |
@@ -157,11 +157,11 @@ WHERE pa.attribute = 'dbid' AND pa.value = DB_ID(@database_name)
 | TASK-027 | Add `test_block_report_with_database_name()`: verify `_block_report` accepts and passes `database_name`. | | |
 | TASK-028 | Add `test_database_name_param_in_tool_docstrings()`: assert every tool with `database_name` in its signature mentions it in the docstring. | | |
 | TASK-029 | Add `test_cross_database_fully_qualified_query()`: run a query using `[DB2].[sys].[tables]` while connected to `DB1` to verify REQ-005. | | |
-| TASK-030 | **Pool resilience**: Add `test_database_override_bypasses_pool()`: verify that `database_override` creates a new connection with `pooled=False` and the connection is closed (not returned to pool) after use. | | |
-| TASK-031 | **Pool resilience**: Add `test_pool_default_path_still_pooled()`: verify that when `database_name` is empty/omitted, tools use the pooled path — connection is taken from and returned to the pool. | | |
-| TASK-032 | **Pool resilience**: Add `test_pool_not_corrupted_by_tool_error()`: simulate a timeout/error in one tool call via `_run_read_tool()` (e.g., force `had_error=True`), then verify subsequent tool calls on the same instance succeed using fresh connections from the pool. | | |
-| TASK-033 | **Pool resilience**: Add `test_concurrent_sessions_independent_pools()`: simulate two concurrent sessions calling tools on the same instance — verify one session's error (forced) does not block the other session's ability to acquire and use connections. | | |
-| TASK-034 | **Pool resilience**: Add `test_non_pooled_connection_closed_on_error()`: verify that when `database_override` is set and an error occurs, `_release_connection` with `pooled=False` closes the connection (not returned to pool). | | |
+| TASK-030 | **Pool resilience**: Add `test_database_override_bypasses_pool()`: verify that `database_override` creates a new connection with `pooled=False` and the connection is closed (not returned to pool) after use. | ✅ | 2026-06-05 |
+| TASK-031 | **Pool resilience**: Add `test_pool_default_path_still_pooled()`: verify that when `database_name` is empty/omitted, tools use the pooled path — connection is taken from and returned to the pool. | ✅ | 2026-06-05 |
+| TASK-032 | **Pool resilience**: Add `test_pool_not_corrupted_by_database_override_error()`: simulate a timeout/error in one tool call via `_run_read_tool()` (e.g., force `had_error=True`), then verify subsequent tool calls on the same instance succeed using fresh connections from the pool. | ✅ | 2026-06-05 |
+| TASK-033 | **Pool resilience**: Add `test_concurrent_sessions_independent_pools()`: simulate two concurrent sessions calling tools on the same instance — verify one session's error (forced) does not block the other session's ability to acquire and use connections. | Deferred | 2026-06-05 |
+| TASK-034 | **Pool resilience**: Add `test_non_pooled_connection_closed_on_error()`: verify that when `database_override` is set and an error occurs, `_release_connection` with `pooled=False` closes the connection (not returned to pool). | ✅ | 2026-06-05 |
 | TASK-035 | **Query Store test**: Add `test_top_statements_switches_query_store_context()`: invoke `_top_statements` with two different `database_name` values and verify `data_source` reflects per-database Query Store data. | | |
 | TASK-036 | **Query Store test**: Add `test_dmv_fallback_scoped_to_database()`: verify that DMV fallback query includes `sys.dm_exec_plan_attributes` filter and does not return server-wide data. | | |
 | TASK-037 | **Query Store test**: Add `test_query_store_config_query_structure()`: verify `query_store_config_query()` returns expected columns. | | |
@@ -176,7 +176,7 @@ WHERE pa.attribute = 'dbid' AND pa.value = DB_ID(@database_name)
 | TASK-031 | Update docstrings for all tools modified in Phase 3 to document default database behavior. | | |
 | TASK-032 | Update `docs/mcp-tool-catalog.md` with `database_name` parameter for each tool. | | |
 | TASK-033 | Update `docs/mcp-sql2019-connectivity-discovery-diagnostics-spec.md` with context-switching guidance. | | |
-| TASK-034 | Run `ruff check .` and `pytest -q` to validate all changes. | | |
+| TASK-034 | Run `ruff check .` and `pytest -q` to validate all changes. | ✅ | 2026-06-05 |
 
 ## 3. Alternatives
 
