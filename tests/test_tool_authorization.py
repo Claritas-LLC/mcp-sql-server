@@ -36,6 +36,7 @@ class _FakeConnectionManager:
         instance_id: str,
         procedure_name: str,
         params: list[str | int | float | bool | None] | None = None,
+        database_override: str | None = None,
     ) -> dict[str, Any]:
         return {
             "proc_name": procedure_name,

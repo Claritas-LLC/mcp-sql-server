@@ -957,6 +957,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
         actor: str,
         ctx: Context | None,
         max_rows: int,
+        database_name: str | None = None,
     ) -> dict[str, Any]:
         request_id = str(uuid.uuid4())
         started = time.time()
@@ -994,8 +995,18 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             if ctx is not None:
                 await ctx.debug(f"[{request_id}] Write guard policy check passed")
 
-            result = state.connection_manager.execute_read(instance, sql, max_rows)
-            rows = len(result)
+            # Database context switching: non-pooled path when database_name set,
+            # pooled path when database_name is None (preserves CON-004 pool isolation).
+            if database_name:
+                db_name = validate_database_name(database_name)
+                catalog_result = state.connection_manager.execute_catalog_query(
+                    instance, db_name, sql, max_rows
+                )
+                rows = catalog_result["row_count"]
+                result = catalog_result["rows"]
+            else:
+                result = state.connection_manager.execute_read(instance, sql, max_rows)
+                rows = len(result)
 
             if ctx is not None:
                 await ctx.info(
@@ -1027,6 +1038,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 "tool": tool,
                 "row_count": rows,
                 "rows": result,
+                **({"database_name": database_name} if database_name else {}),
             }
         except PermissionError as exc:
             decision = "deny"
@@ -1116,6 +1128,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 sql: str,
                 actor: str = "unknown",
                 ctx: Context | None = None,
+                database_name: str = "",
                 _tool=tool_name,
                 _instance=instance,
             ):
@@ -1124,6 +1137,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 Inputs:
                 - sql: SQL statement to execute.
                 - actor: caller identity used for session/rate controls.
+                - database_name: target database to switch context to. When omitted,
+                  the instance default database is used (pooled connection).
 
                 Outputs:
                 - instance, rows, row_count.
@@ -1155,9 +1170,19 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     state.session_manager.touch(actor, request_id)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, sql)
-                    result = state.connection_manager.execute_read(
-                        _instance, sql, state.policy.max_result_rows
-                    )
+
+                    # Database context switching: non-pooled when database_name set,
+                    # pooled (instance default DB) when database_name empty.
+                    if database_name:
+                        db_name = validate_database_name(database_name)
+                        raw = state.connection_manager.execute_read_in_database(
+                            _instance, db_name, sql, state.policy.max_result_rows
+                        )
+                        result = raw["rows"]
+                    else:
+                        result = state.connection_manager.execute_read(
+                            _instance, sql, state.policy.max_result_rows
+                        )
                     rows = len(result)
 
                     if ctx is not None:
@@ -1236,6 +1261,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 params: list[str | int | float | bool | None] | None = None,
                 actor: str = "unknown",
                 ctx: Context | None = None,
+                database_name: str = "",
                 _tool=tool_name,
                 _instance=instance,
             ):
@@ -1245,6 +1271,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 - proc_name: procedure to execute.
                 - params: positional procedure arguments.
                 - actor: caller identity.
+                - database_name: target database context for procedure execution.
+                  When omitted, the instance default database is used.
 
                 Output:
                 - status payload containing procedure metadata and optional result set.
@@ -1282,8 +1310,14 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     state.write_guard.enforce(
                         _tool, "UPDATE __policy_probe__ SET x = 1"
                     )
+
+                    db_override: str | None = None
+                    if database_name:
+                        db_override = validate_database_name(database_name)
+
                     raw_result = state.connection_manager.execute_proc(
-                        _instance, proc_name, params
+                        _instance, proc_name, params,
+                        database_override=db_override,
                     )
                     if not isinstance(raw_result, dict):
                         raise RuntimeError(
@@ -1387,6 +1421,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
             async def _block_report(
                 actor: str = "system",
                 ctx: Context | None = None,
+                database_name: str = "",
                 _tool=tool_name,
                 _instance=instance,
             ):
@@ -1394,6 +1429,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
 
                 Inputs:
                 - actor: caller identity.
+                - database_name: target database context. When omitted,
+                  the instance default database is used (pooled connection).
 
                 Output:
                 - row set with session_id, blocking_session_id, wait_type, wait_time, and SQL text.
@@ -1411,6 +1448,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     actor=actor,
                     ctx=ctx,
                     max_rows=25,
+                    database_name=database_name or None,
                 )
 
         elif spec.toolname == "top_queries_report":
@@ -1420,6 +1458,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 limit: int = 20,
                 actor: str = "system",
                 ctx: Context | None = None,
+                database_name: str = "",
                 _tool=tool_name,
                 _instance=instance,
             ):
@@ -1428,6 +1467,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 Inputs:
                 - limit: max rows (1..100).
                 - actor: caller identity.
+                - database_name: target database context. When omitted,
+                  the instance default database is used (pooled connection).
 
                 Output:
                 - query cost/elapsed/execution stats and query text.
@@ -1447,6 +1488,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     actor=actor,
                     ctx=ctx,
                     max_rows=size,
+                    database_name=database_name or None,
                 )
 
         elif spec.toolname == "active_sessions_report":
@@ -1456,6 +1498,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 limit: int = 50,
                 actor: str = "system",
                 ctx: Context | None = None,
+                database_name: str = "",
                 _tool=tool_name,
                 _instance=instance,
             ):
@@ -1464,6 +1507,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 Inputs:
                 - limit: max rows (1..200).
                 - actor: caller identity.
+                - database_name: target database context. When omitted,
+                  the instance default database is used (pooled connection).
 
                 Output:
                 - session metadata and request/wait state.
@@ -1484,6 +1529,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     actor=actor,
                     ctx=ctx,
                     max_rows=size,
+                    database_name=database_name or None,
                 )
 
         elif spec.toolname == "index_health_report":
@@ -1493,6 +1539,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 limit: int = 50,
                 actor: str = "system",
                 ctx: Context | None = None,
+                database_name: str = "",
                 _tool=tool_name,
                 _instance=instance,
             ):
@@ -1501,6 +1548,8 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 Inputs:
                 - limit: max rows (1..200).
                 - actor: caller identity.
+                - database_name: target database context. When omitted,
+                  the instance default database is used (pooled connection).
 
                 Output:
                 - table/index names, type, and usage counters.
@@ -1523,6 +1572,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     actor=actor,
                     ctx=ctx,
                     max_rows=size,
+                    database_name=database_name or None,
                 )
 
         registered.append(tool_name)

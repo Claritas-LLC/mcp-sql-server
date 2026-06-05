@@ -488,11 +488,12 @@ class ConnectionManager:
         instance_id: str,
         proc_name: str,
         params: list[str | int | float | bool | None] | None = None,
+        database_override: str | None = None,
     ) -> dict[str, Any]:
         params = params or []
         placeholders = ", ".join(["?"] * len(params))
         statement = f"EXEC {proc_name} {placeholders}".strip()
-        with self.connect(instance_id) as conn:
+        with self.connect(instance_id, database_override=database_override) as conn:
             cur = conn.cursor()
             cur.execute(statement, params)
             has_result_set = bool(cur.description)

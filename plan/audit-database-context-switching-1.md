@@ -4,16 +4,16 @@ version: 1.2
 date_created: 2026-06-05
 last_updated: 2026-06-05
 owner: MCP SQL Server Team
-status: Planned
+status: Implementing
 parent_plan: plan/feature-advanced-sql-monitoring-tools-1.md
 tags: [feature, audit, database-context, consistency, sql-server, fastmcp, query-store]
 ---
 
 # Introduction
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: Implementing](https://img.shields.io/badge/status-Implementing-yellow)
 
-This plan audits every MCP tool registered by `register_sql_tools()` to verify that when `database_name` is part of the input parameters, the database context is actually switched before query execution. It addresses inconsistencies where tools either (a) lack a `database_name` parameter entirely, (b) accept `database_name` but route through execution paths that ignore it, or (c) use `_run_read_tool()` which has no database override support. The plan enforces **REQ-005** (cross-database retrieval via fully qualified names) and **REQ-007** (each tool must support `database_name` input where context is required) from the parent plan.
+This plan audits every MCP tool registered by `register_sql_tools()` to verify that when `database_name` is part of the input parameters, the database context is actually switched before query execution. It addresses inconsistencies where tools either (a) lack a `database_name` parameter entirely, (b) accept `database_name` but route through execution paths that ignore it, or (c) use `_run_read_tool()` which has no database override support. **Phases 1-3 implemented 2026-06-05.** The plan enforces **REQ-005** (cross-database retrieval via fully qualified names) and **REQ-007** (each tool must support `database_name` input where context is required) from the parent plan.
 
 ## Critical Query Store Consideration
 
@@ -102,12 +102,12 @@ WHERE pa.attribute = 'dbid' AND pa.value = DB_ID(@database_name)
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-003 | Add `database_name: str \| None = None` parameter to `_run_read_tool()` signature. | | |
-| TASK-004 | **Pooled vs non-pooled routing**: When `database_name` is provided (non-pooled path), call `state.connection_manager.execute_catalog_query(instance, database_name, sql, max_rows)` — this creates a new connection via `connect(database_override=database_name)` and closes it after use. When `database_name is None` or empty string (pooled path), keep existing `state.connection_manager.execute_read(instance, sql, max_rows)` which uses the pool. | | |
-| TASK-005 | When `database_name` is provided, wrap the returned dict to match `execute_read()` return shape (`rows` list). | | |
-| TASK-006 | Keep existing `execute_read()` path (pooled) when `database_name is None` for backward compatibility. | | |
-| TASK-007 | Update `_run_read_tool()` return dict to include `database_name` key when overridden. | | |
-| TASK-007b | **Pool integrity assertion**: In the `database_name` branch, ensure the connection returned by `execute_catalog_query()` is never returned to the pool — verify that `_release_connection` is called with `pooled=False`. This prevents a connection targeting a different database from corrupting the pool. | | |
+| TASK-003 | Add `database_name: str \| None = None` parameter to `_run_read_tool()` signature. | ✅ | 2026-06-05 |
+| TASK-004 | **Pooled vs non-pooled routing**: When `database_name` is provided (non-pooled path), call `state.connection_manager.execute_catalog_query(instance, database_name, sql, max_rows)` — this creates a new connection via `connect(database_override=database_name)` and closes it after use. When `database_name is None` or empty string (pooled path), keep existing `state.connection_manager.execute_read(instance, sql, max_rows)` which uses the pool. | ✅ | 2026-06-05 |
+| TASK-005 | When `database_name` is provided, wrap the returned dict to match `execute_read()` return shape (`rows` list). | ✅ | 2026-06-05 |
+| TASK-006 | Keep existing `execute_read()` path (pooled) when `database_name is None` for backward compatibility. | ✅ | 2026-06-05 |
+| TASK-007 | Update `_run_read_tool()` return dict to include `database_name` key when overridden. | ✅ | 2026-06-05 |
+| TASK-007b | **Pool integrity assertion**: In the `database_name` branch, ensure the connection returned by `execute_catalog_query()` is never returned to the pool — verify that `_release_connection` is called with `pooled=False`. This prevents a connection targeting a different database from corrupting the pool. | ✅ | 2026-06-05 |
 
 ### Implementation Phase 3 — Add `database_name` to Tools Missing It
 
@@ -115,13 +115,13 @@ WHERE pa.attribute = 'dbid' AND pa.value = DB_ID(@database_name)
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-008 | **`_select`**: Add `database_name: str = ""` parameter. When non-empty, validate and pass to `execute_read_in_database()` (non-pooled, creates new connection to target DB). When empty, keep existing pooled path (`execute_read()`). Update docstring. Applies to both instance variants via tool registration loop. | | |
-| TASK-009 | **`_exec_proc`**: Add `database_name: str = ""` parameter. When non-empty, validate and pass to `exec_proc_in_database()`. Update docstring. | | |
-| TASK-010 | **`_block_report`**: Add `database_name: str = ""` parameter, pass to `_run_read_tool()`. Update docstring. | | |
-| TASK-011 | **`_top_queries_report`**: Add `database_name: str = ""` parameter, pass to `_run_read_tool()`. Update docstring. | | |
-| TASK-012 | **`_active_sessions_report`**: Add `database_name: str = ""` parameter, pass to `_run_read_tool()`. Update docstring. | | |
-| TASK-013 | **`_index_health_report`**: Add `database_name: str = ""` parameter, pass to `_run_read_tool()`. Update docstring. | | |
-| TASK-014 | Update `tool_registry.py` `generate_tool_specs()` if tool metadata needs to reflect new optional parameters. | | |
+| TASK-008 | **`_select`**: Add `database_name: str = ""` parameter. When non-empty, validate and pass to `execute_read_in_database()` (non-pooled, creates new connection to target DB). When empty, keep existing pooled path (`execute_read()`). Update docstring. Applies to both instance variants via tool registration loop. | ✅ | 2026-06-05 |
+| TASK-009 | **`_exec_proc`**: Add `database_name: str = ""` parameter. When non-empty, validate and pass to `execute_proc(database_override=...)`. Update docstring. | ✅ | 2026-06-05 |
+| TASK-010 | **`_block_report`**: Add `database_name: str = ""` parameter, pass to `_run_read_tool()`. Update docstring. | ✅ | 2026-06-05 |
+| TASK-011 | **`_top_queries_report`**: Add `database_name: str = ""` parameter, pass to `_run_read_tool()`. Update docstring. | ✅ | 2026-06-05 |
+| TASK-012 | **`_active_sessions_report`**: Add `database_name: str = ""` parameter, pass to `_run_read_tool()`. Update docstring. | ✅ | 2026-06-05 |
+| TASK-013 | **`_index_health_report`**: Add `database_name: str = ""` parameter, pass to `_run_read_tool()`. Update docstring. | ✅ | 2026-06-05 |
+| TASK-014 | Update `tool_registry.py` `generate_tool_specs()` if tool metadata needs to reflect new optional parameters. | N/A | 2026-06-05 |
 
 ### Implementation Phase 4 — Validate Existing Tools with `database_name`
 
