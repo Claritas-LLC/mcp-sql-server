@@ -15,3 +15,5 @@ evidence/
 .tmp/
 file_list.txt
 testing/artifacts/stress_test_log.txt
+.env.docker-backup
+mcp_cookies.txt
