@@ -1,0 +1,10 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Create plan",
+			"type": "shell",
+			"command": "New-Item -ItemType File -Force -Path \"plan/audit-database-context-switching-1.md\" | Out-Null; Write-Host \"Created\""
+		}
+	]
+}

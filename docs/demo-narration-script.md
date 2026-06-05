@@ -46,7 +46,7 @@ These endpoints are invaluable for operational monitoring and troubleshooting."
 
 This tool returns the top CPU-consuming and longest-running cached queries from the plan cache. It helps with performance tuning triage.
 
-> *[Call `db_primary_sql2019_top_queries_report(limit=10)`]*
+> *[Call `db_primary_sql2019_top_queries_report(datalimit=10)`]*
 
 The response includes the instance name, the tool name, a row count, and the result rows — each containing the query text, execution stats, and duration metrics. You can optionally pass an `actor` parameter for audit traceability.
 

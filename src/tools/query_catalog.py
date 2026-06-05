@@ -30,8 +30,10 @@ def table_size_query(top_n: int) -> str:
         "FROM sys.tables t "
         "JOIN sys.schemas s ON t.schema_id = s.schema_id "
         "JOIN sys.dm_db_partition_stats ps ON t.object_id = ps.object_id AND ps.index_id IN (0,1) "
+        "WHERE t.is_ms_shipped = 0 "
         "GROUP BY s.name, t.name "
-        "ORDER BY total_space_mb DESC"
+        "ORDER BY total_space_mb DESC "
+        "OPTION (MAXDOP 1)"
     )
 
 
@@ -59,7 +61,8 @@ def fragmented_indexes_query(top_n: int) -> str:
         "JOIN sys.indexes i ON ps.object_id = i.object_id AND ps.index_id = i.index_id "
         "WHERE ps.index_id > 0 AND ps.index_level = 0 AND ps.page_count >= 100 "
         "AND OBJECTPROPERTY(ps.object_id, 'IsUserTable') = 1 "
-        "ORDER BY ps.avg_fragmentation_in_percent DESC, ps.page_count DESC"
+        "ORDER BY ps.avg_fragmentation_in_percent DESC, ps.page_count DESC "
+        "OPTION (MAXDOP 1)"
     )
 
 
@@ -91,7 +94,8 @@ def orphan_user_query() -> str:
         "SELECT dp.name AS user_name "
         "FROM sys.database_principals dp "
         "LEFT JOIN sys.server_principals sp ON dp.sid = sp.sid "
-        "WHERE dp.type IN ('S','U','G') AND dp.principal_id > 4 AND sp.sid IS NULL"
+        "WHERE dp.type IN ('S','U','G') AND dp.principal_id > 4 AND sp.sid IS NULL "
+        "OPTION (RECOMPILE)"
     )
 
 
@@ -131,7 +135,8 @@ def active_sessions_query(top_n: int) -> str:
         "LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id "
         "OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) st "
         "WHERE s.is_user_process = 1 "
-        "ORDER BY r.wait_time DESC, s.session_id"
+        "ORDER BY r.wait_time DESC, s.session_id "
+        "OPTION (RECOMPILE)"
     )
 
 
@@ -141,7 +146,8 @@ def lock_chain_query(top_n: int) -> str:
         f"SELECT TOP {top_n} wt.session_id, wt.blocking_session_id, wt.wait_type, wt.wait_duration_ms, wt.resource_description "
         "FROM sys.dm_os_waiting_tasks wt "
         "WHERE wt.blocking_session_id IS NOT NULL "
-        "ORDER BY wt.wait_duration_ms DESC"
+        "ORDER BY wt.wait_duration_ms DESC "
+        "OPTION (RECOMPILE)"
     )
 
 
@@ -161,7 +167,8 @@ def blocking_chain_query(top_n: int) -> str:
         "FROM sys.dm_exec_requests r "
         "JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id "
         "WHERE r.blocking_session_id > 0 "
-        "ORDER BY r.blocking_session_id, r.wait_time DESC"
+        "ORDER BY r.blocking_session_id, r.wait_time DESC "
+        "OPTION (RECOMPILE)"
     )
 
 
@@ -194,7 +201,8 @@ def waiting_tasks_query(top_n: int) -> str:
         "wt.wait_duration_ms, "
         "wt.resource_description "
         "FROM sys.dm_os_waiting_tasks wt "
-        "ORDER BY wt.wait_duration_ms DESC"
+        "ORDER BY wt.wait_duration_ms DESC "
+        "OPTION (RECOMPILE)"
     )
 
 
@@ -217,7 +225,8 @@ def heap_tables_query() -> str:
         "JOIN sys.dm_db_partition_stats ps ON t.object_id = ps.object_id AND ps.index_id = 0 "
         "WHERE ps.row_count > 0 "
         "GROUP BY s.name, t.name "
-        "ORDER BY SUM(ps.row_count) DESC"
+        "ORDER BY SUM(ps.row_count) DESC "
+        "OPTION (MAXDOP 1)"
     )
 
 
@@ -259,7 +268,8 @@ def stale_statistics_query(top_n: int) -> str:
         "CROSS APPLY sys.dm_db_stats_properties(s.object_id, s.stats_id) sp "
         "WHERE OBJECTPROPERTY(s.object_id, 'IsUserTable') = 1 "
         "AND s.object_id IN (SELECT object_id FROM top_tables) "
-        "ORDER BY sp.modification_counter DESC, sp.last_updated ASC"
+        "ORDER BY sp.modification_counter DESC, sp.last_updated ASC "
+        "OPTION (MAXDOP 1)"
     )
 
 
@@ -348,15 +358,10 @@ def missing_statistics_coverage_candidate_query(top_n: int) -> str:
     top_n = _validate_top_n(top_n)
     return (
         f"WITH top_tables AS ("
-        f"SELECT TOP {top_n * 4} t.object_id "
+        f"SELECT TOP {top_n * 4} t.object_id, SUM(p.row_count) AS row_count "
         "FROM sys.tables t "
         "JOIN sys.dm_db_partition_stats p ON t.object_id = p.object_id AND p.index_id IN (0,1) "
         "GROUP BY t.object_id ORDER BY SUM(p.row_count) DESC"
-        f"), table_rows AS ("
-        "SELECT p.object_id, SUM(p.row_count) AS row_count "
-        "FROM sys.dm_db_partition_stats p "
-        "WHERE p.index_id IN (0, 1) "
-        "GROUP BY p.object_id"
         "), table_stats AS ("
         "SELECT st.object_id, COUNT(*) AS usable_stats_count "
         "FROM sys.stats st "
@@ -367,12 +372,11 @@ def missing_statistics_coverage_candidate_query(top_n: int) -> str:
         "s.name AS schema_name, "
         "t.name AS table_name, "
         "ISNULL(ts.usable_stats_count, 0) AS usable_stats_count, "
-        "ISNULL(tr.row_count, 0) AS row_count "
+        "ISNULL(tt.row_count, 0) AS row_count "
         "FROM top_tables tt "
         "JOIN sys.tables t ON t.object_id = tt.object_id "
         "JOIN sys.schemas s ON s.schema_id = t.schema_id "
         "LEFT JOIN table_stats ts ON ts.object_id = t.object_id "
-        "LEFT JOIN table_rows tr ON tr.object_id = t.object_id "
         "WHERE ISNULL(ts.usable_stats_count, 0) = 0 "
         "ORDER BY row_count DESC, s.name, t.name"
     )
@@ -630,23 +634,27 @@ def update_heavy_tables_query(top_n: int) -> str:
     """Tables where writes significantly outnumber reads (update anomaly / over-normalisation risk)."""
     top_n = _validate_top_n(top_n)
     return (
+        "WITH index_usage AS ("
+        "  SELECT i.object_id, "
+        "         SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) AS total_reads, "
+        "         SUM(ius.user_updates) AS total_writes "
+        "  FROM sys.indexes i "
+        "  JOIN sys.dm_db_index_usage_stats ius "
+        "    ON ius.object_id = i.object_id AND ius.index_id = i.index_id AND ius.database_id = DB_ID() "
+        "  WHERE i.index_id = 1 AND OBJECTPROPERTY(i.object_id, 'IsUserTable') = 1 "
+        "  GROUP BY i.object_id"
+        ") "
         f"SELECT TOP {top_n} "
-        "OBJECT_SCHEMA_NAME(i.object_id) AS schema_name, "
-        "OBJECT_NAME(i.object_id) AS table_name, "
-        "SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) AS total_reads, "
-        "SUM(ius.user_updates) AS total_writes, "
-        "CAST(SUM(ius.user_updates) AS FLOAT) "
-        "  / NULLIF(SUM(ius.user_seeks + ius.user_scans + ius.user_lookups), 0) AS write_read_ratio "
-        "FROM sys.indexes i "
-        "JOIN sys.dm_db_index_usage_stats ius "
-        "  ON ius.object_id = i.object_id AND ius.index_id = i.index_id AND ius.database_id = DB_ID() "
-        "WHERE i.index_id = 1 AND OBJECTPROPERTY(i.object_id, 'IsUserTable') = 1 "
-        "GROUP BY i.object_id "
-        "HAVING SUM(ius.user_updates) > 100 "
-        "  AND (SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) = 0 "
-        "    OR CAST(SUM(ius.user_updates) AS FLOAT) "
-        "       / NULLIF(SUM(ius.user_seeks + ius.user_scans + ius.user_lookups), 0) > 5) "
-        "ORDER BY write_read_ratio DESC, total_writes DESC"
+        "OBJECT_SCHEMA_NAME(iu.object_id) AS schema_name, "
+        "OBJECT_NAME(iu.object_id) AS table_name, "
+        "iu.total_reads, "
+        "iu.total_writes, "
+        "CAST(iu.total_writes AS FLOAT) / NULLIF(iu.total_reads, 0) AS write_read_ratio "
+        "FROM index_usage iu "
+        "WHERE iu.total_writes > 100 "
+        "  AND (iu.total_reads = 0 "
+        "    OR CAST(iu.total_writes AS FLOAT) / NULLIF(iu.total_reads, 0) > 5) "
+        "ORDER BY write_read_ratio DESC, iu.total_writes DESC"
     )
 
 
@@ -766,7 +774,8 @@ def top_statements_query_store_query(top_n: int, lookback_minutes: int) -> str:
         "  ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id "
         "WHERE rsi.start_time >= DATEADD(minute, -{lookback_minutes}, SYSUTCDATETIME()) "
         "GROUP BY qsq.query_id, qt.query_sql_text, qsq.object_id "
-        "ORDER BY weighted_avg_duration_us DESC"
+        "ORDER BY weighted_avg_duration_us DESC "
+        "OPTION (RECOMPILE)"
     )
 
 
@@ -794,7 +803,8 @@ def top_statements_dmv_fallback_query(top_n: int) -> str:
         "FROM sys.dm_exec_query_stats qs "
         "CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st "
         "WHERE qs.execution_count > 0 "
-        "ORDER BY weighted_avg_duration_us DESC"
+        "ORDER BY weighted_avg_duration_us DESC "
+        "OPTION (RECOMPILE)"
     )
 
 
@@ -834,5 +844,6 @@ def top_statements_object_pressure_query(top_n: int) -> str:
         "LEFT JOIN table_usage tu ON tu.object_id = tr.object_id "
         "WHERE OBJECTPROPERTY(tr.object_id, 'IsUserTable') = 1 "
         "  AND tr.row_count > 0 "
-        "ORDER BY scan_ratio DESC, tr.row_count DESC"
+        "ORDER BY scan_ratio DESC, tr.row_count DESC "
+        "OPTION (RECOMPILE)"
     )

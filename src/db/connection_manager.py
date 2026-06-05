@@ -13,6 +13,9 @@ from src.models import SqlInstanceConfig
 class ConnectionManager:
     """Holds independently configured connection details for each SQL instance."""
 
+    _READ_RETRY_ATTEMPTS = 2
+    _READ_RETRY_BACKOFF_SEC = 0.05
+
     def __init__(self, instances: list[SqlInstanceConfig], secret_resolver: callable):
         self._instances: dict[str, SqlInstanceConfig] = {
             item.id: item for item in instances if item.enabled
@@ -74,6 +77,45 @@ class ConnectionManager:
             if item is conn:
                 state["in_use"].pop(idx)
                 return
+
+    @staticmethod
+    def _is_transient_read_error(exc: BaseException) -> bool:
+        """Detect transient transport-level SQL errors safe to retry for reads."""
+        args = getattr(exc, "args", ())
+        sqlstate = ""
+        if isinstance(args, (tuple, list)) and args:
+            sqlstate = str(args[0]).strip().upper()
+        message = " ".join(str(part) for part in args).lower() if args else str(exc).lower()
+
+        if sqlstate in {"08S01", "08001", "HYT00", "HYT01"}:
+            return True
+
+        return "tcp provider" in message or "communication link failure" in message
+
+    def _run_read_operation(
+        self,
+        instance_id: str,
+        operation: callable,
+        database_override: str | None = None,
+    ) -> Any:
+        last_exc: BaseException | None = None
+        for attempt in range(self._READ_RETRY_ATTEMPTS):
+            try:
+                with self.connect(instance_id, database_override=database_override) as conn:
+                    return operation(conn)
+            except Exception as exc:
+                last_exc = exc
+                can_retry = (
+                    attempt < self._READ_RETRY_ATTEMPTS - 1
+                    and self._is_transient_read_error(exc)
+                )
+                if not can_retry:
+                    raise
+                time.sleep(self._READ_RETRY_BACKOFF_SEC * (attempt + 1))
+
+        if last_exc is not None:  # pragma: no cover - defensive fallback
+            raise last_exc
+        raise RuntimeError("Read operation failed unexpectedly")
 
     def _acquire_connection(
         self, instance_id: str, database_override: str | None = None
@@ -291,7 +333,7 @@ class ConnectionManager:
     def execute_read(
         self, instance_id: str, sql: str, max_rows: int
     ) -> list[dict[str, Any]]:
-        with self.connect(instance_id) as conn:
+        def _op(conn: pyodbc.Connection) -> list[dict[str, Any]]:
             cur = conn.cursor()
             cur.execute(sql)
             columns = self._normalize_column_names(
@@ -300,10 +342,12 @@ class ConnectionManager:
             rows = cur.fetchmany(max_rows)
             return [dict(zip(columns, row, strict=False)) for row in rows]
 
+        return self._run_read_operation(instance_id, _op)
+
     def execute_read_in_database(
         self, instance_id: str, database_name: str, sql: str, max_rows: int
     ) -> dict[str, Any]:
-        with self.connect(instance_id, database_override=database_name) as conn:
+        def _op(conn: pyodbc.Connection) -> dict[str, Any]:
             cur = conn.cursor()
             cur.execute(sql)
             columns = self._normalize_column_names(
@@ -312,6 +356,12 @@ class ConnectionManager:
             rows = cur.fetchmany(max_rows)
             payload = [dict(zip(columns, row, strict=False)) for row in rows]
             return {"columns": columns, "rows": payload}
+
+        return self._run_read_operation(
+            instance_id,
+            _op,
+            database_override=database_name,
+        )
 
     def execute_catalog_query(
         self, instance_id: str, database_name: str, sql: str, max_rows: int = 5000
@@ -330,7 +380,7 @@ class ConnectionManager:
     def fetch_single_row_in_database(
         self, instance_id: str, database_name: str, sql: str
     ) -> dict[str, Any]:
-        with self.connect(instance_id, database_override=database_name) as conn:
+        def _op(conn: pyodbc.Connection) -> dict[str, Any]:
             cur = conn.cursor()
             cur.execute(sql)
             row = cur.fetchone()
@@ -340,6 +390,12 @@ class ConnectionManager:
             if row is None:
                 return {}
             return dict(zip(columns, row, strict=False))
+
+        return self._run_read_operation(
+            instance_id,
+            _op,
+            database_override=database_name,
+        )
 
     def list_objects(
         self,
@@ -370,7 +426,7 @@ class ConnectionManager:
             "ORDER BY s.name, o.name"
         )
 
-        with self.connect(instance_id, database_override=database_name) as conn:
+        def _op(conn: pyodbc.Connection) -> list[dict[str, Any]]:
             cur = conn.cursor()
             cur.execute(sql, object_type_map[key])
             columns = self._normalize_column_names(
@@ -379,10 +435,16 @@ class ConnectionManager:
             rows = cur.fetchall()
             return [dict(zip(columns, row, strict=False)) for row in rows]
 
+        return self._run_read_operation(
+            instance_id,
+            _op,
+            database_override=database_name,
+        )
+
     def explain_query(
         self, instance_id: str, database_name: str, sql: str
     ) -> dict[str, Any]:
-        with self.connect(instance_id, database_override=database_name) as conn:
+        def _op(conn: pyodbc.Connection) -> tuple[list[str], list[Any]]:
             cur = conn.cursor()
             cur.execute("SET SHOWPLAN_ALL ON")
             try:
@@ -391,8 +453,15 @@ class ConnectionManager:
                     [d[0] for d in cur.description or []]
                 )
                 rows = cur.fetchall()
+                return columns, rows
             finally:
                 cur.execute("SET SHOWPLAN_ALL OFF")
+
+        columns, rows = self._run_read_operation(
+            instance_id,
+            _op,
+            database_override=database_name,
+        )
 
         row_dicts = [dict(zip(columns, row, strict=False)) for row in rows]
         accessed_objects = sorted(

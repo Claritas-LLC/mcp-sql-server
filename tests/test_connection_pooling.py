@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pyodbc
 import pytest
 
 from src.db.connection_manager import ConnectionManager
@@ -122,3 +123,50 @@ def test_close_all_pools_closes_connections(monkeypatch: pytest.MonkeyPatch) -> 
     metrics = manager.get_pool_diagnostics()["primary"]
     assert metrics["available"] == 0
     assert metrics["in_use"] == 0
+
+
+def test_execute_read_retries_once_on_transient_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FailOnceCursor(_FakeCursor):
+        def __init__(self, should_fail: bool) -> None:
+            super().__init__()
+            self._should_fail = should_fail
+
+        def execute(self, sql: str, *args) -> None:
+            _ = args
+            if self._should_fail and "SELECT 1" not in sql:
+                self._should_fail = False
+                raise pyodbc.Error(
+                    "08S01",
+                    "[08S01] [Microsoft][ODBC Driver 17 for SQL Server]TCP Provider: Error code 0x2714 (10004) (SQLExecDirectW)",
+                )
+            _ = sql
+
+    class _ConnWithCursor(_FakeConnection):
+        def __init__(self, should_fail: bool) -> None:
+            super().__init__()
+            self._cursor = _FailOnceCursor(should_fail)
+
+        def cursor(self) -> _FakeCursor:
+            return self._cursor
+
+    created: list[_ConnWithCursor] = []
+
+    def _fake_connect(*_args, **_kwargs):
+        should_fail = len(created) == 0
+        conn = _ConnWithCursor(should_fail=should_fail)
+        created.append(conn)
+        return conn
+
+    monkeypatch.setattr("src.db.connection_manager.pyodbc.connect", _fake_connect)
+
+    manager = ConnectionManager(
+        [_instance(pool_enabled=False)],
+        secret_resolver=_resolver,
+    )
+
+    rows = manager.execute_read("primary", "SELECT 42 AS value", max_rows=1)
+
+    assert rows == [{"value": 1}]
+    assert len(created) == 2
