@@ -56,7 +56,7 @@ def _build_state(auth: AuthConfig) -> SimpleNamespace:
             instance_enable_flags={"primary": True},
         ),
         connection_manager=_FakeConnectionManager(),
-        session_manager=SimpleNamespace(touch=lambda actor, req: None),
+        session_manager=SimpleNamespace(touch=lambda actor, req, mcp_session_id=None: None),
         rate_limiter=SimpleNamespace(allow=lambda actor: None),
         write_guard=SimpleNamespace(
             enforce=lambda tool, sql: None,

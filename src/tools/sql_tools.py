@@ -983,7 +983,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                 required_privilege="read",
                 ctx=ctx,
             )
-            state.session_manager.touch(actor, request_id)
+            state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
             if ctx is not None:
                 await ctx.debug(f"[{request_id}] Session validated for {actor}")
 
@@ -1167,7 +1167,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         required_privilege="read",
                         ctx=ctx,
                     )
-                    state.session_manager.touch(actor, request_id)
+                    state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, sql)
 
@@ -1304,7 +1304,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         required_privilege="write",
                         ctx=ctx,
                     )
-                    state.session_manager.touch(actor, request_id)
+                    state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                     state.rate_limiter.allow(actor)
                     state.write_guard.validate_procedure(_tool, proc_name)
                     state.write_guard.enforce(
@@ -1806,7 +1806,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     required_privilege="read",
                     ctx=ctx,
                 )
-                state.session_manager.touch(actor, request_id)
+                state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                 state.rate_limiter.allow(actor)
                 payload = state.connection_manager.fetch_single_row_in_database(
                     _instance, "master", sql
@@ -1920,7 +1920,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     required_privilege="read",
                     ctx=ctx,
                 )
-                state.session_manager.touch(actor, request_id)
+                state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                 state.rate_limiter.allow(actor)
                 info = state.connection_manager.fetch_single_row_in_database(
                     _instance, "master", sql
@@ -2066,7 +2066,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     required_privilege="read",
                     ctx=ctx,
                 )
-                state.session_manager.touch(actor, request_id)
+                state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                 state.rate_limiter.allow(actor)
                 rows = state.connection_manager.list_objects(
                     _instance, database_name, object_type
@@ -2213,7 +2213,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     required_privilege="read",
                     ctx=ctx,
                 )
-                state.session_manager.touch(actor, request_id)
+                state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                 state.rate_limiter.allow(actor)
                 state.write_guard.enforce(_tool, sql_statement)
 
@@ -2397,7 +2397,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         required_privilege="read",
                         ctx=ctx,
                     )
-                    state.session_manager.touch(actor, request_id)
+                    state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
 
@@ -2972,7 +2972,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         required_privilege="read",
                         ctx=ctx,
                     )
-                    state.session_manager.touch(actor, request_id)
+                    state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
 
@@ -3280,7 +3280,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         required_privilege="read",
                         ctx=ctx,
                     )
-                    state.session_manager.touch(actor, request_id)
+                    state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
 
@@ -3548,7 +3548,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         required_privilege="read",
                         ctx=ctx,
                     )
-                    state.session_manager.touch(actor, request_id)
+                    state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
 
@@ -3791,7 +3791,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                         required_privilege="read",
                         ctx=ctx,
                     )
-                    state.session_manager.touch(actor, request_id)
+                    state.session_manager.touch(actor, request_id, mcp_session_id=ctx.session_id if ctx else None)
                     state.rate_limiter.allow(actor)
                     state.write_guard.enforce(_tool, "SELECT 1")
 
@@ -4311,3 +4311,4 @@ def _recommend_top_statement_actions(
         )
 
     return findings, recommendations
+

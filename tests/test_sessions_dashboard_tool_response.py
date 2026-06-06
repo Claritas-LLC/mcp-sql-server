@@ -103,7 +103,7 @@ def _build_state() -> SimpleNamespace:
     return SimpleNamespace(
         policy=RuntimePolicy(),
         connection_manager=_FakeConnectionManager(),
-        session_manager=SimpleNamespace(touch=lambda actor, req: None),
+        session_manager=SimpleNamespace(touch=lambda actor, req, mcp_session_id=None: None),
         rate_limiter=SimpleNamespace(allow=lambda actor: None),
         write_guard=SimpleNamespace(enforce=lambda tool, sql: None),
         audit_logger=SimpleNamespace(log_event=lambda **kwargs: None),

@@ -28,14 +28,21 @@ class SessionManager:
             if not sessions:
                 del self._sessions[actor]
 
-    def touch(self, actor: str, session_id: str) -> None:
+    def touch(self, actor: str, request_id: str, mcp_session_id: str | None = None) -> None:
+        """Register a touch for an actor.
+
+        Uses the MCP session ID as the session key when available (so multiple
+        tool calls within the same MCP session consume only 1 slot). Falls back
+        to the per-request ID otherwise.
+        """
         now = time.time()
         with self._lock:
             self._cleanup()
+            key = mcp_session_id or request_id
             actor_sessions = self._sessions.setdefault(actor, {})
-            if session_id not in actor_sessions and len(actor_sessions) >= self._limit:
+            if key not in actor_sessions and len(actor_sessions) >= self._limit:
                 raise PermissionError("SESSION_LIMIT_EXCEEDED")
-            actor_sessions[session_id] = now
+            actor_sessions[key] = now
 
     def active_count(self, actor: str | None = None) -> int:
         with self._lock:
