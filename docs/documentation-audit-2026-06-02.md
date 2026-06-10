@@ -1,4 +1,4 @@
-# Documentation Audit - 2026-06-02
+# Documentation Audit - 2026-06-02 (updated 2026-06-10)
 
 ## Scope
 
@@ -9,17 +9,16 @@
 
 | File | Status | Action |
 | --- | --- | --- |
-| `docs/access-levels-and-controlled-write.md` | Up-to-date | Retained; no changes required. |
+| `docs/access-levels-and-controlled-write.md` | Updated (2026-06-10) | Expanded denylist section to list all 13 blocked patterns (DDL, DML, DCL, system procedures). |
 | `docs/azure-container-apps-deployment.md` | Updated | Fixed MCP `/mcp/` validation examples to use initialize + session ID flow. |
 | `docs/cloud-deployment-strategy-analysis.md` | Up-to-date | Retained; no changes required. |
-| `docs/demo-narration-script.md` | Updated | Marked as non-canonical and aligned summary wording to avoid stale tool counts. |
+| `docs/demo-narration-script.md` | Updated (2026-06-10) | Expanded SQL denylist description to include DML (INSERT, UPDATE, DELETE, MERGE) and DCL (GRANT, REVOKE, DENY) alongside existing DDL and system procedures. |
 | `docs/DEPLOYMENT-CHECKLIST.md` | Updated | Added production gate criteria and session-based MCP validation steps. |
 | `docs/github-branch-protection-checklist.md` | Up-to-date | Retained; no changes required. |
 | `docs/mcp-sql2019-connectivity-discovery-diagnostics-spec.md` | Updated | Added explicit reference status note and canonical pointer to tool catalog. |
 | `docs/mcp-tool-catalog.md` | Rebuilt | Replaced corrupted/duplicated sections with current registered tool contracts. |
 | `docs/release-notes-v1.2.0.md` | Historical | Retained; no changes required. |
-| `docs/release-notes-v1.3.0.md` | Historical | Retained; no changes required. |
-| `docs/run-mcp-server-with-docker.md` | Updated | Clarified Redis-default runtime behavior and added session-based HTTP call pattern. |
+| `docs/release-notes-v1.3.0.md` | Historical | Retained; no changes required. || `docs/release-notes-v1.4.0.md` | New (2026-06-10) | Added for SQL denylist expansion release. || `docs/run-mcp-server-with-docker.md` | Updated | Clarified Redis-default runtime behavior and added session-based HTTP call pattern. |
 | `docs/runtime-policy-configuration-guide.md` | Up-to-date | Retained; no changes required. |
 | `docs/traceability-matrix.md` | Generated placeholder | Retained; CI-owned file. |
 | `docs/runbooks/scaling-strategy.md` | Up-to-date | Retained; no changes required. |

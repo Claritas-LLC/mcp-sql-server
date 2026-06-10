@@ -18,3 +18,6 @@ evidence/
 file_list.txt
 testing/artifacts/stress_test_log.txt
 testing/*.py
+
+# local docs (presentation script)
+docs/demo-narration-script.md

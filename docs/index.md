@@ -35,6 +35,7 @@ This index is the primary entrypoint for operating and deploying this MCP SQL Se
 
 ## Release Notes
 
+- [release-notes-v1.4.0.md](release-notes-v1.4.0.md)
 - [release-notes-v1.3.1.md](release-notes-v1.3.1.md)
 - [release-notes-v1.3.0.md](release-notes-v1.3.0.md)
 - [release-notes-v1.2.0.md](release-notes-v1.2.0.md)

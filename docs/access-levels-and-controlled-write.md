@@ -48,7 +48,9 @@ Controlled-write is enforced in layers:
 
 - `write_mode_default: deny` is the baseline policy.
 - Any write-like SQL verb is blocked unless the calling tool is listed in `allowed_write_tools`.
-- Blocked SQL regex patterns (denylist) are enforced before execution.
+- Blocked SQL regex patterns (denylist) are enforced before execution for all tools including allowlisted ones.
+- The denylist blocks 13 patterns: 4 DDL (`DROP`, `ALTER`, `TRUNCATE`, `CREATE`), 4 DML (`INSERT`, `UPDATE`, `DELETE`, `MERGE`), 3 DCL (`GRANT`, `REVOKE`, `DENY`), and 2 system procedures (`xp_cmdshell`, `sp_oacreate`).
+- DML/DCL keywords are blocked at the regex level for defense-in-depth — even if a tool is in `allowed_write_tools`, these keywords are still denied in SQL text.
 
 Code path:
 - `WriteGuard.enforce(...)` in `src/middleware/write_guard.py`
@@ -110,6 +112,6 @@ As currently configured:
   1. Tool is allowlisted for write
   2. Instance/tool flag is enabled
   3. Procedure is allowlisted for that tool
-  4. SQL denylist patterns are not matched
+  4. SQL denylist patterns (DDL, DML, DCL, and system procedures) are not matched
 
 Failure at any gate returns a policy denial.
