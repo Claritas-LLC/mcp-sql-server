@@ -3,7 +3,7 @@ allowed_write_tools:
   - db_primary_sql2019_exec_proc
   - db_secondary_sql2019_exec_proc
 blocked_sql_patterns:
-  - "(?i)\\b(drop|alter|truncate|create)\\b"
+  - "(?i)\\b(drop|alter|truncate|create|insert|update|delete|merge|grant|revoke|deny)\\b"
   - "(?i)\\bxp_cmdshell\\b"
 max_result_rows: 5000
 max_query_duration_ms: 15000

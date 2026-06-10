@@ -1308,7 +1308,7 @@ def register_sql_tools(mcp: FastMCP, state: Any) -> list[str]:
                     state.rate_limiter.allow(actor)
                     state.write_guard.validate_procedure(_tool, proc_name)
                     state.write_guard.enforce(
-                        _tool, "UPDATE __policy_probe__ SET x = 1"
+                        _tool, "EXEC __policy_probe__"
                     )
 
                     db_override: str | None = None
