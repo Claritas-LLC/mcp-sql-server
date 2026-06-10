@@ -21,3 +21,6 @@ testing/*.py
 
 # local docs (presentation script)
 docs/demo-narration-script.md
+
+# local IDE config (solo developer)
+.continue/
