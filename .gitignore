@@ -24,3 +24,4 @@ docs/demo-narration-script.md
 
 # local IDE config (solo developer)
 .continue/
+.vscode/
