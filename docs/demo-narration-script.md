@@ -102,7 +102,7 @@ You get table names, index names, type descriptors, and usage counters — seeks
 
 It performs a deep dive on a specific database, examining table sizes, index fragmentation, missing primary keys, stale or never-updated statistics, low-sampled statistics, heap tables, and duplicate key candidates. It even supports optional histogram skew analysis for detecting data distribution issues.
 
-> *[Call `db_1_sql2019_analyze_tab_health(database_name="US_RT_User_800", top_n=10, include_histogram_analysis=false)]*]
+> *[Call `db_1_sql2019_analyze_tab_health(database_name="US_RT_User_800", top_n=10, include_histogram_analysis=false)`]*
 
 The report comes back as a deterministic JSON envelope with a summary, severity counts, prioritized findings, and actionable recommendations. Each recommendation includes a DBA review disclaimer — the tool advises, but a human DBA approves before any changes are applied. On Instance 2: `db_2_sql2019_analyze_tab_health(database_name="ListGateway", top_n=10)`."
 
@@ -122,7 +122,7 @@ It also flags soft-delete columns, data type inconsistencies, and potential norm
 
 "The **analyze security configuration** tool performs a security posture assessment on a database.
 
-> *[Call `db_1_sql2019_analyze_sec_config(database_name="USGISPRO_800", include_server_scope=true)]*]
+> *[Call `db_1_sql2019_analyze_sec_config(database_name="USGISPRO_800", include_server_scope=true)`]*
 
 It checks for orphaned database users, elevated role memberships, guest user access, and backup recency. When `include_server_scope` is enabled, it also checks whether `xp_cmdshell` is enabled at the server level. Results come back as the same structured report envelope with findings, severity counts, and prioritized recommendations. On Instance 2: `db_2_sql2019_analyze_sec_config(database_name="US_Spatial_800", include_server_scope=true)`."
 
@@ -132,7 +132,7 @@ It checks for orphaned database users, elevated role memberships, guest user acc
 
 "The **sessions dashboard** is an interactive tool that builds a live HTML dashboard of session activity, lock chains, and blocking diagnostics.
 
-> *[Call `db_1_sql2019_sessions_dashboard(database_name="General", lookback_minutes=15, include_locks=true)]*]
+> *[Call `db_1_sql2019_sessions_dashboard(database_name="General", lookback_minutes=15, include_locks=true)`]*
 
 The response includes an HTML fragment with a data model containing active sessions, lock chains, head blockers, and prescriptive recommendations. This can be rendered directly in MCP-compatible clients for a visual diagnostics experience. The same dashboard data is also accessible via a dedicated HTTP refresh endpoint for auto-updating views. On Instance 2: `db_2_sql2019_sessions_dashboard(database_name="GeoGrid", lookback_minutes=15, include_locks=true)`."
 
