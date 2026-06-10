@@ -2,12 +2,16 @@
 
 These tests verify that critical runtime imports resolve correctly
 and that no ModuleNotFoundError occurs for packaging or FastMCP.
-"""
-import subprocess
-import sys
-from pathlib import Path
 
-import pytest
+Set TEST_CONTAINER_IMAGE env var to override the default container image
+(e.g. ``TEST_CONTAINER_IMAGE=myregistry/mcp-sql-server:dev pytest -q``).
+"""
+import os
+import subprocess
+
+_CONTAINER_IMAGE = os.environ.get(
+    "TEST_CONTAINER_IMAGE", "harryvaldez/mcp-sql-server:latest"
+)
 
 
 def test_packaging_import() -> None:
@@ -21,7 +25,11 @@ def test_fastmcp_import() -> None:
 
 
 def test_packaging_fastmcp_import_container() -> None:
-    """Verify packaging and FastMCP import inside the Docker container."""
+    """Verify packaging and FastMCP import inside the Docker container.
+
+    Uses the image specified by ``TEST_CONTAINER_IMAGE`` env var, falling
+    back to ``harryvaldez/mcp-sql-server:latest``.
+    """
     result = subprocess.run(
         [
             "docker",
@@ -29,7 +37,7 @@ def test_packaging_fastmcp_import_container() -> None:
             "--rm",
             "--entrypoint",
             "python",
-            "harryvaldez/mcp-sql-server:latest",
+            _CONTAINER_IMAGE,
             "-c",
             "import packaging; from fastmcp import FastMCP; print('ok')",
         ],

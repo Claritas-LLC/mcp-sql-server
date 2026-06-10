@@ -1,4 +1,5 @@
 {
     "chat.agent.thinking.terminalTools": true,
-    "chat.agent.sandbox.enabled": "on"
+    "chat.agent.sandbox.enabled": "on",
+    "git.ignoreLimitWarning": true
 }

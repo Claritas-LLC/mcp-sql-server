@@ -7,8 +7,8 @@ function New-McpSession {
 }
 
 function Invoke-McpTool {
-    param([string]$Sid,[string]$ToolName,[string]$Args,[int]$Timeout=90)
-    $body = '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"' + $ToolName + '","arguments":' + $Args + '}}'
+    param([string]$Sid,[string]$ToolName,[string]$ToolArgs,[int]$Timeout=90)
+    $body = '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"' + $ToolName + '","arguments":' + $ToolArgs + '}}'
     $raw = curl.exe -s --max-time $Timeout -X POST $base `
         -H 'Content-Type: application/json' `
         -H 'Accept: application/json, text/event-stream' `

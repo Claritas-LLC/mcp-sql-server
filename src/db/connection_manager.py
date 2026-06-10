@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import threading
 import time
 from typing import Any
@@ -45,8 +46,9 @@ class ConnectionManager:
         user = creds.get("username")
         password = creds.get("password")
         database_name = database_override or instance.database
+        driver = os.getenv("FASTMCP_ODBC_DRIVER", "ODBC Driver 17 for SQL Server")
         return (
-            "DRIVER={ODBC Driver 17 for SQL Server};"
+            f"DRIVER={{{driver}}};"
             f"SERVER={instance.host},{instance.port};"
             f"DATABASE={database_name};"
             f"UID={user};PWD={{{password}}};"
